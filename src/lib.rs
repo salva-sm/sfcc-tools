@@ -11,6 +11,7 @@ const CARTRIDGE_CANDIDATES: [&str; 2] = ["source/cartridges", "cartridges"];
 #[serde(default)]
 struct B2cConfig {
     binary: Option<String>,
+    runtime: Option<String>,
     cartridge_path: Option<String>,
     config: Option<String>,
     instance: Option<String>,
@@ -39,7 +40,7 @@ impl zed::Extension for B2cDebugExtension {
             .clone()
             .or(user_installed_path)
             .or_else(|| worktree.which(BINARY));
-        let (command, launcher_arguments) = launcher(resolved, worktree);
+        let (command, launcher_arguments) = launcher(resolved, settings.runtime.clone(), worktree);
 
         let root = worktree.root_path();
         let cartridges = cartridge_path(&settings, worktree)?;
@@ -128,12 +129,18 @@ fn cartridge_path(settings: &B2cConfig, worktree: &Worktree) -> Result<String> {
 /// The CLI is installed behind launcher scripts, and each one that has to re-spawn the next
 /// costs the adapter its stdio pipes. Pointing at the CLI's own entry point keeps the adapter
 /// a single process; a Windows shim is the fallback, routed through the interpreter.
-fn launcher(binary: Option<String>, worktree: &Worktree) -> (String, Vec<String>) {
+fn launcher(
+    binary: Option<String>,
+    runtime: Option<String>,
+    worktree: &Worktree,
+) -> (String, Vec<String>) {
     let lowered = binary.as_deref().unwrap_or_default().to_lowercase();
 
     if lowered.ends_with(".js") {
-        let runtime = worktree.which("node").unwrap_or_else(|| "node".to_string());
-        return (runtime, vec![binary.expect("checked above")]);
+        let node = runtime
+            .or_else(|| worktree.which("node"))
+            .unwrap_or_else(|| "node".to_string());
+        return (node, vec![binary.expect("checked above")]);
     }
     if lowered.ends_with(".cmd") || lowered.ends_with(".bat") {
         return (interpreter(worktree), vec!["/c".to_string(), binary.expect("checked above")]);

@@ -16,6 +16,14 @@
       "type": "string",
       "description": "Named instance inside the configuration file, when it holds more than one."
     },
+    "runtime": {
+      "type": "string",
+      "description": "Path to the node executable that runs the CLI entry point. Only needed when node is not resolvable, or resolves to a launcher script."
+    },
+    "binary": {
+      "type": "string",
+      "description": "Path to the CLI: either its bin/run.js, or the b2c executable. Overrides discovery."
+    },
     "client_id": {
       "type": "string",
       "description": "Client ID reported to the script debugger API. Change it when two people debug the same instance.",
