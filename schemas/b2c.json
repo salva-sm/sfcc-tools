@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "B2C Commerce debug configuration",
+  "type": "object",
+  "properties": {
+    "cartridge_path": {
+      "type": "string",
+      "description": "Cartridges directory, absolute or relative to the worktree root. Defaults to cartridges/ or source/cartridges/, whichever exists.",
+      "default": "source/cartridges"
+    },
+    "config": {
+      "type": "string",
+      "description": "Path to a dw.json, absolute or relative to the worktree root. Defaults to the one the b2c CLI finds next to the cartridges."
+    },
+    "instance": {
+      "type": "string",
+      "description": "Named instance inside the configuration file, when it holds more than one."
+    },
+    "client_id": {
+      "type": "string",
+      "description": "Client ID reported to the script debugger API. Change it when two people debug the same instance.",
+      "default": "b2c-cli"
+    }
+  },
+  "additionalProperties": false
+}
