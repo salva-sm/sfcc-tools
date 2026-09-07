@@ -4,7 +4,7 @@ version = "0.1.0"
 schema_version = 1
 authors = ["salva-sm"]
 description = "Debug server-side Salesforce B2C Commerce scripts in Zed, through the debug adapter shipped with the official b2c CLI."
-repository = "https://github.com/salva-sm/zed-b2c-debug"
+repository = "https://github.com/salva-sm/sfcc-zed-debugger"
 
 [debug_adapters.b2c]
 schema_path = "schemas/b2c.json"

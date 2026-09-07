@@ -42,10 +42,18 @@ VS Code extension is attached, this one cannot be.
 
 Until it is published, install it as a dev extension:
 
-1. Clone this repository somewhere with **no non-ASCII characters in the path**. Zed builds the
-   extension with cargo, and its proc-macro dependencies are linked for the host — the MinGW
-   linker fails on accented paths.
+1. Clone it somewhere with **no non-ASCII characters in the path**. Zed builds the extension
+   with cargo, and its proc-macro dependencies are linked for the host — the MinGW linker
+   fails on accented paths.
+
+   ```bash
+   git clone https://github.com/salva-sm/sfcc-zed-debugger.git C:/dev/sfcc-zed-debugger
+   ```
+
 2. In Zed: **Extensions → Install Dev Extension** and pick the clone.
+
+Zed compiles it on install; there is nothing to build by hand. After editing the extension,
+use **Extensions → Rebuild** (or reinstall) to pick the change up.
 
 ## Use
 
@@ -72,6 +80,12 @@ call runs that code.
 | `config` | Path to a `dw.json`. Defaults to whatever the CLI resolves from the worktree root |
 | `instance` | Named instance, when the configuration file holds more than one |
 | `client_id` | Client ID reported to the debugger API. Change it when two people share an instance |
+| `binary` | Path to the CLI — its `bin/run.js` or the `b2c` executable. Set it when `b2c` is not on the `PATH` Zed inherits |
+| `runtime` | Path to the `node` executable that runs `bin/run.js`. Set it when node is managed by Volta, nvm or another shim |
+
+Both paths are machine-specific: only add them when the session fails to start, and prefer
+making `b2c` and `node` resolvable to a plain `PATH` lookup so the committed `.zed/debug.json`
+stays the same for everyone.
 
 ## Two things that will waste your afternoon
 
@@ -81,3 +95,7 @@ Neither is the extension's fault, both bite everyone debugging B2C Commerce:
   never hit, add a unique query parameter to the URL and try again.
 - **A password-protected storefront answers 401 before any script runs.** Sandboxes usually
   have storefront protection on; the request has to carry those credentials.
+
+Every session is recorded in `b2c-dap.log` in the system temp directory — both the DAP
+conversation with Zed and the RPC one with the CLI. `B2C_DAP_LOG` points it elsewhere. That
+file is the first place to look when a session does not start.
