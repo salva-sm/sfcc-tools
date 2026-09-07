@@ -1,10 +1,6 @@
-// Debug Adapter Protocol front end for the B2C Commerce script debugger.
-//
-// The CLI ships a DAP adapter of its own, but it never emits the `initialized` event and its
-// `setBreakpoints` binds nothing, so editors that follow the protocol hang. Its RPC mode does
-// all of it correctly, so this speaks DAP to the editor and JSONL to `b2c debug cli --rpc`.
-//
-// Every argument is forwarded to the CLI. Set B2C_DAP_LOG to record both conversations.
+// Speaks DAP to the editor and JSONL to `b2c debug cli --rpc`, because the CLI's own DAP
+// adapter never emits `initialized` and binds no breakpoints. Arguments are forwarded as
+// given; both conversations are recorded in B2C_DAP_LOG, or b2c-dap.log in the temp dir.
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -41,8 +37,6 @@ function whenReady() {
     return ready ? Promise.resolve() : new Promise((resolve) => readyWaiters.push(resolve));
 }
 
-// ---------------------------------------------------------------- editor side
-
 function emit(message) {
     const body = JSON.stringify(message);
     note('-> editor ' + body);
@@ -57,8 +51,6 @@ const fail = (request, message) =>
 const event = (name, body) =>
     emit({ seq: (outgoingSeq += 1), type: 'event', event: name, body });
 
-// -------------------------------------------------------------- path handling
-
 const CARTRIDGES = 'cartridges';
 
 /// The RPC side wants a cartridge-relative path; editors send absolute local ones.
@@ -68,8 +60,6 @@ function toScriptPath(local) {
     const at = parts.lastIndexOf(CARTRIDGES);
     return at === -1 ? local : parts.slice(at + 1).join('/');
 }
-
-// ----------------------------------------------------------- variable handles
 
 let handles = new Map();
 let nextHandle = 1;
@@ -84,8 +74,6 @@ function handleFor(descriptor) {
 const FRAME_STRIDE = 1000;
 const frameId = (threadId, index) => threadId * FRAME_STRIDE + index;
 const frameParts = (id) => ({ threadId: Math.floor(id / FRAME_STRIDE), index: id % FRAME_STRIDE });
-
-// -------------------------------------------------------------- request table
 
 const breakpointsBySource = new Map();
 
@@ -277,7 +265,6 @@ async function describe(expression, descriptor) {
     return null;
 }
 
-/// A pane row is one line: function bodies and pretty-printed objects have to be flattened.
 function oneLine(text) {
     const flat = text.replace(/\s+/g, ' ').trim();
     return flat.length > SUMMARY_LENGTH ? flat.slice(0, SUMMARY_LENGTH - 1) + '…' : flat;
@@ -287,8 +274,6 @@ async function step(request, command) {
     await rpc(command, { thread_id: request.arguments.threadId }).catch(() => {});
     respond(request, {});
 }
-
-// ------------------------------------------------------------------ the wires
 
 let incoming = Buffer.alloc(0);
 process.stdin.on('data', (chunk) => {

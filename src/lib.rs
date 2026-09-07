@@ -126,9 +126,8 @@ fn cartridge_path(settings: &B2cConfig, worktree: &Worktree) -> Result<String> {
     ))
 }
 
-/// The CLI is installed behind launcher scripts, and each one that has to re-spawn the next
-/// costs the adapter its stdio pipes. Pointing at the CLI's own entry point keeps the adapter
-/// a single process; a Windows shim is the fallback, routed through the interpreter.
+/// A launcher script that re-spawns the next one costs the adapter its stdio pipes, so the
+/// CLI entry point is preferred; a Windows shim is the fallback, run through the interpreter.
 fn launcher(
     binary: Option<String>,
     runtime: Option<String>,
