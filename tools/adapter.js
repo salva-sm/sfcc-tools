@@ -1,9 +1,10 @@
-// Sits between the editor and `b2c debug`, which answers `initialize` but never sends the
-// `initialized` event the Debug Adapter Protocol requires. Editors that follow the protocol
-// wait for it forever, so this synthesises it once the initialize response goes past.
+// Debug Adapter Protocol front end for the B2C Commerce script debugger.
 //
-// Every argument is forwarded to the adapter untouched. Set B2C_DAP_LOG to record the
-// conversation to a file.
+// The CLI ships a DAP adapter of its own, but it never emits the `initialized` event and its
+// `setBreakpoints` binds nothing, so editors that follow the protocol hang. Its RPC mode does
+// all of it correctly, so this speaks DAP to the editor and JSONL to `b2c debug cli --rpc`.
+//
+// Every argument is forwarded to the CLI. Set B2C_DAP_LOG to record both conversations.
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -15,43 +16,293 @@ const ENTRY = process.env.B2C_ADAPTER_ENTRY
 const log = process.env.B2C_DAP_LOG ? fs.createWriteStream(process.env.B2C_DAP_LOG, { flags: 'w' }) : null;
 const note = (text) => log && log.write(`[${new Date().toISOString().slice(11, 23)}] ${text}\n`);
 
-const child = spawn(process.execPath, [ENTRY, ...process.argv.slice(2)], {
+const forwarded = process.argv.slice(2).filter((argument) => argument !== 'debug');
+const cli = spawn(process.execPath, [ENTRY, 'debug', 'cli', '--rpc', ...forwarded], {
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
 });
 
-let announced = false;
+let ready = false;
+const readyWaiters = [];
+const pending = new Map();
+let rpcId = 0;
 
-function send(message) {
+function rpc(command, args) {
+    return new Promise((resolve, reject) => {
+        rpcId += 1;
+        pending.set(rpcId, { resolve, reject });
+        const line = JSON.stringify({ id: rpcId, command, args: args || {} });
+        note('-> cli ' + line);
+        cli.stdin.write(line + '\n');
+    });
+}
+
+function whenReady() {
+    return ready ? Promise.resolve() : new Promise((resolve) => readyWaiters.push(resolve));
+}
+
+// ---------------------------------------------------------------- editor side
+
+function emit(message) {
     const body = JSON.stringify(message);
+    note('-> editor ' + body);
     process.stdout.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
 }
 
+let outgoingSeq = 0;
+const respond = (request, body) =>
+    emit({ seq: (outgoingSeq += 1), type: 'response', request_seq: request.seq, success: true, command: request.command, body });
+const fail = (request, message) =>
+    emit({ seq: (outgoingSeq += 1), type: 'response', request_seq: request.seq, success: false, command: request.command, message });
+const event = (name, body) =>
+    emit({ seq: (outgoingSeq += 1), type: 'event', event: name, body });
+
+// -------------------------------------------------------------- path handling
+
+const CARTRIDGES = 'cartridges';
+
+/// The RPC side wants a cartridge-relative path; editors send absolute local ones.
+function toScriptPath(local) {
+    if (!local) return local;
+    const parts = local.replace(/\\/g, '/').split('/');
+    const at = parts.lastIndexOf(CARTRIDGES);
+    return at === -1 ? local : parts.slice(at + 1).join('/');
+}
+
+// ----------------------------------------------------------- variable handles
+
+let handles = new Map();
+let nextHandle = 1;
+
+function handleFor(descriptor) {
+    const reference = nextHandle;
+    nextHandle += 1;
+    handles.set(reference, descriptor);
+    return reference;
+}
+
+const FRAME_STRIDE = 1000;
+const frameId = (threadId, index) => threadId * FRAME_STRIDE + index;
+const frameParts = (id) => ({ threadId: Math.floor(id / FRAME_STRIDE), index: id % FRAME_STRIDE });
+
+// -------------------------------------------------------------- request table
+
+const breakpointsBySource = new Map();
+
+const handlers = {
+    initialize: (request) => respond(request, {
+        supportsConfigurationDoneRequest: true,
+        supportsConditionalBreakpoints: true,
+        supportsEvaluateForHovers: true,
+        supportsTerminateRequest: true,
+        supportsLogPoints: true,
+    }),
+
+    attach: async (request) => {
+        await whenReady();
+        respond(request, {});
+        event('initialized', {});
+    },
+
+    launch: async (request) => {
+        await whenReady();
+        respond(request, {});
+        event('initialized', {});
+    },
+
+    setBreakpoints: async (request) => {
+        const source = request.arguments.source || {};
+        const wanted = request.arguments.breakpoints || [];
+        breakpointsBySource.set(source.path, wanted.map((point) => ({
+            file: toScriptPath(source.path),
+            line: point.line,
+            ...(point.condition ? { condition: point.condition } : {}),
+        })));
+
+        const all = [...breakpointsBySource.values()].flat();
+        const result = await rpc('set_breakpoints', { breakpoints: all }).catch((error) => ({ error }));
+        if (result.error) return fail(request, String(result.error));
+
+        const bound = result.breakpoints || [];
+        respond(request, {
+            breakpoints: wanted.map((point) => {
+                const match = bound.find((candidate) =>
+                    candidate.line === point.line && toScriptPath(candidate.file) === toScriptPath(source.path));
+                return match
+                    ? { id: match.id, verified: true, line: match.line, source }
+                    : { verified: false, line: point.line, source, message: 'the instance did not bind this line' };
+            }),
+        });
+    },
+
+    configurationDone: (request) => respond(request, {}),
+
+    threads: async (request) => {
+        const result = await rpc('list_threads').catch(() => ({ threads: [] }));
+        respond(request, {
+            threads: (result.threads || []).map((thread) => ({
+                id: thread.thread_id,
+                name: `Request thread ${thread.thread_id}${thread.status ? ' (' + thread.status + ')' : ''}`,
+            })),
+        });
+    },
+
+    stackTrace: async (request) => {
+        const threadId = request.arguments.threadId;
+        const result = await rpc('get_stack', { thread_id: threadId }).catch(() => ({ frames: [] }));
+        const frames = (result.frames || []).map((frame) => ({
+            id: frameId(threadId, frame.index),
+            name: frame.function_name || '(anonymous)',
+            line: frame.line,
+            column: 1,
+            source: { name: path.basename(frame.file || frame.script_path || ''), path: frame.file },
+        }));
+        respond(request, { stackFrames: frames, totalFrames: frames.length });
+    },
+
+    scopes: (request) => {
+        const { threadId, index } = frameParts(request.arguments.frameId);
+        respond(request, {
+            scopes: [
+                { name: 'Locals', variablesReference: handleFor({ threadId, index, scope: 'local' }), expensive: false },
+                { name: 'Closure', variablesReference: handleFor({ threadId, index, scope: 'closure' }), expensive: false },
+            ],
+        });
+    },
+
+    variables: async (request) => {
+        const descriptor = handles.get(request.arguments.variablesReference);
+        if (!descriptor) return respond(request, { variables: [] });
+
+        const result = await rpc('get_variables', {
+            thread_id: descriptor.threadId,
+            frame_index: descriptor.index,
+            ...(descriptor.scope ? { scope: descriptor.scope } : {}),
+            ...(descriptor.objectPath ? { object_path: descriptor.objectPath } : {}),
+        }).catch(() => ({ variables: [] }));
+
+        respond(request, {
+            variables: (result.variables || []).map((variable) => ({
+                name: variable.name,
+                value: variable.value === undefined ? '' : String(variable.value),
+                type: variable.type,
+                variablesReference: variable.has_children
+                    ? handleFor({
+                        threadId: descriptor.threadId,
+                        index: descriptor.index,
+                        objectPath: descriptor.objectPath ? `${descriptor.objectPath}.${variable.name}` : variable.name,
+                    })
+                    : 0,
+            })),
+        });
+    },
+
+    evaluate: async (request) => {
+        const { threadId, index } = request.arguments.frameId
+            ? frameParts(request.arguments.frameId)
+            : { threadId: undefined, index: undefined };
+        const result = await rpc('evaluate', {
+            expression: request.arguments.expression,
+            ...(threadId === undefined ? {} : { thread_id: threadId, frame_index: index }),
+        }).catch((error) => ({ result: String(error) }));
+        respond(request, { result: String(result.result ?? ''), variablesReference: 0 });
+    },
+
+    continue: async (request) => {
+        await rpc('continue', { thread_id: request.arguments.threadId }).catch(() => {});
+        respond(request, { allThreadsContinued: false });
+    },
+
+    next: (request) => step(request, 'step_over'),
+    stepIn: (request) => step(request, 'step_into'),
+    stepOut: (request) => step(request, 'step_out'),
+
+    pause: (request) => fail(request, 'the script debugger cannot pause a running request; it only halts on breakpoints'),
+
+    disconnect: (request) => {
+        respond(request, {});
+        cli.stdin.end();
+        setTimeout(() => process.exit(0), 300);
+    },
+    terminate: (request) => handlers.disconnect(request),
+};
+
+async function step(request, command) {
+    await rpc(command, { thread_id: request.arguments.threadId }).catch(() => {});
+    respond(request, {});
+}
+
+// ------------------------------------------------------------------ the wires
+
+let incoming = Buffer.alloc(0);
 process.stdin.on('data', (chunk) => {
-    note('editor -> adapter ' + chunk.toString().slice(0, 400));
-    child.stdin.write(chunk);
-});
-process.stdin.on('end', () => child.stdin.end());
+    incoming = Buffer.concat([incoming, chunk]);
+    for (;;) {
+        const header = incoming.indexOf('\r\n\r\n');
+        if (header === -1) return;
+        const length = Number(/Content-Length: (\d+)/i.exec(incoming.slice(0, header).toString())?.[1]);
+        if (!length || incoming.length < header + 4 + length) return;
 
-child.stdout.on('data', (chunk) => {
-    const text = chunk.toString();
-    note('adapter -> editor ' + text.slice(0, 400));
-    process.stdout.write(chunk);
+        const body = incoming.slice(header + 4, header + 4 + length).toString();
+        incoming = incoming.slice(header + 4 + length);
+        note('<- editor ' + body);
 
-    // After the attach, not after the initialize: breakpoints set before the session exists
-    // come back unbound.
-    const attached = text.includes('"command":"attach"') || text.includes('"command":"launch"');
-    if (!announced && attached && text.includes('"success":true')) {
-        announced = true;
-        note('injecting the initialized event the adapter never sends');
-        send({ type: 'event', event: 'initialized' });
+        let request;
+        try { request = JSON.parse(body); } catch { continue; }
+        const handler = handlers[request.command];
+        if (handler) {
+            Promise.resolve(handler(request)).catch((error) => fail(request, String(error)));
+        } else {
+            note('unhandled request ' + request.command);
+            respond(request, {});
+        }
     }
 });
 
-child.stderr.on('data', (chunk) => note('adapter stderr ' + chunk.toString().trim()));
-child.on('error', (error) => note('spawn error ' + error.message));
-child.on('close', (code) => {
-    note('adapter closed code=' + code);
-    if (log) { log.end(() => process.exit(code === null ? 1 : code)); } else { process.exit(code === null ? 1 : code); }
+let cliBuffer = '';
+cli.stdout.on('data', (chunk) => {
+    cliBuffer += chunk.toString();
+    const lines = cliBuffer.split('\n');
+    cliBuffer = lines.pop();
+
+    for (const line of lines.filter(Boolean)) {
+        note('<- cli ' + line);
+        let message;
+        try { message = JSON.parse(line); } catch { continue; }
+
+        if (message.event === 'ready') {
+            ready = true;
+            readyWaiters.splice(0).forEach((resolve) => resolve());
+            continue;
+        }
+        if (message.event === 'thread_stopped') {
+            handles = new Map();
+            event('thread', { reason: 'started', threadId: message.data.thread_id });
+            event('stopped', {
+                reason: 'breakpoint',
+                threadId: message.data.thread_id,
+                allThreadsStopped: false,
+                preserveFocusHint: false,
+            });
+            continue;
+        }
+        if (message.id && pending.has(message.id)) {
+            const { resolve, reject } = pending.get(message.id);
+            pending.delete(message.id);
+            message.error ? reject(message.error) : resolve(message.result || {});
+        }
+    }
 });
-process.on('SIGTERM', () => child.kill());
+
+cli.stderr.on('data', (chunk) => {
+    const text = chunk.toString().trim();
+    note('cli stderr ' + text);
+    if (/^ERROR/.test(text)) event('output', { category: 'stderr', output: text + '\n' });
+});
+
+cli.on('error', (error) => { note('cli spawn error ' + error.message); process.exit(1); });
+cli.on('close', (code) => {
+    note('cli closed code=' + code);
+    event('terminated', {});
+    if (log) { log.end(() => process.exit(0)); } else { process.exit(0); }
+});

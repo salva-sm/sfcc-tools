@@ -9,24 +9,23 @@ adapter that ships with the official Salesforce CLI. The debugging itself is don
 adapter and by the instance's own `dw/debugger/v2_0` API; this repository is the ~150 lines of
 glue that makes Zed aware of it.
 
-## Status: blocked on the adapter it wraps
+## Why it ships its own adapter
 
-`b2c debug` does not hold up its end of the Debug Adapter Protocol. Measured on
-b2c-cli 1.23.2 by reading the wire between Zed and the adapter:
+The CLI has a DAP adapter of its own, `b2c debug`, and this extension started as a wrapper
+around it. That does not work. Measured on b2c-cli 1.23.2 by reading the wire:
 
 | Behaviour | Result |
 | --------- | ------ |
 | `initialize` | answers with capabilities |
-| `initialized` event | **never sent** — a protocol-following editor waits for it forever, which is the spinner Zed shows |
+| `initialized` event | **never sent** — an editor that follows the protocol waits for it forever |
 | `attach` | answers success |
-| `setBreakpoints` | answers success with an **empty** breakpoint list, and nothing halts. Tried absolute, cartridge-relative and server paths |
+| `setBreakpoints` | answers success with an **empty** list, and nothing halts. Absolute, cartridge-relative and server paths all behave the same |
 
-The same CLI's RPC mode (`b2c debug cli --rpc`) does all of it correctly: it binds the
-breakpoint, reports `thread_stopped` with the thread and location, and resumes on `continue`.
-
-So this extension cannot stay a thin wrapper. `tools/adapter.js` already sits in the right
-place — it injects the missing `initialized` event — and the way forward is to grow it into a
-DAP-to-RPC translator, leaving authentication, cartridge mapping and halt polling to the CLI.
+The same CLI's RPC mode does every one of those correctly. So `tools/adapter.js` speaks DAP to
+the editor and JSONL to `b2c debug cli --rpc`, leaving authentication, cartridge mapping and
+halt detection to the CLI. It translates breakpoints, threads, stack frames, scopes,
+variables, expression evaluation, stepping and continue, and turns `thread_stopped` into the
+DAP `stopped` event.
 
 ## Requirements
 
