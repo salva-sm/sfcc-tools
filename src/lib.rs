@@ -33,7 +33,7 @@ impl zed::Extension for B2cDebugExtension {
         let settings: B2cConfig = serde_json::from_str(&definition.config)
             .map_err(|error| format!("cannot read the debug configuration: {error}"))?;
 
-        let command = user_installed_path
+        let binary = user_installed_path
             .or_else(|| worktree.which(BINARY))
             .ok_or_else(|| {
                 format!(
@@ -41,6 +41,7 @@ impl zed::Extension for B2cDebugExtension {
                      or set the adapter path in your Zed settings"
                 )
             })?;
+        let (command, launcher_arguments) = launcher(binary);
 
         let root = worktree.root_path();
         let cartridges = cartridge_path(&settings, worktree)?;
@@ -49,13 +50,14 @@ impl zed::Extension for B2cDebugExtension {
             None => format!("{}/dw.json", parent_of(&cartridges)),
         };
 
-        let mut arguments = vec![
+        let mut arguments = launcher_arguments;
+        arguments.extend([
             "debug".to_string(),
             "--cartridge-path".to_string(),
             cartridges.clone(),
             "--config".to_string(),
             config,
-        ];
+        ]);
         if let Some(instance) = settings.instance {
             arguments.push("--instance".to_string());
             arguments.push(instance);
@@ -121,6 +123,16 @@ fn cartridge_path(settings: &B2cConfig, worktree: &Worktree) -> Result<String> {
     Err(format!(
         "no cartridges directory found under {root} - set \"cartridge_path\" in the debug configuration"
     ))
+}
+
+/// A Windows shim cannot be spawned as a process; run it through the command interpreter so
+/// that the debug adapter keeps its stdio pipes.
+fn launcher(binary: String) -> (String, Vec<String>) {
+    let lowered = binary.to_lowercase();
+    if lowered.ends_with(".cmd") || lowered.ends_with(".bat") {
+        return ("cmd.exe".to_string(), vec!["/c".to_string(), binary]);
+    }
+    (binary, Vec::new())
 }
 
 fn parent_of(path: &str) -> String {
