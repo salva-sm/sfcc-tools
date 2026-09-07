@@ -179,19 +179,27 @@ const handlers = {
             frame_index: descriptor.index,
             ...(descriptor.scope ? { scope: descriptor.scope } : {}),
             ...(descriptor.objectPath ? { object_path: descriptor.objectPath } : {}),
-        }).catch(() => ({ variables: [] }));
+        }).catch((error) => ({ variables: [], failed: String(error) }));
+
+        if (result.failed) {
+            return respond(request, {
+                variables: [{ name: '<unavailable>', value: result.failed, variablesReference: 0 }],
+            });
+        }
+
+        const raw = result.variables || [];
+        const paths = raw.map((variable) =>
+            descriptor.objectPath ? `${descriptor.objectPath}.${variable.name}` : variable.name);
+        const summaries = await describeAll(raw, paths, descriptor);
 
         respond(request, {
-            variables: (result.variables || []).map((variable) => ({
+            variables: raw.map((variable, position) => ({
                 name: variable.name,
-                value: variable.value === undefined ? '' : String(variable.value),
+                value: oneLine(summaries[position] ?? String(variable.value ?? '')),
                 type: variable.type,
+                evaluateName: paths[position],
                 variablesReference: variable.has_children
-                    ? handleFor({
-                        threadId: descriptor.threadId,
-                        index: descriptor.index,
-                        objectPath: descriptor.objectPath ? `${descriptor.objectPath}.${variable.name}` : variable.name,
-                    })
+                    ? handleFor({ threadId: descriptor.threadId, index: descriptor.index, objectPath: paths[position] })
                     : 0,
             })),
         });
@@ -232,6 +240,48 @@ const handlers = {
     },
     terminate: (request) => handlers.disconnect(request),
 };
+
+const OPAQUE = '[object Object]';
+const DESCRIBE_LIMIT = 24;
+const SUMMARY_LENGTH = 240;
+
+/// `[object Object]` tells nobody anything. dw classes are Java-backed and answer `String()`
+/// with something readable; plain objects only answer `JSON.stringify`.
+async function describeAll(variables, paths, descriptor) {
+    if (process.env.B2C_DESCRIBE_OBJECTS === 'off') return variables.map(() => null);
+
+    let budget = DESCRIBE_LIMIT;
+    return Promise.all(variables.map((variable, position) => {
+        if (String(variable.value) !== OPAQUE || budget <= 0) return null;
+        budget -= 1;
+        return describe(paths[position], descriptor);
+    }));
+}
+
+async function describe(expression, descriptor) {
+    const ask = (text) => rpc('evaluate', {
+        expression: text,
+        thread_id: descriptor.threadId,
+        frame_index: descriptor.index,
+    }).then((answer) => String(answer.result ?? '')).catch(() => '');
+
+    const readable = await ask(`String(${expression})`);
+    if (readable && readable !== OPAQUE && !/Error\b/.test(readable)) {
+        return oneLine(readable);
+    }
+
+    const serialised = await ask(`JSON.stringify(${expression})`);
+    if (serialised && serialised !== '{}' && serialised !== 'undefined' && !/Error\b/.test(serialised)) {
+        return oneLine(serialised);
+    }
+    return null;
+}
+
+/// A pane row is one line: function bodies and pretty-printed objects have to be flattened.
+function oneLine(text) {
+    const flat = text.replace(/\s+/g, ' ').trim();
+    return flat.length > SUMMARY_LENGTH ? flat.slice(0, SUMMARY_LENGTH - 1) + '…' : flat;
+}
 
 async function step(request, command) {
     await rpc(command, { thread_id: request.arguments.threadId }).catch(() => {});
