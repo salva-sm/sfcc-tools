@@ -41,7 +41,7 @@ impl zed::Extension for B2cDebugExtension {
                      or set the adapter path in your Zed settings"
                 )
             })?;
-        let (command, launcher_arguments) = launcher(binary);
+        let (command, launcher_arguments) = launcher(binary, worktree);
 
         let root = worktree.root_path();
         let cartridges = cartridge_path(&settings, worktree)?;
@@ -127,12 +127,16 @@ fn cartridge_path(settings: &B2cConfig, worktree: &Worktree) -> Result<String> {
 
 /// A Windows shim cannot be spawned as a process; run it through the command interpreter so
 /// that the debug adapter keeps its stdio pipes.
-fn launcher(binary: String) -> (String, Vec<String>) {
+fn launcher(binary: String, worktree: &Worktree) -> (String, Vec<String>) {
     let lowered = binary.to_lowercase();
-    if lowered.ends_with(".cmd") || lowered.ends_with(".bat") {
-        return ("cmd.exe".to_string(), vec!["/c".to_string(), binary]);
+    if !(lowered.ends_with(".cmd") || lowered.ends_with(".bat")) {
+        return (binary, Vec::new());
     }
-    (binary, Vec::new())
+
+    let interpreter = worktree
+        .which("cmd.exe")
+        .unwrap_or_else(|| "C:\\Windows\\system32\\cmd.exe".to_string());
+    (interpreter, vec!["/c".to_string(), binary])
 }
 
 fn parent_of(path: &str) -> String {
