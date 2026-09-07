@@ -9,6 +9,25 @@ adapter that ships with the official Salesforce CLI. The debugging itself is don
 adapter and by the instance's own `dw/debugger/v2_0` API; this repository is the ~150 lines of
 glue that makes Zed aware of it.
 
+## Status: blocked on the adapter it wraps
+
+`b2c debug` does not hold up its end of the Debug Adapter Protocol. Measured on
+b2c-cli 1.23.2 by reading the wire between Zed and the adapter:
+
+| Behaviour | Result |
+| --------- | ------ |
+| `initialize` | answers with capabilities |
+| `initialized` event | **never sent** — a protocol-following editor waits for it forever, which is the spinner Zed shows |
+| `attach` | answers success |
+| `setBreakpoints` | answers success with an **empty** breakpoint list, and nothing halts. Tried absolute, cartridge-relative and server paths |
+
+The same CLI's RPC mode (`b2c debug cli --rpc`) does all of it correctly: it binds the
+breakpoint, reports `thread_stopped` with the thread and location, and resumes on `continue`.
+
+So this extension cannot stay a thin wrapper. `tools/adapter.js` already sits in the right
+place — it injects the missing `initialized` event — and the way forward is to grow it into a
+DAP-to-RPC translator, leaving authentication, cartridge mapping and halt polling to the CLI.
+
 ## Requirements
 
 | | |
