@@ -21,6 +21,5 @@
       "description": "Client ID reported to the script debugger API. Change it when two people debug the same instance.",
       "default": "b2c-cli"
     }
-  },
-  "additionalProperties": false
+  }
 }
