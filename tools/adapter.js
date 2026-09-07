@@ -13,8 +13,8 @@ const path = require('path');
 const ENTRY = process.env.B2C_ADAPTER_ENTRY
     || path.join(os.homedir(), 'AppData/Local/Volta/tools/image/packages/@salesforce/b2c-cli/node_modules/@salesforce/b2c-cli/bin/run.js');
 
-const log = process.env.B2C_DAP_LOG ? fs.createWriteStream(process.env.B2C_DAP_LOG, { flags: 'w' }) : null;
-const note = (text) => log && log.write(`[${new Date().toISOString().slice(11, 23)}] ${text}\n`);
+const log = fs.createWriteStream(process.env.B2C_DAP_LOG || path.join(os.tmpdir(), 'b2c-dap.log'), { flags: 'w' });
+const note = (text) => log.write(`[${new Date().toISOString().slice(11, 23)}] ${text}\n`);
 
 const forwarded = process.argv.slice(2).filter((argument) => argument !== 'debug');
 const cli = spawn(process.execPath, [ENTRY, 'debug', 'cli', '--rpc', ...forwarded], {
@@ -204,8 +204,14 @@ const handlers = {
         const result = await rpc('evaluate', {
             expression: request.arguments.expression,
             ...(threadId === undefined ? {} : { thread_id: threadId, frame_index: index }),
-        }).catch((error) => ({ result: String(error) }));
-        respond(request, { result: String(result.result ?? ''), variablesReference: 0 });
+        }).catch((error) => ({ failed: String(error) }));
+
+        const value = String(result.failed ?? result.result ?? '');
+        // A hover over something that is not in scope should show nothing, not an error string.
+        if (result.failed || /^(Reference|Type|Syntax)Error\b/.test(value)) {
+            return fail(request, value);
+        }
+        respond(request, { result: value, variablesReference: 0 });
     },
 
     continue: async (request) => {
