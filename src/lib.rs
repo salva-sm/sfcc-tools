@@ -125,24 +125,30 @@ fn cartridge_path(settings: &B2cConfig, worktree: &Worktree) -> Result<String> {
     ))
 }
 
-/// The CLI installs as a Windows shim, which cannot be spawned as a process and leaves the
-/// adapter without stdio. Route it through the command interpreter, which also resolves the
-/// shim from `PATH` when nothing else could find it.
+/// The CLI is installed behind launcher scripts, and each one that has to re-spawn the next
+/// costs the adapter its stdio pipes. Pointing at the CLI's own entry point keeps the adapter
+/// a single process; a Windows shim is the fallback, routed through the interpreter.
 fn launcher(binary: Option<String>, worktree: &Worktree) -> (String, Vec<String>) {
-    let interpreter = worktree
-        .which("cmd.exe")
-        .unwrap_or_else(|| "C:\\Windows\\system32\\cmd.exe".to_string());
+    let lowered = binary.as_deref().unwrap_or_default().to_lowercase();
+
+    if lowered.ends_with(".js") {
+        let runtime = worktree.which("node").unwrap_or_else(|| "node".to_string());
+        return (runtime, vec![binary.expect("checked above")]);
+    }
+    if lowered.ends_with(".cmd") || lowered.ends_with(".bat") {
+        return (interpreter(worktree), vec!["/c".to_string(), binary.expect("checked above")]);
+    }
 
     match binary {
-        Some(path) if !is_shim(&path) => (path, Vec::new()),
-        Some(path) => (interpreter, vec!["/c".to_string(), path]),
-        None => (interpreter, vec!["/c".to_string(), BINARY.to_string()]),
+        Some(path) => (path, Vec::new()),
+        None => (interpreter(worktree), vec!["/c".to_string(), BINARY.to_string()]),
     }
 }
 
-fn is_shim(path: &str) -> bool {
-    let lowered = path.to_lowercase();
-    lowered.ends_with(".cmd") || lowered.ends_with(".bat")
+fn interpreter(worktree: &Worktree) -> String {
+    worktree
+        .which("cmd.exe")
+        .unwrap_or_else(|| "C:\\Windows\\system32\\cmd.exe".to_string())
 }
 
 fn parent_of(path: &str) -> String {
