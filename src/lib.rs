@@ -44,16 +44,18 @@ impl zed::Extension for B2cDebugExtension {
 
         let root = worktree.root_path();
         let cartridges = cartridge_path(&settings, worktree)?;
+        let config = match &settings.config {
+            Some(configured) => absolute(configured, &root),
+            None => format!("{}/dw.json", parent_of(&cartridges)),
+        };
 
         let mut arguments = vec![
             "debug".to_string(),
             "--cartridge-path".to_string(),
-            cartridges,
+            cartridges.clone(),
+            "--config".to_string(),
+            config,
         ];
-        if let Some(config) = settings.config {
-            arguments.push("--config".to_string());
-            arguments.push(absolute(&config, &root));
-        }
         if let Some(instance) = settings.instance {
             arguments.push("--instance".to_string());
             arguments.push(instance);
@@ -67,7 +69,7 @@ impl zed::Extension for B2cDebugExtension {
             command: Some(command),
             arguments,
             envs: worktree.shell_env(),
-            cwd: Some(root),
+            cwd: Some(parent_of(&cartridges)),
             connection: None,
             request_args: StartDebuggingRequestArguments {
                 configuration: definition.config,
@@ -119,6 +121,13 @@ fn cartridge_path(settings: &B2cConfig, worktree: &Worktree) -> Result<String> {
     Err(format!(
         "no cartridges directory found under {root} - set \"cartridge_path\" in the debug configuration"
     ))
+}
+
+fn parent_of(path: &str) -> String {
+    match path.trim_end_matches('/').rsplit_once('/') {
+        Some((parent, _)) => parent.to_string(),
+        None => ".".to_string(),
+    }
 }
 
 fn absolute(path: &str, root: &str) -> String {
