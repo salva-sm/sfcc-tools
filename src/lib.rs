@@ -72,7 +72,7 @@ impl zed::Extension for B2cDebugExtension {
             command: Some(command),
             arguments,
             envs: worktree.shell_env(),
-            cwd: Some(parent_of(&cartridges)),
+            cwd: Some(root),
             connection: None,
             request_args: StartDebuggingRequestArguments {
                 configuration: definition.config,
