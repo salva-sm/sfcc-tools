@@ -6,6 +6,7 @@ use zed_extension_api::{
 
 const BINARY: &str = "b2c";
 const CARTRIDGE_CANDIDATES: [&str; 2] = ["source/cartridges", "cartridges"];
+const ADAPTER: &str = "tools/adapter.js";
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -39,6 +40,7 @@ impl zed::Extension for B2cDebugExtension {
             .binary
             .clone()
             .or(user_installed_path)
+            .or_else(bundled_adapter)
             .or_else(|| worktree.which(BINARY));
         let (command, launcher_arguments) = launcher(resolved, settings.runtime.clone(), worktree);
 
@@ -105,6 +107,16 @@ impl zed::Extension for B2cDebugExtension {
             tcp_connection: None,
         })
     }
+}
+
+/// An extension runs from its work directory, a sibling of the directory it was installed
+/// into, where the adapter it ships with lives.
+fn bundled_adapter() -> Option<String> {
+    let work_directory = std::env::current_dir().ok()?;
+    let path = work_directory.to_str()?.replace('\\', "/");
+    let (extensions, id) = path.trim_end_matches('/').rsplit_once("/work/")?;
+
+    Some(format!("{extensions}/installed/{id}/{ADAPTER}"))
 }
 
 fn cartridge_path(settings: &B2cConfig, worktree: &Worktree) -> Result<String> {
