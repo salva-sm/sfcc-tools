@@ -59,7 +59,17 @@ picks up what it wrote and sends it.
 
 `prost logger` follows today's log files over WebDAV from the end, `error`, `customerror` and
 `custom` by default (`--level all` for everything, `--level warn,error` to pick, `-n 100` to
-open with some history).
+open with some history). A file the sandbox opens mid-session — the first error of the day
+lands in a brand new one — is read whole, not from its end.
+
+A record is printed as the sandbox wrote it: the line carrying the timestamp, and everything
+below it indented under it, so a stack trace stays one block instead of twenty entries. Every
+file is read on each poll, and what they yield is ordered by the sandbox's own timestamp
+before it reaches the screen.
+
+Levels are coloured — `error` red, `warn` yellow, the `custom*` family cyan — and the local
+path of a rewritten frame is highlighted. Colour is on for a terminal and off for a pipe;
+`--color always` keeps it through one, `--color never` and `NO_COLOR` turn it off.
 
 Stack frames are rewritten into local paths on the way out, so
 

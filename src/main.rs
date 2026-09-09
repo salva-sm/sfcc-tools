@@ -144,6 +144,9 @@ struct TailArgs {
     /// Seconds between polls
     #[arg(long, value_name = "SECONDS", default_value_t = 3)]
     interval: u64,
+    /// Colour the output: auto, always, never
+    #[arg(long, value_name = "WHEN", default_value = "auto")]
+    color: String,
 }
 
 #[derive(Args)]
@@ -299,6 +302,7 @@ async fn run(cli: Cli) -> Result<()> {
                 levels: tail::parse_levels(&args.level),
                 interval: Duration::from_secs(args.interval.max(1)),
                 lines: args.lines,
+                color: tail::color_enabled(&args.color),
             };
             tail::follow(&ctx, options).await
         }
