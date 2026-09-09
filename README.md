@@ -79,6 +79,8 @@ call runs that code.
 | `cartridge_path` | Cartridges directory, absolute or relative to the worktree root. Defaults to `source/cartridges` or `cartridges`, whichever holds `modules/server/route.js` |
 | `config` | Path to a `dw.json`. Defaults to whatever the CLI resolves from the worktree root |
 | `instance` | Named instance, when the configuration file holds more than one |
+| `logs` | `false` stops the sandbox log from being followed while attached. On by default |
+| `log_level` | Levels followed in the debug console, comma separated, or `all`. Defaults to `error,customerror` |
 | `client_id` | Client ID reported to the debugger API. Change it when two people share an instance |
 | `binary` | Path to the CLI — its `bin/run.js` or the `b2c` executable. Set it when `b2c` is not on the `PATH` Zed inherits |
 | `runtime` | Path to the `node` executable that runs `bin/run.js`. Set it when node is managed by Volta, nvm or another shim |
@@ -86,6 +88,16 @@ call runs that code.
 Both paths are machine-specific: only add them when the session fails to start, and prefer
 making `b2c` and `node` resolvable to a plain `PATH` lookup so the committed `.zed/debug.json`
 stays the same for everyone.
+
+## The sandbox log in the session
+
+Attaching also follows the sandbox log: `prost logger` is started with the same `dw.json` and
+every line it prints reaches the debug console, coloured, for as long as the session lasts. It
+is where the error that did *not* stop at a breakpoint shows up. Only `error` and
+`customerror` are followed — a debug session is no place for the whole firehose, and
+`log_level` widens it. `prost` has to be on the `PATH` (`B2C_LOGGER` points at another
+binary); when it is not, the console says so once and the session carries on. `"logs": false`
+turns it off.
 
 ## Two things that will waste your afternoon
 

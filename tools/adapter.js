@@ -51,6 +51,37 @@ const fail = (request, message) =>
 const event = (name, body) =>
     emit({ seq: (outgoingSeq += 1), type: 'event', event: name, body });
 
+const LOGGER = process.env.B2C_LOGGER || 'prost';
+let logger = null;
+
+function argumentValue(name) {
+    const at = forwarded.indexOf(name);
+    return at === -1 ? null : forwarded[at + 1];
+}
+
+function followLogs(configuration) {
+    if (logger || configuration.logs === false) return;
+
+    const args = ['logger', '--color', 'always', '--level', configuration.log_level || 'error,customerror'];
+    const config = argumentValue('--config');
+    if (config) args.push('--config', config);
+
+    logger = spawn(LOGGER, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    logger.stdout.on('data', (chunk) => event('output', { category: 'stdout', output: chunk.toString() }));
+    logger.stderr.on('data', (chunk) => note('logger stderr ' + chunk.toString().trim()));
+    logger.on('error', (error) => {
+        note('logger spawn error ' + error.message);
+        event('output', { category: 'console', output: `sandbox log unavailable: ${error.message}\n` });
+        logger = null;
+    });
+}
+
+function stopLogs() {
+    if (!logger) return;
+    logger.kill();
+    logger = null;
+}
+
 const CARTRIDGES = 'cartridges';
 
 /// The RPC side wants a cartridge-relative path; editors send absolute local ones.
@@ -88,6 +119,7 @@ const handlers = {
 
     attach: async (request) => {
         await whenReady();
+        followLogs(request.arguments || {});
         respond(request, {});
         event('initialized', {});
     },
@@ -223,6 +255,7 @@ const handlers = {
 
     disconnect: (request) => {
         respond(request, {});
+        stopLogs();
         cli.stdin.end();
         setTimeout(() => process.exit(0), 300);
     },
