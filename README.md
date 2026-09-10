@@ -40,6 +40,8 @@ prost stop                # stop the detached watcher
 prost status              # watcher, sandbox and local sync state
 prost activity -f         # what the watcher has been uploading
 prost logger              # follow the sandbox log, where server-side errors land
+prost errors --mark       # mark the log, then reproduce your bug
+prost errors              # only what got logged since the mark
 prost doctor              # check dw.json, connectivity, credentials, code version
 prost versions            # code versions on the sandbox
 prost ls [PATH]           # what the code version holds on the sandbox
@@ -98,6 +100,34 @@ at app_common_brand/cartridge/controllers/Account.js:99 (anonymous)
 is printed as `…/source/cartridges/app_common_brand/cartridge/controllers/Account.js:99`,
 which VS Code, Zed and Windows Terminal turn into a link straight to that line. Only frames
 whose file actually exists locally are rewritten; anything else is left untouched.
+
+## Did my change start throwing?
+
+`logger` follows the log; `errors` reads a slice of it. Mark where the log ends, exercise
+whatever you changed, and ask what appeared in between:
+
+```bash
+prost errors --mark       # remember how long today's log files are
+# ...navigate the PDP, place an order, whatever the change touches...
+prost errors              # only the records written since the mark
+```
+
+Repeats collapse: the same failure twenty times is one block with a count and the first and
+last time it happened, because a loop hitting one broken hook should read as one problem.
+Records are printed exactly as `logger` prints them, stack frames rewritten into local paths
+included.
+
+The mark is per sandbox and code version, kept next to the sync manifests, so several
+projects do not tread on each other. `errors` exits 1 when it found something and 0 when it
+did not, which makes it chainable:
+
+```bash
+prost errors --mark && npm run test:integration && prost errors
+```
+
+That covers your own machine. It is deliberately not a CI check: nothing deploys a pull
+request branch, so a workflow would be reading the log of whatever happens to be on the
+sandbox, not of the change under review.
 
 ## Reloading the browser
 

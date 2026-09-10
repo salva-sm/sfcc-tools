@@ -27,13 +27,13 @@ pub struct TailOptions {
     pub color: bool,
 }
 
-struct Entry {
-    label: String,
-    moment: String,
-    lines: Vec<String>,
+pub struct Entry {
+    pub label: String,
+    pub moment: String,
+    pub lines: Vec<String>,
 }
 
-struct Printer<'a> {
+pub struct Printer<'a> {
     cartridges: &'a Path,
     color: bool,
     history: usize,
@@ -131,6 +131,13 @@ pub fn color_enabled(when: &str) -> bool {
     }
 }
 
+impl<'a> Printer<'a> {
+    /// A printer with no history to replay, for one-shot reports.
+    pub fn plain(cartridges: &'a Path, color: bool) -> Printer<'a> {
+        Printer { cartridges, color, history: 0 }
+    }
+}
+
 impl Printer<'_> {
     async fn history(&self, ctx: &Ctx, file: &DavEntry) {
         if self.history == 0 {
@@ -154,7 +161,7 @@ impl Printer<'_> {
         }
     }
 
-    fn entry(&self, entry: &Entry) {
+    pub fn entry(&self, entry: &Entry) {
         let tone = tone(&entry.label);
         let mut lines = entry.lines.iter();
         let Some(head) = lines.next() else {
@@ -195,7 +202,7 @@ impl Printer<'_> {
     }
 }
 
-fn parse_entries(file: &str, text: &str) -> Vec<Entry> {
+pub fn parse_entries(file: &str, text: &str) -> Vec<Entry> {
     let label = file.split('-').next().unwrap_or(file).to_string();
     let mut entries: Vec<Entry> = Vec::new();
 
@@ -213,7 +220,7 @@ fn parse_entries(file: &str, text: &str) -> Vec<Entry> {
 }
 
 /// Leftovers from an entry of an earlier poll carry no moment and stay in front.
-fn order(batch: &mut [Entry]) {
+pub fn order(batch: &mut [Entry]) {
     batch.sort_by(|left, right| left.moment.cmp(&right.moment));
 }
 
@@ -236,7 +243,7 @@ fn tone(label: &str) -> &'static str {
     }
 }
 
-fn is_wanted(name: &str, levels: &[String], today: &str) -> bool {
+pub fn is_wanted(name: &str, levels: &[String], today: &str) -> bool {
     if !name.ends_with(".log") || !name.contains(today) {
         return false;
     }
