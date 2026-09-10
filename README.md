@@ -40,10 +40,18 @@ VS Code extension is attached, this one cannot be.
 
 ## Install
 
-Until it is published, install it as a dev extension:
+Not in the Zed registry, so there are two ways in.
+
+**From a zip — nothing to build.** Take `b2c-debug-<version>.zip` from
+[Releases](https://github.com/salva-sm/sfcc-zed-debugger/releases), unzip it anywhere and run
+the `install.ps1` inside. It drops the extension into
+`%LOCALAPPDATA%\Zed\extensions\installed`, which Zed watches, so it is picked up without a
+restart.
+
+**From source, to work on it.**
 
 1. Clone it somewhere with **no non-ASCII characters in the path**. Zed builds the extension
-   with cargo, and its proc-macro dependencies are linked for the host — the MinGW linker
+   with cargo *in place*, hardcoding `--target-dir` inside the clone, and the MinGW linker
    fails on accented paths.
 
    ```bash
@@ -53,7 +61,16 @@ Until it is published, install it as a dev extension:
 2. In Zed: **Extensions → Install Dev Extension** and pick the clone.
 
 Zed compiles it on install; there is nothing to build by hand. After editing the extension,
-use **Extensions → Rebuild** (or reinstall) to pick the change up.
+use **Extensions → Rebuild** (or reinstall) to pick the change up. `.\package.ps1` turns what
+Zed built into the zip above.
+
+### How the CLI is located
+
+The extension never bundles the b2c CLI, it looks for it, so nothing here depends on how you
+installed it. In order: the `binary` setting of the debug configuration, then `b2c` on `PATH`
+— resolved by the extension and handed to the adapter — then `npm root -g`. Set
+`B2C_ADAPTER_ENTRY` to the CLI's `bin/run.js` to override the lot. When none of them work the
+adapter says so, in `%TEMP%\b2c-dap.log`.
 
 ## Use
 
