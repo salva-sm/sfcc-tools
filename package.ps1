@@ -55,7 +55,10 @@ if ($grammars) {
     $grammars | Copy-Item -Destination "$payload\grammars"
 }
 
-foreach ($dir in @('languages', 'themes', 'icon_themes', 'icons', 'schemas', 'snippets')) {
+# `tools` matters: an extension that ships a launcher script resolves it inside
+# its own installed directory, so leaving it out yields a zip that installs and
+# then quietly misbehaves.
+foreach ($dir in @('languages', 'themes', 'icon_themes', 'icons', 'schemas', 'snippets', 'tools')) {
     $source = Join-Path $ExtensionDir $dir
     if (Test-Path $source) { Copy-Item $source $payload -Recurse }
 }
