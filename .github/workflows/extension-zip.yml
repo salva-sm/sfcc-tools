@@ -1,0 +1,74 @@
+name: Extension zip
+
+# Builds the drop-in zip a teammate installs without any toolchain, and
+# attaches it to the release for a `v*` tag.
+#
+# It reproduces what Zed's own extension builder does on
+# `zed: install dev extension`: cargo build --release --target wasm32-wasip2,
+# copied in as extension.wasm. Zed also strips custom sections from it, which
+# is a size optimisation - the `zed:api-version` section it reads at load time
+# is present either way. There is no grammar here, so that is the whole build.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the extension id and version
+        id: manifest
+        run: |
+          sed -nE 's/^id = "(.*)"$/id=\1/p;s/^version = "(.*)"$/version=\1/p' \
+            extension.toml | head -2 >> "$GITHUB_OUTPUT"
+
+      - name: Build the extension
+        run: |
+          rustup target add wasm32-wasip2
+          cargo build --release --target wasm32-wasip2
+
+      - name: Assemble the package
+        env:
+          ID: ${{ steps.manifest.outputs.id }}
+        run: |
+          mkdir -p "stage/$ID"
+          cp extension.toml "stage/$ID/"
+          cp target/wasm32-wasip2/release/zed_b2c_debug.wasm "stage/$ID/extension.wasm"
+          cp -r schemas tools "stage/$ID/"
+          cp README.md "stage/$ID/"
+          cp packaging/install.ps1 stage/
+          ( cd stage && zip -qr "../$ID-${{ steps.manifest.outputs.version }}.zip" . )
+          unzip -l "$ID-${{ steps.manifest.outputs.version }}.zip"
+
+      # A green run has to mean the zip is usable, since nobody reads the logs.
+      # tools/adapter.js especially: without it the extension installs and then
+      # falls back to the CLI's own adapter, which binds no breakpoints.
+      - name: Check the package
+        env:
+          ID: ${{ steps.manifest.outputs.id }}
+        run: |
+          for file in extension.toml extension.wasm tools/adapter.js schemas/b2c.json; do
+            test -f "stage/$ID/$file" || { echo "missing $file"; exit 1; }
+          done
+          test -f stage/install.ps1 || { echo "missing install.ps1"; exit 1; }
+          grep -qa 'zed:api-version' "stage/$ID/extension.wasm" \
+            || { echo 'extension.wasm has no zed:api-version section'; exit 1; }
+          node --check "stage/$ID/tools/adapter.js"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: "*.zip"
+
+      - name: Attach it to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.zip"

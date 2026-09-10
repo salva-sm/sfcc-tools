@@ -55,7 +55,10 @@ if ($grammars) {
     $grammars | Copy-Item -Destination "$payload\grammars"
 }
 
-foreach ($dir in @('languages', 'themes', 'icon_themes', 'icons', 'schemas', 'snippets')) {
+# `tools` matters here: bundled_adapter() resolves tools/adapter.js inside the
+# installed directory, so a zip without it installs and then quietly falls back
+# to the CLI's own broken DAP adapter.
+foreach ($dir in @('languages', 'themes', 'icon_themes', 'icons', 'schemas', 'snippets', 'tools')) {
     $source = Join-Path $ExtensionDir $dir
     if (Test-Path $source) { Copy-Item $source $payload -Recurse }
 }
