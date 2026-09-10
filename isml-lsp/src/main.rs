@@ -14,6 +14,7 @@ mod workspace;
 
 use std::collections::HashMap;
 use std::error::Error;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use lsp_server::{Connection, ExtractError, Message, Request, RequestId, Response};
@@ -29,6 +30,11 @@ use lsp_types::{
 use crate::workspace::Workspace;
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
+    if let Some(message) = greeting() {
+        println!("{message}");
+        return Ok(());
+    }
+
     let (connection, io_threads) = Connection::stdio();
 
     let capabilities = serde_json::to_value(ServerCapabilities {
@@ -136,6 +142,29 @@ impl Server {
             }
             _ => {}
         }
+    }
+}
+
+/// Run by hand, a language server looks broken: it sits waiting for a
+/// handshake on stdin that a person is never going to type. Say so instead.
+fn greeting() -> Option<String> {
+    const USAGE: &str = concat!(
+        "isml-lsp ",
+        env!("CARGO_PKG_VERSION"),
+        "\n\n",
+        "This is a language server, not a command. Zed starts it and speaks LSP to it\n",
+        "over stdin, so running it yourself does nothing visible.\n\n",
+        "Install the ISML extension in Zed instead; it picks this binary up from PATH,\n",
+        "or downloads its own copy when it is not there.\n",
+        "https://github.com/salva-sm/sfcc-zed-isml"
+    );
+
+    match std::env::args().nth(1).as_deref() {
+        Some("--version" | "-V") => Some(format!("isml-lsp {}", env!("CARGO_PKG_VERSION"))),
+        Some("--help" | "-h") => Some(USAGE.to_string()),
+        // Any other argument is left alone: an editor may pass its own flags.
+        _ if std::io::stdin().is_terminal() => Some(USAGE.to_string()),
+        _ => None,
     }
 }
 
