@@ -1,0 +1,16 @@
+id = "isml"
+name = "ISML (Salesforce B2C Commerce)"
+description = "Syntax highlighting for ISML templates, plus go-to-definition on template=, require() and Resource.msg paths."
+version = "0.1.0"
+schema_version = 1
+authors = ["salva-sm"]
+repository = "https://github.com/salva-sm/sfcc-zed-isml"
+
+[grammars.isml]
+repository = "https://github.com/salva-sm/sfcc-zed-isml"
+commit = "0000000000000000000000000000000000000000"
+path = "grammar"
+
+[language_servers.isml-lsp]
+name = "SFCC paths"
+languages = ["ISML", "JavaScript"]

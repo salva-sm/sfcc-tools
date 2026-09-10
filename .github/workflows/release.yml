@@ -1,0 +1,68 @@
+name: Release
+
+# Publishes the isml-lsp binaries the extension downloads when the server is
+# not already on the user's PATH. Asset names must stay in sync with
+# `download_binary` in extension/src/isml.rs:
+#   isml-lsp-<x86_64|aarch64>-<windows|macos|linux>.<zip|tar.gz>
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: isml-lsp-x86_64-linux.tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset: isml-lsp-aarch64-linux.tar.gz
+          - os: macos-13
+            target: x86_64-apple-darwin
+            asset: isml-lsp-x86_64-macos.tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: isml-lsp-aarch64-macos.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: isml-lsp-x86_64-windows.zip
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+        working-directory: isml-lsp
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: tar -czf "${{ matrix.asset }}" -C "isml-lsp/target/${{ matrix.target }}/release" isml-lsp
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "isml-lsp/target/${{ matrix.target }}/release/isml-lsp.exe" -DestinationPath "${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: isml-lsp-*
+          generate_release_notes: true
