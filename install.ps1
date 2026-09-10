@@ -15,7 +15,9 @@
 [CmdletBinding()]
 param(
     [switch] $LocalGrammar,
-    [switch] $PinGrammar
+    [switch] $PinGrammar,
+    # Only touch the manifest; useful while Zed is running the server.
+    [switch] $SkipServer
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,9 +40,17 @@ function Set-Grammar([string] $Url, [string] $Commit) {
     Write-Host "    grammar -> $Url @ $Commit" -ForegroundColor DarkGray
 }
 
-Write-Host '==> Building isml-lsp' -ForegroundColor Cyan
-cargo install --path "$root\isml-lsp" --force
-if ($LASTEXITCODE -ne 0) { throw "cargo install failed ($LASTEXITCODE)" }
+if (-not $SkipServer) {
+    # Zed keeps the server running, and Windows will not let cargo overwrite a
+    # running executable.
+    if (Get-Process isml-lsp -ErrorAction SilentlyContinue) {
+        throw 'isml-lsp is running. Quit Zed (or `Stop-Process -Name isml-lsp`) and retry, or pass -SkipServer.'
+    }
+
+    Write-Host '==> Building isml-lsp' -ForegroundColor Cyan
+    cargo install --path "$root\isml-lsp" --force
+    if ($LASTEXITCODE -ne 0) { throw "cargo install failed ($LASTEXITCODE)" }
+}
 
 if ($LocalGrammar) {
     # Zed fetches grammars with git, so a work-in-progress grammar needs a
