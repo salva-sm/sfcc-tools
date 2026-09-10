@@ -1,7 +1,7 @@
 id = "isml"
 name = "ISML (Salesforce B2C Commerce)"
 description = "Syntax highlighting for ISML templates, plus go-to-definition on template=, require() and Resource.msg paths."
-version = "0.1.2"
+version = "0.1.3"
 schema_version = 1
 authors = ["salva-sm"]
 repository = "https://github.com/salva-sm/sfcc-zed-isml"

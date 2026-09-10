@@ -67,7 +67,7 @@ jobs:
           cp -r payload/grammars "stage/$ID/"
           cp -r extension/languages "stage/$ID/"
           cp LICENSE README.md "stage/$ID/"
-          cp packaging/install.ps1 stage/
+          cp packaging/install.ps1 packaging/install.cmd stage/
           ( cd stage && zip -qr "../$ID-${{ steps.manifest.outputs.version }}.zip" . )
           unzip -l "$ID-${{ steps.manifest.outputs.version }}.zip"
 
@@ -79,7 +79,9 @@ jobs:
           for file in extension.toml extension.wasm grammars/isml.wasm languages/isml/config.toml; do
             test -f "stage/$ID/$file" || { echo "missing $file"; exit 1; }
           done
-          test -f stage/install.ps1 || { echo "missing install.ps1"; exit 1; }
+          for helper in install.ps1 install.cmd; do
+            test -f "stage/$helper" || { echo "missing $helper"; exit 1; }
+          done
           grep -qa 'zed:api-version' "stage/$ID/extension.wasm" \
             || { echo 'extension.wasm has no zed:api-version section'; exit 1; }
           grep -qa 'tree_sitter_isml' "stage/$ID/grammars/isml.wasm" \
