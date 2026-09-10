@@ -43,7 +43,7 @@ jobs:
           cp target/wasm32-wasip2/release/zed_b2c_debug.wasm "stage/$ID/extension.wasm"
           cp -r schemas tools "stage/$ID/"
           cp README.md "stage/$ID/"
-          cp packaging/install.ps1 stage/
+          cp packaging/install.ps1 packaging/install.cmd stage/
           ( cd stage && zip -qr "../$ID-${{ steps.manifest.outputs.version }}.zip" . )
           unzip -l "$ID-${{ steps.manifest.outputs.version }}.zip"
 
@@ -57,7 +57,9 @@ jobs:
           for file in extension.toml extension.wasm tools/adapter.js schemas/b2c.json; do
             test -f "stage/$ID/$file" || { echo "missing $file"; exit 1; }
           done
-          test -f stage/install.ps1 || { echo "missing install.ps1"; exit 1; }
+          for helper in install.ps1 install.cmd; do
+            test -f "stage/$helper" || { echo "missing $helper"; exit 1; }
+          done
           grep -qa 'zed:api-version' "stage/$ID/extension.wasm" \
             || { echo 'extension.wasm has no zed:api-version section'; exit 1; }
           node --check "stage/$ID/tools/adapter.js"

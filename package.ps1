@@ -1,7 +1,7 @@
 # Packages a *built* Zed dev extension into a zip a teammate can drop in
 # without any toolchain: no Rust, no cargo, no tree-sitter, no clang.
 #
-#   .\package.ps1                                        # this repo
+#   .\package.ps1                                          # this repo
 #   .\package.ps1 -ExtensionDir C:\dev\zed-isml\extension  # any other one
 #
 # It ships only what Zed loads at runtime — the same layout it keeps in
@@ -55,9 +55,9 @@ if ($grammars) {
     $grammars | Copy-Item -Destination "$payload\grammars"
 }
 
-# `tools` matters here: bundled_adapter() resolves tools/adapter.js inside the
-# installed directory, so a zip without it installs and then quietly falls back
-# to the CLI's own broken DAP adapter.
+# `tools` matters: an extension that ships a launcher script resolves it inside
+# its own installed directory, so leaving it out yields a zip that installs and
+# then quietly misbehaves.
 foreach ($dir in @('languages', 'themes', 'icon_themes', 'icons', 'schemas', 'snippets', 'tools')) {
     $source = Join-Path $ExtensionDir $dir
     if (Test-Path $source) { Copy-Item $source $payload -Recurse }
@@ -73,38 +73,10 @@ foreach ($exe in $Binary) {
     Copy-Item $exe "$stage\bin"
 }
 
-# The installer the teammate runs.
-$installer = @"
-# Installs the $id extension into Zed. No toolchain required.
-`$ErrorActionPreference = 'Stop'
-`$id = '$id'
-`$installed = "`$env:LOCALAPPDATA\Zed\extensions\installed\`$id"
-
-if (Test-Path `$installed) { Remove-Item -Recurse -Force `$installed }
-New-Item -ItemType Directory -Force -Path (Split-Path `$installed) | Out-Null
-Copy-Item "`$PSScriptRoot\`$id" `$installed -Recurse
-Write-Host "Installed `$id into `$installed" -ForegroundColor Green
-
-if (Test-Path "`$PSScriptRoot\bin") {
-    `$binDir = "`$env:LOCALAPPDATA\Zed\extensions\bin"
-    New-Item -ItemType Directory -Force -Path `$binDir | Out-Null
-    Copy-Item "`$PSScriptRoot\bin\*" `$binDir -Force
-
-    Write-Host ''
-    Write-Host 'This extension ships a language server:' -ForegroundColor Yellow
-    Get-ChildItem "`$PSScriptRoot\bin" -Filter *.exe | ForEach-Object {
-        Write-Host ('  ' + (Join-Path `$binDir `$_.Name)) -ForegroundColor Yellow
-    }
-    Write-Host 'The extension finds it on PATH. Add the folder once:' -ForegroundColor Yellow
-    Write-Host ('  setx PATH "' + `$binDir + ';%PATH%"') -ForegroundColor Yellow
-    Write-Host 'or set lsp.<server-name>.binary.path to that file in settings.json.' -ForegroundColor Yellow
-    Write-Host 'Restart Zed afterwards so it picks up the new PATH.' -ForegroundColor Yellow
-}
-
-Write-Host ""
-Write-Host "Zed watches that folder, so it picks the extension up right away." -ForegroundColor Green
-"@
-Set-Content -Path "$stage\install.ps1" -Value $installer -Encoding UTF8
+# One installer, shared with the CI packaging job. The .cmd is what a teammate
+# actually double-clicks: a downloaded .ps1 is blocked by the default execution
+# policy.
+Copy-Item "$PSScriptRoot\packaging\install.ps1", "$PSScriptRoot\packaging\install.cmd" $stage
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $zip = Join-Path $OutDir "$id-$version.zip"
@@ -114,4 +86,4 @@ Remove-Item -Recurse -Force $stage
 
 Write-Host ""
 Write-Host "  $zip  ($([math]::Round((Get-Item $zip).Length / 1KB)) KB)" -ForegroundColor Green
-Write-Host '  Teammate: unzip anywhere, run install.ps1.' -ForegroundColor Green
+Write-Host '  Teammate: unzip anywhere, run install.cmd.' -ForegroundColor Green

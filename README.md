@@ -44,7 +44,8 @@ Not in the Zed registry, so there are two ways in.
 
 **From a zip — nothing to build.** Take `b2c-debug-<version>.zip` from
 [Releases](https://github.com/salva-sm/sfcc-zed-debugger/releases), unzip it anywhere and run
-the `install.ps1` inside. It drops the extension into
+the `install.cmd` inside — Windows blocks a downloaded `.ps1` under the default
+execution policy, and the `.cmd` gets past it without changing anything on the machine. It drops the extension into
 `%LOCALAPPDATA%\Zed\extensions\installed`, which Zed watches, so it is picked up without a
 restart.
 
