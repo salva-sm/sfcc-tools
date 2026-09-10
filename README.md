@@ -127,6 +127,11 @@ git tag v0.1.0 ; git push --tags
 attaches the archives with the names `download_binary` in `extension/src/isml.rs`
 expects. Keep those two in sync.
 
+Switching the grammar between the local copy and this repo leaves a checkout in
+`extension/grammars/` pointing at the old URL, and Zed refuses to reuse it —
+*"already exists, but is not a git clone of ..."*. `install.ps1` deletes it whenever it
+rewrites the pointer; if you edit `extension.toml` by hand, delete it yourself.
+
 Note the chicken-and-egg in `[grammars.isml]`: the grammar lives in this repo, so the
 pinned commit is always an earlier one. That is fine — it only has to be a commit whose
 `grammar/` is the version you want.
