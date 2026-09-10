@@ -8,7 +8,7 @@ repository = "https://github.com/salva-sm/sfcc-zed-isml"
 
 [grammars.isml]
 repository = "https://github.com/salva-sm/sfcc-zed-isml"
-commit = "0000000000000000000000000000000000000000"
+commit = "95a2f7edd300d157f3c373b4ec073f6490cbe3dc"
 path = "grammar"
 
 [language_servers.isml-lsp]
