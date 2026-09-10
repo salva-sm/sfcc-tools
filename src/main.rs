@@ -1,5 +1,6 @@
 mod config;
 mod daemon;
+mod errors;
 mod logging;
 mod githook;
 mod manifest;
@@ -108,6 +109,13 @@ enum Command {
         page runs, and only the sandbox log records them. Today's files of the chosen levels are \
         followed from the end, and stack frames are printed as local paths the terminal can open.")]
     Logger(TailArgs),
+    /// Report what the sandbox logged since you marked it
+    #[command(long_about = "Report what the sandbox logged since you marked it.\n\n\
+        `--mark` records how long today's log files are; reproduce whatever you are testing, \
+        then run it again with no arguments to see only what your change produced. Repeats of \
+        one failure collapse into a single block with a count. Exits 1 when there is something \
+        new, so it chains: `prost errors --mark && npm test && prost errors`.")]
+    Errors(ErrorsArgs),
     /// Make the code version the active one, through the Data API
     #[command(long_about = "Make a code version the active one on the sandbox.\n\n\
         WebDAV cannot do this, so it goes through the OCAPI Data API and needs an API client in \
@@ -144,6 +152,19 @@ struct TailArgs {
     /// Seconds between polls
     #[arg(long, value_name = "SECONDS", default_value_t = 3)]
     interval: u64,
+    /// Colour the output: auto, always, never
+    #[arg(long, value_name = "WHEN", default_value = "auto")]
+    color: String,
+}
+
+#[derive(Args)]
+struct ErrorsArgs {
+    /// Record the current end of the log instead of reporting
+    #[arg(long)]
+    mark: bool,
+    /// Log levels to look at, comma separated, or "all"
+    #[arg(long, value_name = "LIST", default_value = tail::DEFAULT_LEVELS)]
+    level: String,
     /// Colour the output: auto, always, never
     #[arg(long, value_name = "WHEN", default_value = "auto")]
     color: String,
@@ -305,6 +326,21 @@ async fn run(cli: Cli) -> Result<()> {
                 color: tail::color_enabled(&args.color),
             };
             tail::follow(&ctx, options).await
+        }
+        Command::Errors(args) => {
+            let ctx = Ctx::new(config, jobs)?;
+            let levels = tail::parse_levels(&args.level);
+            if args.mark {
+                return errors::mark(&ctx, &levels).await;
+            }
+
+            let options = errors::ReportOptions { levels, color: tail::color_enabled(&args.color) };
+            if errors::report(&ctx, options).await? {
+                // Not a failure of the command, so it cannot travel as an Err:
+                // it is the answer, and it makes the command chainable.
+                std::process::exit(1);
+            }
+            Ok(())
         }
     }
 }
