@@ -1,0 +1,97 @@
+name: Extension zip
+
+# Builds the drop-in zip a teammate installs without any toolchain, and
+# attaches it to the release for a `v*` tag.
+#
+# It reproduces what Zed's own extension builder does when you run
+# `zed: install dev extension` (crates/extension/src/extension_builder.rs):
+#
+#   * cargo build --release --target wasm32-wasip2   -> extension.wasm
+#   * wasi-sdk clang -fPIC -shared -Os -Wl,--export=tree_sitter_<name>
+#                                                    -> grammars/<name>.wasm
+#
+# Zed additionally strips custom sections from extension.wasm, which is a size
+# optimisation: the `zed:api-version` section it reads at load time is present
+# either way.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Matches the version Zed 0.2x downloads for itself.
+  WASI_SDK_VERSION: "25"
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the extension id and version
+        id: manifest
+        run: |
+          sed -nE 's/^id = "(.*)"$/id=\1/p;s/^version = "(.*)"$/version=\1/p' \
+            extension/extension.toml | head -2 >> "$GITHUB_OUTPUT"
+
+      - name: Build the extension
+        run: |
+          rustup target add wasm32-wasip2
+          cargo build --release --target wasm32-wasip2
+        working-directory: extension
+
+      - name: Install wasi-sdk
+        run: |
+          url="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"
+          curl -sSL "$url" | tar -xz
+          echo "$PWD/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux/bin" >> "$GITHUB_PATH"
+
+      - name: Build the grammar
+        run: |
+          mkdir -p payload/grammars
+          clang -fPIC -shared -Os -Wl,--export=tree_sitter_isml \
+            -o payload/grammars/isml.wasm \
+            -I grammar/src grammar/src/parser.c grammar/src/scanner.c
+
+      - name: Assemble the package
+        env:
+          ID: ${{ steps.manifest.outputs.id }}
+        run: |
+          mkdir -p "stage/$ID"
+          cp extension/extension.toml "stage/$ID/"
+          cp extension/target/wasm32-wasip2/release/zed_isml.wasm "stage/$ID/extension.wasm"
+          cp -r payload/grammars "stage/$ID/"
+          cp -r extension/languages "stage/$ID/"
+          cp LICENSE README.md "stage/$ID/"
+          cp packaging/install.ps1 stage/
+          ( cd stage && zip -qr "../$ID-${{ steps.manifest.outputs.version }}.zip" . )
+          unzip -l "$ID-${{ steps.manifest.outputs.version }}.zip"
+
+      # A green run has to mean the zip is usable, since nobody reads the logs.
+      - name: Check the package
+        env:
+          ID: ${{ steps.manifest.outputs.id }}
+        run: |
+          for file in extension.toml extension.wasm grammars/isml.wasm languages/isml/config.toml; do
+            test -f "stage/$ID/$file" || { echo "missing $file"; exit 1; }
+          done
+          test -f stage/install.ps1 || { echo "missing install.ps1"; exit 1; }
+          grep -qa 'zed:api-version' "stage/$ID/extension.wasm" \
+            || { echo 'extension.wasm has no zed:api-version section'; exit 1; }
+          grep -qa 'tree_sitter_isml' "stage/$ID/grammars/isml.wasm" \
+            || { echo 'the grammar does not export tree_sitter_isml'; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: "*.zip"
+
+      - name: Attach it to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.zip"

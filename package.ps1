@@ -70,38 +70,8 @@ foreach ($exe in $Binary) {
     Copy-Item $exe "$stage\bin"
 }
 
-# The installer the teammate runs.
-$installer = @"
-# Installs the $id extension into Zed. No toolchain required.
-`$ErrorActionPreference = 'Stop'
-`$id = '$id'
-`$installed = "`$env:LOCALAPPDATA\Zed\extensions\installed\`$id"
-
-if (Test-Path `$installed) { Remove-Item -Recurse -Force `$installed }
-New-Item -ItemType Directory -Force -Path (Split-Path `$installed) | Out-Null
-Copy-Item "`$PSScriptRoot\`$id" `$installed -Recurse
-Write-Host "Installed `$id into `$installed" -ForegroundColor Green
-
-if (Test-Path "`$PSScriptRoot\bin") {
-    `$binDir = "`$env:LOCALAPPDATA\Zed\extensions\bin"
-    New-Item -ItemType Directory -Force -Path `$binDir | Out-Null
-    Copy-Item "`$PSScriptRoot\bin\*" `$binDir -Force
-
-    Write-Host ''
-    Write-Host 'This extension ships a language server:' -ForegroundColor Yellow
-    Get-ChildItem "`$PSScriptRoot\bin" -Filter *.exe | ForEach-Object {
-        Write-Host ('  ' + (Join-Path `$binDir `$_.Name)) -ForegroundColor Yellow
-    }
-    Write-Host 'The extension finds it on PATH. Add the folder once:' -ForegroundColor Yellow
-    Write-Host ('  setx PATH "' + `$binDir + ';%PATH%"') -ForegroundColor Yellow
-    Write-Host 'or set lsp.<server-name>.binary.path to that file in settings.json.' -ForegroundColor Yellow
-    Write-Host 'Restart Zed afterwards so it picks up the new PATH.' -ForegroundColor Yellow
-}
-
-Write-Host ""
-Write-Host "Zed watches that folder, so it picks the extension up right away." -ForegroundColor Green
-"@
-Set-Content -Path "$stage\install.ps1" -Value $installer -Encoding UTF8
+# One installer, shared with the CI packaging job.
+Copy-Item "$PSScriptRoot\packaging\install.ps1" $stage
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $zip = Join-Path $OutDir "$id-$version.zip"
