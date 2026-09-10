@@ -1,6 +1,6 @@
 id = "b2c-debug"
 name = "B2C Commerce Debugger"
-version = "0.2.0"
+version = "0.2.1"
 schema_version = 1
 authors = ["salva-sm"]
 description = "Debug server-side Salesforce B2C Commerce scripts in Zed, through the debug adapter shipped with the official b2c CLI."

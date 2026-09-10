@@ -1,21 +1,58 @@
 // Speaks DAP to the editor and JSONL to `b2c debug cli --rpc`, because the CLI's own DAP
 // adapter never emits `initialized` and binds no breakpoints. Arguments are forwarded as
 // given; both conversations are recorded in B2C_DAP_LOG, or b2c-dap.log in the temp dir.
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const ENTRY = process.env.B2C_ADAPTER_ENTRY
-    || path.join(os.homedir(), 'AppData/Local/Volta/tools/image/packages/@salesforce/b2c-cli/node_modules/@salesforce/b2c-cli/bin/run.js');
-
 const log = fs.createWriteStream(process.env.B2C_DAP_LOG || path.join(os.tmpdir(), 'b2c-dap.log'), { flags: 'w' });
 const note = (text) => log.write(`[${new Date().toISOString().slice(11, 23)}] ${text}\n`);
 
+// The CLI is never bundled, only located. What gets run is its JS entry point,
+// because a global install exposes a shell shim that node cannot execute.
+function entryPoint() {
+    if (process.env.B2C_ADAPTER_ENTRY) {
+        return process.env.B2C_ADAPTER_ENTRY;
+    }
+    try {
+        // Covers a plain `npm install -g` and Volta alike, as Volta shims npm too.
+        const globalRoot = execFileSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true }).trim();
+        return require.resolve('@salesforce/b2c-cli/bin/run.js', { paths: [globalRoot] });
+    } catch (error) {
+        note(`could not resolve @salesforce/b2c-cli through npm: ${error.message}`);
+        return null;
+    }
+}
+
+// Falls back to the `b2c` command the extension resolved on PATH, which on
+// Windows is a .cmd shim and therefore needs a shell.
+function invocation(args) {
+    const entry = entryPoint();
+    if (entry) {
+        return { command: process.execPath, args: [entry, ...args], shell: false };
+    }
+
+    const resolved = process.env.B2C_CLI || 'b2c';
+    return { command: resolved, args, shell: /\.(cmd|bat|ps1)$/i.test(resolved) };
+}
+
 const forwarded = process.argv.slice(2).filter((argument) => argument !== 'debug');
-const cli = spawn(process.execPath, [ENTRY, 'debug', 'cli', '--rpc', ...forwarded], {
+const start = invocation(['debug', 'cli', '--rpc', ...forwarded]);
+note(`starting the CLI: ${start.command} ${start.args.join(' ')}`);
+
+const cli = spawn(start.command, start.args, {
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
+    shell: start.shell,
+});
+cli.on('error', (error) => {
+    note(`the CLI could not be started: ${error.message}`);
+    process.stderr.write(
+        `[b2c-debug] cannot start the b2c CLI (${error.message}).\n`
+        + '[b2c-debug] install it with `npm install -g @salesforce/b2c-cli`, '
+        + 'or set B2C_ADAPTER_ENTRY to its bin/run.js.\n',
+    );
 });
 
 let ready = false;

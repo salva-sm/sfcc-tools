@@ -70,10 +70,17 @@ impl zed::Extension for B2cDebugExtension {
 
         eprintln!("[b2c-debug] launching: {command} {}", arguments.join(" "));
 
+        // The bundled adapter has no PATH lookup of its own, so hand it the CLI
+        // resolved here; without it, it falls back to `npm root -g`.
+        let mut envs = worktree.shell_env();
+        if let Some(cli) = worktree.which(BINARY) {
+            envs.push(("B2C_CLI".to_string(), cli));
+        }
+
         Ok(DebugAdapterBinary {
             command: Some(command),
             arguments,
-            envs: worktree.shell_env(),
+            envs,
             cwd: Some(root),
             connection: None,
             request_args: StartDebuggingRequestArguments {
