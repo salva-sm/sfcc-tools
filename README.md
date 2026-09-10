@@ -7,6 +7,24 @@ is Prophet plus Rust.
 
 Reads the same `dw.json` as Prophet, talks WebDAV, uploads only what changed.
 
+## Install
+
+Download the binary for your platform from the
+[latest release](https://github.com/salva-sm/prost/releases/latest) and put it on your
+`PATH`. No toolchain needed; the download URL is stable, so this always gets the newest:
+
+```powershell
+# Windows
+curl -L -o prost.exe https://github.com/salva-sm/prost/releases/latest/download/prost-x86_64-windows.exe
+```
+
+```bash
+# macOS (Apple silicon) / Linux — swap aarch64 for x86_64 as needed
+curl -L https://github.com/salva-sm/prost/releases/latest/download/prost-aarch64-macos.tar.gz | tar -xz
+```
+
+To build it yourself instead, see [Building](#building).
+
 ## Usage
 
 Run it anywhere inside the repository; `dw.json` is found by walking up.
