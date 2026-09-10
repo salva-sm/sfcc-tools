@@ -22,7 +22,8 @@ The extension is not in the Zed registry yet. Two ways in:
 **From a release zip** — nothing to build, no toolchain:
 
 1. Download `isml-<version>.zip` from [Releases](https://github.com/salva-sm/sfcc-zed-isml/releases).
-2. Unzip it anywhere and run `install.ps1`.
+2. Unzip it anywhere and run `install.cmd`. (Windows blocks a downloaded `.ps1`
+   under the default execution policy; the `.cmd` next to it is the way past that.)
 
 **From source** — needs Rust:
 

@@ -73,8 +73,10 @@ foreach ($exe in $Binary) {
     Copy-Item $exe "$stage\bin"
 }
 
-# One installer, shared with the CI packaging job.
-Copy-Item "$PSScriptRoot\packaging\install.ps1" $stage
+# One installer, shared with the CI packaging job. The .cmd is what a teammate
+# actually double-clicks: a downloaded .ps1 is blocked by the default execution
+# policy.
+Copy-Item "$PSScriptRoot\packaging\install.ps1", "$PSScriptRoot\packaging\install.cmd" $stage
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $zip = Join-Path $OutDir "$id-$version.zip"
@@ -84,4 +86,4 @@ Remove-Item -Recurse -Force $stage
 
 Write-Host ""
 Write-Host "  $zip  ($([math]::Round((Get-Item $zip).Length / 1KB)) KB)" -ForegroundColor Green
-Write-Host '  Teammate: unzip anywhere, run install.ps1.' -ForegroundColor Green
+Write-Host '  Teammate: unzip anywhere, run install.cmd.' -ForegroundColor Green
