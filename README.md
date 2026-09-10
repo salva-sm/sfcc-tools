@@ -87,15 +87,27 @@ Zed has no "install from file" command, but it *watches*
 `%LOCALAPPDATA%\Zed\extensions\installed` and re-indexes whatever appears there, so a
 prebuilt folder is all a teammate needs — no Rust, no cargo, no tree-sitter, no clang.
 
+**CI builds that zip on every push**, in `extension-zip.yml`, and attaches it to the release
+on a tag — so normally there is nothing to do by hand. It reproduces what Zed's own builder
+does: `cargo build --release --target wasm32-wasip2` for `extension.wasm`, and the wasi-sdk
+clang with Zed's flags for `grammars/isml.wasm`. Zed additionally strips custom sections from
+the wasm, which is a size optimisation; the `zed:api-version` section it reads at load time
+survives either way. The job asserts the result is complete before uploading it, so a green
+run means an installable zip.
+
+To build one locally instead — the only way to include the language server binary, which the
+CI zip leaves out because the extension downloads it:
+
 ```powershell
 .\package.ps1 -Binary C:\rust\cargo\bin\isml-lsp.exe   # -> dist\isml-0.1.0.zip
 .\package.ps1 -ExtensionDir C:\dev\zed-b2c-debug       # any other extension
 ```
 
-`package.ps1` ships only what Zed loads at runtime — `extension.toml`, `extension.wasm`,
-`grammars\*.wasm`, `languages\` — plus a generated `install.ps1` the teammate runs after
-unzipping. Zed builds `extension.wasm` and the grammar `.wasm` when *you* run
-`zed: install dev extension`, so install it here at least once before packaging.
+Either way the payload is only what Zed loads at runtime — `extension.toml`,
+`extension.wasm`, `grammars\*.wasm`, `languages\` — plus `packaging/install.ps1`, which both
+routes copy verbatim so the two zips cannot drift apart. `package.ps1` needs an
+`extension.wasm`, and Zed writes that when you run `zed: install dev extension`, so install
+the extension here at least once before packaging locally.
 
 Note that installing the package on this machine replaces the dev-extension symlink with
 a static copy; re-run `zed: install dev extension` to go back to developing.
