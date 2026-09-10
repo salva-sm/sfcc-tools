@@ -37,6 +37,13 @@ function Set-Grammar([string] $Url, [string] $Commit) {
 
     $content = $content.Remove($section.Index, $section.Length).Insert($section.Index, $block)
     Set-Content -Path $manifestPath -Value $content -NoNewline
+
+    # Zed will not re-point an existing checkout: it refuses with "already
+    # exists, but is not a git clone of ...". Drop it so the next install
+    # clones the URL we just wrote.
+    $checkout = "$root\extension\grammars"
+    if (Test-Path $checkout) { Remove-Item -Recurse -Force $checkout }
+
     Write-Host "    grammar -> $Url @ $Commit" -ForegroundColor DarkGray
 }
 
