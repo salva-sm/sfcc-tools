@@ -64,6 +64,10 @@ struct Cli {
     #[arg(long, global = true)]
     allow_shared_instance: bool,
 
+    /// Colour the output: auto, always, never
+    #[arg(long, global = true, value_name = "WHEN", default_value = "auto")]
+    color: String,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -152,9 +156,6 @@ struct TailArgs {
     /// Seconds between polls
     #[arg(long, value_name = "SECONDS", default_value_t = 3)]
     interval: u64,
-    /// Colour the output: auto, always, never
-    #[arg(long, value_name = "WHEN", default_value = "auto")]
-    color: String,
 }
 
 #[derive(Args)]
@@ -165,9 +166,6 @@ struct ErrorsArgs {
     /// Log levels to look at, comma separated, or "all"
     #[arg(long, value_name = "LIST", default_value = tail::DEFAULT_LEVELS)]
     level: String,
-    /// Colour the output: auto, always, never
-    #[arg(long, value_name = "WHEN", default_value = "auto")]
-    color: String,
 }
 
 #[derive(Args)]
@@ -262,6 +260,7 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<()> {
+    logging::configure_color(&cli.color);
     let mut config = Config::load(cli.config.clone(), cli.code_version.clone())?;
     if !cli.cartridge.is_empty() {
         config.cartridge_filter = Some(cli.cartridge.clone());
@@ -323,7 +322,6 @@ async fn run(cli: Cli) -> Result<()> {
                 levels: tail::parse_levels(&args.level),
                 interval: Duration::from_secs(args.interval.max(1)),
                 lines: args.lines,
-                color: tail::color_enabled(&args.color),
             };
             tail::follow(&ctx, options).await
         }
@@ -334,7 +332,7 @@ async fn run(cli: Cli) -> Result<()> {
                 return errors::mark(&ctx, &levels).await;
             }
 
-            let options = errors::ReportOptions { levels, color: tail::color_enabled(&args.color) };
+            let options = errors::ReportOptions { levels };
             if errors::report(&ctx, options).await? {
                 // Not a failure of the command, so it cannot travel as an Err:
                 // it is the answer, and it makes the command chainable.
@@ -487,7 +485,8 @@ async fn clean(config: Config, jobs: usize, args: CleanArgs) -> Result<()> {
         logging::ok(format!("code version {} deleted", ctx.config.code_version));
     } else {
         let deleted = push::delete_paths(&ctx, &names).await?;
-        logging::ok(format!("{deleted} cartridge folder(s) deleted"));
+        logging::changes(logging::Change::Deleted, &deleted);
+        logging::ok(format!("{} cartridge folder(s) deleted", deleted.len()));
     }
     let _ = std::fs::remove_file(&ctx.manifest_path);
     Ok(())

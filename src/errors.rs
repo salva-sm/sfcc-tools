@@ -30,7 +30,6 @@ pub struct Mark {
 
 pub struct ReportOptions {
     pub levels: Vec<String>,
-    pub color: bool,
 }
 
 fn mark_path(config: &Config) -> PathBuf {
@@ -87,7 +86,7 @@ pub async fn report(ctx: &Ctx, options: ReportOptions) -> Result<bool> {
         groups.len()
     ));
 
-    let printer = Printer::plain(&ctx.config.cartridges_dir, options.color);
+    let printer = Printer::plain(&ctx.config.cartridges_dir);
     for group in &groups {
         if group.times.len() > 1 {
             let first = group.times.first().map(String::as_str).unwrap_or("");

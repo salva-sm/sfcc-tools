@@ -1,5 +1,5 @@
 use crate::daemon;
-use crate::logging;
+use crate::logging::{self, Change};
 use crate::manifest::Manifest;
 use crate::push::{Ctx, PushOptions, delete_paths, push, select_changed, upload_files};
 use crate::reload::{Browser, worth_reloading};
@@ -143,7 +143,8 @@ async fn transfer(ctx: &Ctx, manifest: &mut Manifest, work: Work) -> Result<Vec<
     let mut sent = work.removals.clone();
 
     if !work.removals.is_empty() {
-        delete_paths(ctx, &work.removals).await?;
+        let gone = delete_paths(ctx, &work.removals).await?;
+        logging::changes(Change::Deleted, &gone);
         for path in &work.removals {
             manifest.forget(path);
             manifest.forget_prefix(path);
@@ -159,12 +160,7 @@ async fn transfer(ctx: &Ctx, manifest: &mut Manifest, work: Work) -> Result<Vec<
     for (relative, entry) in recorded {
         manifest.record(relative, entry);
     }
-    for name in names.iter().take(20) {
-        logging::upload(name);
-    }
-    if names.len() > 20 {
-        logging::info(format!("... and {} more file(s)", names.len() - 20));
-    }
+    logging::changes(Change::Uploaded, &names);
 
     sent.extend(names);
     Ok(sent)
