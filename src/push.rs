@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::logging;
+use crate::logging::{self, Change};
 use crate::manifest::{Entry, Manifest, hash_file, manifest_path};
 use crate::scan::{Ignore, LocalFile, cartridge_directories, scan};
 use crate::webdav::Dav;
@@ -72,12 +72,9 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
     ));
 
     if options.dry_run {
-        for file in changed.iter().take(50) {
-            crate::out!("  + {}", file.relative);
-        }
-        for path in removed.iter().take(50) {
-            crate::out!("  - {path}");
-        }
+        let names: Vec<String> = changed.iter().map(|file| file.relative.clone()).collect();
+        logging::listing(Change::Uploaded, &names);
+        logging::listing(Change::Deleted, &removed);
         return Ok(Stats {
             uploaded: changed.len(),
             deleted: removed.len(),
@@ -110,7 +107,9 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
 
     let mut deleted = 0;
     if failure.is_none() && !removed.is_empty() {
-        deleted = delete_paths(ctx, &removed).await?;
+        let gone = delete_paths(ctx, &removed).await?;
+        logging::changes(Change::Deleted, &gone);
+        deleted = gone.len();
         for path in &removed {
             manifest.forget(path);
         }
@@ -201,26 +200,29 @@ pub async fn upload_files(
     }
 }
 
-pub async fn delete_paths(ctx: &Ctx, paths: &[String]) -> Result<usize> {
+/// Deletes the outermost of the given paths and answers with the ones that were
+/// really there, for the caller to report as one group.
+pub async fn delete_paths(ctx: &Ctx, paths: &[String]) -> Result<Vec<String>> {
     let roots = outermost(paths);
-    let deleted = stream::iter(roots.iter())
+    let mut deleted: Vec<String> = stream::iter(roots)
         .map(|path| async move {
-            match ctx.dav.delete(path).await {
-                Ok(true) => {
-                    logging::removal(path);
-                    1
-                }
-                Ok(false) => 0,
+            match ctx.dav.delete(&path).await {
+                Ok(true) => Some(path),
+                Ok(false) => None,
                 Err(error) => {
                     logging::error(format!("{error:#}"));
-                    0
+                    None
                 }
             }
         })
         .buffer_unordered(ctx.jobs)
         .collect::<Vec<_>>()
-        .await;
-    Ok(deleted.into_iter().sum())
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
+    deleted.sort();
+    Ok(deleted)
 }
 
 fn outermost(paths: &[String]) -> Vec<String> {
@@ -334,7 +336,8 @@ async fn clear_remote_cartridges(ctx: &Ctx) -> Result<()> {
         .collect();
 
     logging::info(format!("clearing {} cartridge folder(s) on the sandbox", names.len()));
-    delete_paths(ctx, &names).await?;
+    let gone = delete_paths(ctx, &names).await?;
+    logging::changes(Change::Deleted, &gone);
     Ok(())
 }
 

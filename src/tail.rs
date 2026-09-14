@@ -1,10 +1,9 @@
-use crate::logging;
+use crate::logging::{self, CYAN, DIM, LINK, RED, YELLOW};
 use crate::push::Ctx;
 use crate::webdav::{DavEntry, encode_path};
 use anyhow::Result;
 use chrono::Local;
 use std::collections::HashMap;
-use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Duration;
 
@@ -13,18 +12,10 @@ pub const DEFAULT_LEVELS: &str = "error,customerror,custom";
 const LOOKBACK_BYTES: u64 = 256 * 1024;
 const PREFIX_WIDTH: usize = 24;
 
-const RESET: &str = "\x1b[0m";
-const DIM: &str = "\x1b[2m";
-const RED: &str = "\x1b[31m";
-const YELLOW: &str = "\x1b[33m";
-const CYAN: &str = "\x1b[36m";
-const LINK: &str = "\x1b[1;36m";
-
 pub struct TailOptions {
     pub levels: Vec<String>,
     pub interval: Duration,
     pub lines: usize,
-    pub color: bool,
 }
 
 pub struct Entry {
@@ -35,17 +26,12 @@ pub struct Entry {
 
 pub struct Printer<'a> {
     cartridges: &'a Path,
-    color: bool,
     history: usize,
 }
 
 pub async fn follow(ctx: &Ctx, options: TailOptions) -> Result<()> {
     let base = ctx.config.logs_url();
-    let printer = Printer {
-        cartridges: &ctx.config.cartridges_dir,
-        color: options.color,
-        history: options.lines,
-    };
+    let printer = Printer { cartridges: &ctx.config.cartridges_dir, history: options.lines };
     let mut offsets: HashMap<String, u64> = HashMap::new();
     let mut announced = false;
 
@@ -123,18 +109,10 @@ pub fn parse_levels(raw: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn color_enabled(when: &str) -> bool {
-    match when {
-        "always" => true,
-        "never" => false,
-        _ => std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
-    }
-}
-
 impl<'a> Printer<'a> {
     /// A printer with no history to replay, for one-shot reports.
-    pub fn plain(cartridges: &'a Path, color: bool) -> Printer<'a> {
-        Printer { cartridges, color, history: 0 }
+    pub fn plain(cartridges: &'a Path) -> Printer<'a> {
+        Printer { cartridges, history: 0 }
     }
 }
 
@@ -170,8 +148,8 @@ impl Printer<'_> {
 
         crate::out!(
             "{} {} {}",
-            self.paint(DIM, &format!("[{}]", logging::stamp())),
-            self.paint(tone, &format!("{:<12}", entry.label)),
+            logging::paint(DIM, &format!("[{}]", logging::stamp())),
+            logging::paint(tone, &format!("{:<12}", entry.label)),
             self.body(head, tone)
         );
         for line in lines {
@@ -181,25 +159,19 @@ impl Printer<'_> {
 
     fn body(&self, line: &str, tone: &str) -> String {
         let Some((frame, path, number)) = parse_frame(line) else {
-            return self.paint(tone, line);
+            return logging::paint(tone, line);
         };
 
         let local = self.cartridges.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
         if !local.is_file() {
-            return self.paint(tone, line);
+            return logging::paint(tone, line);
         }
 
         let target = format!("{}:{number}", local.display());
         let (before, after) = line.split_once(frame).expect("the frame comes from the line");
-        format!("{}{}{}", self.paint(tone, before), self.paint(LINK, &target), self.paint(tone, after))
+        format!("{}{}{}", logging::paint(tone, before), logging::paint(LINK, &target), logging::paint(tone, after))
     }
 
-    fn paint(&self, tone: &str, text: &str) -> String {
-        match self.color && !tone.is_empty() {
-            true => format!("{tone}{text}{RESET}"),
-            false => text.to_string(),
-        }
-    }
 }
 
 pub fn parse_entries(file: &str, text: &str) -> Vec<Entry> {
@@ -350,27 +322,17 @@ mod tests {
     }
 
     #[test]
-    fn plain_text_is_left_untouched_without_colour() {
-        let printer = Printer { cartridges: Path::new("/nowhere"), color: false, history: 0 };
+    fn a_frame_pointing_nowhere_local_is_left_untouched() {
+        logging::no_color_in_tests();
+        let printer = Printer { cartridges: Path::new("/nowhere"), history: 0 };
 
-        assert_eq!(printer.paint(RED, "boom"), "boom");
         assert_eq!(printer.body("\tat modules/server/route.js:83", RED), "\tat modules/server/route.js:83");
     }
 
     #[test]
-    fn colour_wraps_the_line_in_the_tone_of_its_level() {
-        let printer = Printer { cartridges: Path::new("/nowhere"), color: true, history: 0 };
-
-        assert_eq!(printer.paint(RED, "boom"), format!("{RED}boom{RESET}"));
-        assert_eq!(printer.paint("", "boom"), "boom");
+    fn each_level_carries_its_own_tone() {
         assert_eq!(tone("customerror"), RED);
         assert_eq!(tone("customdebug"), CYAN);
         assert_eq!(tone("info"), "");
-    }
-
-    #[test]
-    fn the_colour_switch_obeys_the_user_before_the_terminal() {
-        assert!(color_enabled("always"));
-        assert!(!color_enabled("never"));
     }
 }

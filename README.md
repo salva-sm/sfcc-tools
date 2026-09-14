@@ -62,6 +62,30 @@ prost install-hook        # push automatically after a branch switch
 | `--allow-shared-instance` | Write to an instance that is not a developer sandbox (never staging or production) |
 | `--reload` | On `watch`/`start`: reload the storefront tabs after uploading an `.isml`, `.css` or `.js`. Off unless asked for |
 | `--reload-port <PORT>` | DevTools port to reload through (default 9222) |
+| `--color <WHEN>` | `auto` (default), `always`, `never` |
+
+## What it prints
+
+An upload is one block, not one line per file: the files are grouped by cartridge and by
+the folder they live in, so a save that touches a whole component reads as a shape instead
+of a wall.
+
+```
+[10:23:41] ->  7 file(s) uploaded in 2 cartridge(s)
+           app_common_eu_guess
+             cartridge/client/default/js/checkout  billing.js  summary.js
+             cartridge/templates/default/checkout  billing.isml
+           int_loyalty
+             cartridge/scripts/loyalty             vouchers.js  tiers.js
+```
+
+A single file skips the block and stays on the line: `-> app_common_eu_guess/…/cart.js
+uploaded`. Long lists collapse into a count rather than scrolling the terminal away.
+
+Colour is decided once, for every command: green for what went up, yellow for what was
+deleted and for warnings, red for errors, dim for the timestamps and the folders. It is on
+for a terminal and off for a pipe — so the detached watcher's log file stays plain text —
+and `--color always` keeps it through a pipe, `--color never` or `NO_COLOR` turns it off.
 
 ## What it does not tell you
 
@@ -88,8 +112,7 @@ file is read on each poll, and what they yield is ordered by the sandbox's own t
 before it reaches the screen.
 
 Levels are coloured — `error` red, `warn` yellow, the `custom*` family cyan — and the local
-path of a rewritten frame is highlighted. Colour is on for a terminal and off for a pipe;
-`--color always` keeps it through one, `--color never` and `NO_COLOR` turn it off.
+path of a rewritten frame is highlighted, under the same `--color` rule as everything else.
 
 Stack frames are rewritten into local paths on the way out, so
 
