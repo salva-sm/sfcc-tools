@@ -9,6 +9,7 @@ dw.json
 # Written into an extension directory by Zed when it builds a dev extension.
 extensions/*/extension.wasm
 extensions/*/grammars/
+extensions/*/target/
 *.wasm
 
 # Machine-specific: only needed where the profile path is non-ASCII.
