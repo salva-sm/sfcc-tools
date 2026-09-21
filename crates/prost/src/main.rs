@@ -1,8 +1,7 @@
-mod config;
 mod daemon;
 mod errors;
-mod logging;
 mod githook;
+mod logging;
 mod manifest;
 mod ocapi;
 mod push;
@@ -15,8 +14,8 @@ mod webdav;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
-use config::{Config, Credentials};
 use push::{Ctx, PushOptions, human_bytes};
+use sfcc_core::config::{Config, Credentials};
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -82,14 +81,18 @@ enum Command {
         remotely. The sandbox is probed first and waited for if it is asleep.")]
     Push(PushArgs),
     /// Upload on every save, staying in the foreground
-    #[command(long_about = "Upload on every save, staying in the foreground until Ctrl-C.\n\n\
+    #[command(
+        long_about = "Upload on every save, staying in the foreground until Ctrl-C.\n\n\
         Runs a push first, then uploads saves, deletions and renames as they happen. While \
-        the sandbox is unreachable the changes are queued and flushed on recovery.")]
+        the sandbox is unreachable the changes are queued and flushed on recovery."
+    )]
     Watch(WatchArgs),
     /// Run the watcher detached, so closing the editor does not stop it
-    #[command(long_about = "Run the watcher detached, so closing the editor or terminal does \
+    #[command(
+        long_about = "Run the watcher detached, so closing the editor or terminal does \
         not stop it.\n\nOne watcher per sandbox and code version. Follow it with `activity -f`, \
-        check it with `status`, end it with `stop`.")]
+        check it with `status`, end it with `stop`."
+    )]
     Start(WatchArgs),
     /// Stop the detached watcher
     Stop,
@@ -100,9 +103,11 @@ enum Command {
     /// Check dw.json, connectivity, credentials and code version
     Doctor,
     /// Delete the cartridges of the code version on the sandbox
-    #[command(long_about = "Delete the cartridges of the code version on the sandbox and reset \
+    #[command(
+        long_about = "Delete the cartridges of the code version on the sandbox and reset \
         the local manifest.\n\nOnly the cartridges of this project are removed, not the whole \
-        code version. Asks for confirmation unless -y is given.")]
+        code version. Asks for confirmation unless -y is given."
+    )]
     Clean(CleanArgs),
     /// List the code versions present on the sandbox
     Versions,
@@ -127,15 +132,19 @@ enum Command {
         dw.json whose OCAPI Data settings include /code_versions.")]
     Activate(ActivateArgs),
     /// Install a git hook that pushes after a branch switch
-    #[command(long_about = "Install a post-checkout git hook that runs `prost push`.\n\n\
+    #[command(
+        long_about = "Install a post-checkout git hook that runs `prost push`.\n\n\
         A branch switch changes files behind the watcher's back if it is not running; the hook \
-        makes the sandbox follow the branch. It costs nothing when nothing changed.")]
+        makes the sandbox follow the branch. It costs nothing when nothing changed."
+    )]
     InstallHook(InstallHookArgs),
     /// Delete a path inside the code version on the sandbox
-    #[command(long_about = "Delete one path inside the code version on the sandbox.\n\n\
+    #[command(
+        long_about = "Delete one path inside the code version on the sandbox.\n\n\
         For files or folders left behind that no longer exist locally. The local tree is never \
         touched, and the path is dropped from the manifest so the next push re-uploads it if it \
-        is still there.")]
+        is still there."
+    )]
     Rm(RmArgs),
 }
 
@@ -284,7 +293,11 @@ async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Push(args) => {
             let ctx = Ctx::new(config, jobs)?;
-            let options = PushOptions { full: args.full, dry_run: args.dry_run, show_progress: true };
+            let options = PushOptions {
+                full: args.full,
+                dry_run: args.dry_run,
+                show_progress: true,
+            };
             push::push(&ctx, options).await?;
             if args.activate && !args.dry_run {
                 activate(&ctx.config, None).await?;
@@ -358,7 +371,9 @@ async fn remove_remote(config: Config, jobs: usize, args: RmArgs) -> Result<()> 
         return Ok(());
     }
 
-    ctx.dav.wait_until_ready(Some(Duration::from_secs(120))).await?;
+    ctx.dav
+        .wait_until_ready(Some(Duration::from_secs(120)))
+        .await?;
     if !ctx.dav.delete(&path).await? {
         logging::warn(format!("{path} was not there"));
         return Ok(());
@@ -405,7 +420,10 @@ fn stop_detached(config: &Config) -> Result<()> {
 async fn activate(config: &Config, name: Option<String>) -> Result<()> {
     let target = name.unwrap_or_else(|| config.code_version.clone());
     ocapi::Ocapi::new(config)?.activate(&target).await?;
-    logging::ok(format!("{target} is now the active code version on {}", config.hostname));
+    logging::ok(format!(
+        "{target} is now the active code version on {}",
+        config.hostname
+    ));
     Ok(())
 }
 
@@ -427,7 +445,10 @@ async fn report_status(config: Config, jobs: usize) -> Result<()> {
     crate::out!("watcher      {}", daemon::describe_state(&ctx.config));
     crate::out!("log          {}", daemon::log_path(&ctx.config).display());
     crate::out!("tracked      {tracked} file(s) in the local manifest");
-    crate::out!("availability {}", describe_availability(&ctx.dav.availability().await));
+    crate::out!(
+        "availability {}",
+        describe_availability(&ctx.dav.availability().await)
+    );
     Ok(())
 }
 
@@ -436,10 +457,21 @@ async fn diagnose(config: Config, jobs: usize) -> Result<()> {
     let cartridges = scan::cartridge_directories(&ctx.config)?;
 
     crate::out!("dw.json      {}", ctx.config.dw_json.display());
-    crate::out!("sandbox      {} ({:?})", ctx.config.hostname, ctx.config.instance());
-    crate::out!("auth         {}", describe_credentials(&ctx.config.credentials));
+    crate::out!(
+        "sandbox      {} ({:?})",
+        ctx.config.hostname,
+        ctx.config.instance()
+    );
+    crate::out!(
+        "auth         {}",
+        describe_credentials(&ctx.config.credentials)
+    );
     crate::out!("code version {}", ctx.config.code_version);
-    crate::out!("cartridges   {} in {}", cartridges.len(), ctx.config.cartridges_dir.display());
+    crate::out!(
+        "cartridges   {} in {}",
+        cartridges.len(),
+        ctx.config.cartridges_dir.display()
+    );
     crate::out!("target       {}", ctx.dav.base_url());
 
     let availability = ctx.dav.availability().await;
@@ -459,7 +491,11 @@ async fn diagnose(config: Config, jobs: usize) -> Result<()> {
 
     let files = scan::scan(&ctx.config, &ctx.ignore)?;
     let bytes: u64 = files.iter().map(|file| file.size).sum();
-    crate::out!("local        {} file(s), {}", files.len(), human_bytes(bytes));
+    crate::out!(
+        "local        {} file(s), {}",
+        files.len(),
+        human_bytes(bytes)
+    );
     logging::ok("configuration looks usable");
     Ok(())
 }
@@ -468,19 +504,33 @@ async fn clean(config: Config, jobs: usize, args: CleanArgs) -> Result<()> {
     let ctx = Ctx::new(config, jobs)?;
     let names: Vec<String> = scan::cartridge_directories(&ctx.config)?
         .iter()
-        .filter_map(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()))
+        .filter_map(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
         .collect();
 
     let target = match args.remove_version {
         true => format!("code version {} entirely", ctx.config.code_version),
-        false => format!("{} cartridge folder(s) from {}", names.len(), ctx.config.code_version),
+        false => format!(
+            "{} cartridge folder(s) from {}",
+            names.len(),
+            ctx.config.code_version
+        ),
     };
-    if !args.yes && !confirm(&format!("Delete {target} on {}? [y/N] ", ctx.config.hostname))? {
+    if !args.yes
+        && !confirm(&format!(
+            "Delete {target} on {}? [y/N] ",
+            ctx.config.hostname
+        ))?
+    {
         logging::info("nothing was deleted");
         return Ok(());
     }
 
-    ctx.dav.wait_until_ready(Some(Duration::from_secs(120))).await?;
+    ctx.dav
+        .wait_until_ready(Some(Duration::from_secs(120)))
+        .await?;
     if args.remove_version {
         ctx.dav.delete_code_version().await?;
         logging::ok(format!("code version {} deleted", ctx.config.code_version));
@@ -495,10 +545,17 @@ async fn clean(config: Config, jobs: usize, args: CleanArgs) -> Result<()> {
 
 async fn list_versions(config: Config, jobs: usize) -> Result<()> {
     let ctx = Ctx::new(config, jobs)?;
-    let entries = ctx.dav.list(ctx.dav.root_url().to_string().as_str()).await?;
+    let entries = ctx
+        .dav
+        .list(ctx.dav.root_url().to_string().as_str())
+        .await?;
 
     for entry in entries.iter().filter(|entry| entry.is_dir) {
-        let marker = if entry.name == ctx.config.code_version { "*" } else { " " };
+        let marker = if entry.name == ctx.config.code_version {
+            "*"
+        } else {
+            " "
+        };
         crate::out!("{marker} {:<28} {}", entry.name, entry.modified);
     }
     Ok(())
@@ -508,7 +565,9 @@ fn confirm(question: &str) -> Result<bool> {
     crate::outp!("{question}");
     std::io::stdout().flush().ok();
     let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer).context("cannot read the answer")?;
+    std::io::stdin()
+        .read_line(&mut answer)
+        .context("cannot read the answer")?;
     Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 

@@ -1,5 +1,5 @@
-use crate::config::Config;
 use anyhow::{Context, Result, bail};
+use sfcc_core::config::Config;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -45,8 +45,14 @@ pub struct Ignore {
 impl Ignore {
     pub fn load(config: &Config) -> Ignore {
         let mut ignore = Ignore {
-            names: DEFAULT_IGNORED_NAMES.iter().map(|name| name.to_string()).collect(),
-            suffixes: DEFAULT_IGNORED_SUFFIXES.iter().map(|suffix| suffix.to_string()).collect(),
+            names: DEFAULT_IGNORED_NAMES
+                .iter()
+                .map(|name| name.to_string())
+                .collect(),
+            suffixes: DEFAULT_IGNORED_SUFFIXES
+                .iter()
+                .map(|suffix| suffix.to_string())
+                .collect(),
             prefixes: Vec::new(),
         };
 
@@ -81,14 +87,20 @@ impl Ignore {
     }
 
     pub fn skips_name(&self, name: &str) -> bool {
-        self.names.contains(name) || self.suffixes.iter().any(|suffix| name.ends_with(suffix.as_str()))
+        self.names.contains(name)
+            || self
+                .suffixes
+                .iter()
+                .any(|suffix| name.ends_with(suffix.as_str()))
     }
 
     pub fn skips(&self, relative: &str) -> bool {
         if relative.split('/').any(|segment| self.skips_name(segment)) {
             return true;
         }
-        self.prefixes.iter().any(|prefix| relative == prefix || relative.starts_with(&format!("{prefix}/")))
+        self.prefixes
+            .iter()
+            .any(|prefix| relative == prefix || relative.starts_with(&format!("{prefix}/")))
     }
 }
 
@@ -101,7 +113,9 @@ pub fn cartridge_directories(config: &Config) -> Result<Vec<PathBuf>> {
         .map(|entry| entry.path())
         .filter(|path| path.join("cartridge").is_dir())
         .filter(|path| match &config.cartridge_filter {
-            Some(names) => names.iter().any(|name| Some(name.as_str()) == file_name(path)),
+            Some(names) => names
+                .iter()
+                .any(|name| Some(name.as_str()) == file_name(path)),
             None => true,
         })
         .collect();
@@ -169,7 +183,11 @@ pub fn remote_path(path: &Path, cartridges_dir: &Path) -> Option<String> {
         .map(|component| component.as_os_str().to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join("/");
-    if joined.is_empty() { None } else { Some(joined) }
+    if joined.is_empty() {
+        None
+    } else {
+        Some(joined)
+    }
 }
 
 fn modified_millis(metadata: &std::fs::Metadata) -> i64 {
@@ -191,8 +209,14 @@ mod tests {
 
     fn ignore_with(patterns: &str) -> Ignore {
         let mut ignore = Ignore {
-            names: DEFAULT_IGNORED_NAMES.iter().map(|name| name.to_string()).collect(),
-            suffixes: DEFAULT_IGNORED_SUFFIXES.iter().map(|suffix| suffix.to_string()).collect(),
+            names: DEFAULT_IGNORED_NAMES
+                .iter()
+                .map(|name| name.to_string())
+                .collect(),
+            suffixes: DEFAULT_IGNORED_SUFFIXES
+                .iter()
+                .map(|suffix| suffix.to_string())
+                .collect(),
             prefixes: Vec::new(),
         };
         ignore.extend(patterns);
@@ -218,7 +242,8 @@ mod tests {
 
     #[test]
     fn honours_names_suffixes_and_prefixes_from_sfccignore() {
-        let ignore = ignore_with("# comment\n*.test.js\nfixtures\nint_analytics/cartridge/static\n");
+        let ignore =
+            ignore_with("# comment\n*.test.js\nfixtures\nint_analytics/cartridge/static\n");
         assert!(ignore.skips("app/cartridge/scripts/rules.test.js"));
         assert!(ignore.skips("app/cartridge/fixtures/data.json"));
         assert!(ignore.skips("int_analytics/cartridge/static/default/js/gtm.js"));

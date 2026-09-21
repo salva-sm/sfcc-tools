@@ -1,6 +1,6 @@
-use crate::config::Config;
 use crate::manifest::state_dir;
 use anyhow::{Context, Result, bail};
+use sfcc_core::config::Config;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -18,15 +18,21 @@ pub struct SpawnArgs {
 }
 
 pub fn pid_path(config: &Config) -> PathBuf {
-    state_dir().join("daemons").join(format!("{}.pid", config.identity()))
+    state_dir()
+        .join("daemons")
+        .join(format!("{}.pid", config.identity()))
 }
 
 pub fn log_path(config: &Config) -> PathBuf {
-    state_dir().join("logs").join(format!("{}.log", config.identity()))
+    state_dir()
+        .join("logs")
+        .join(format!("{}.log", config.identity()))
 }
 
 pub fn heartbeat_path(config: &Config) -> PathBuf {
-    state_dir().join("daemons").join(format!("{}.beat", config.identity()))
+    state_dir()
+        .join("daemons")
+        .join(format!("{}.beat", config.identity()))
 }
 
 pub fn write_heartbeat(path: &Path) {
@@ -50,7 +56,10 @@ pub fn running_pid(config: &Config) -> Option<u32> {
 
 pub fn start(config: &Config, args: SpawnArgs) -> Result<u32> {
     if let Some(pid) = running_pid(config) {
-        bail!("a watcher is already running for {} (pid {pid})", config.code_version);
+        bail!(
+            "a watcher is already running for {} (pid {pid})",
+            config.code_version
+        );
     }
 
     let executable = std::env::current_exe().context("cannot locate the prost executable")?;
@@ -62,7 +71,9 @@ pub fn start(config: &Config, args: SpawnArgs) -> Result<u32> {
         .append(true)
         .open(&log)
         .with_context(|| format!("cannot open {}", log.display()))?;
-    let errors = output.try_clone().context("cannot duplicate the log handle")?;
+    let errors = output
+        .try_clone()
+        .context("cannot duplicate the log handle")?;
 
     let mut command = Command::new(executable);
     command
@@ -84,7 +95,10 @@ pub fn start(config: &Config, args: SpawnArgs) -> Result<u32> {
         command.arg("--no-initial-push");
     }
     if let Some(port) = args.watch.reload_port {
-        command.arg("--reload").arg("--reload-port").arg(port.to_string());
+        command
+            .arg("--reload")
+            .arg("--reload-port")
+            .arg(port.to_string());
     }
     for cartridge in &args.cartridges {
         command.arg("--cartridge").arg(cartridge);
@@ -92,12 +106,15 @@ pub fn start(config: &Config, args: SpawnArgs) -> Result<u32> {
     detach(&mut command);
     keep_std_handles_from_the_child();
 
-    let child = command.spawn().context("cannot start the background watcher")?;
+    let child = command
+        .spawn()
+        .context("cannot start the background watcher")?;
     let pid = child.id();
 
     let pid_file = pid_path(config);
     if let Some(parent) = pid_file.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("cannot create {}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create {}", parent.display()))?;
     }
     std::fs::write(&pid_file, pid.to_string())
         .with_context(|| format!("cannot write {}", pid_file.display()))?;
@@ -139,16 +156,20 @@ pub fn follow(config: &Config, lines: usize) -> Result<()> {
 
     loop {
         std::thread::sleep(Duration::from_millis(400));
-        let length = std::fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(position);
+        let length = std::fs::metadata(&path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(position);
         if length < position {
             position = 0;
         }
         if length == position {
             continue;
         }
-        file.seek(SeekFrom::Start(position)).context("cannot seek the log")?;
+        file.seek(SeekFrom::Start(position))
+            .context("cannot seek the log")?;
         buffer.clear();
-        file.read_to_string(&mut buffer).context("cannot read the log")?;
+        file.read_to_string(&mut buffer)
+            .context("cannot read the log")?;
         crate::outp!("{buffer}");
         std::io::stdout().flush().ok();
         position = length;
@@ -159,7 +180,9 @@ pub fn describe_state(config: &Config) -> String {
     match running_pid(config) {
         None => "stopped".to_string(),
         Some(pid) => match heartbeat_age(&heartbeat_path(config)) {
-            Some(age) if age > STALE_HEARTBEAT => format!("running (pid {pid}), last heartbeat {age}s ago"),
+            Some(age) if age > STALE_HEARTBEAT => {
+                format!("running (pid {pid}), last heartbeat {age}s ago")
+            }
             Some(age) => format!("running (pid {pid}), heartbeat {age}s ago"),
             None => format!("running (pid {pid}), starting up"),
         },
@@ -168,9 +191,14 @@ pub fn describe_state(config: &Config) -> String {
 
 fn prepare_log(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("cannot create {}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create {}", parent.display()))?;
     }
-    if std::fs::metadata(path).map(|metadata| metadata.len()).unwrap_or(0) > MAX_LOG_BYTES {
+    if std::fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0)
+        > MAX_LOG_BYTES
+    {
         std::fs::write(path, "").with_context(|| format!("cannot truncate {}", path.display()))?;
     }
     Ok(())

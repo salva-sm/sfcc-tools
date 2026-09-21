@@ -1,6 +1,6 @@
-use crate::config::{Config, Credentials};
 use anyhow::{Context, Result, bail};
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
+use sfcc_core::config::{Config, Credentials};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
@@ -82,11 +82,14 @@ impl Dav {
 
         match response {
             Ok(response)
-                if response.status() == StatusCode::MULTI_STATUS || response.status().is_success() =>
+                if response.status() == StatusCode::MULTI_STATUS
+                    || response.status().is_success() =>
             {
                 Availability::Ready
             }
-            Ok(response) if response.status() == StatusCode::NOT_FOUND => Availability::MissingCodeVersion,
+            Ok(response) if response.status() == StatusCode::NOT_FOUND => {
+                Availability::MissingCodeVersion
+            }
             Ok(response)
                 if response.status() == StatusCode::UNAUTHORIZED
                     || response.status() == StatusCode::FORBIDDEN =>
@@ -135,7 +138,10 @@ impl Dav {
     pub async fn mkcol(&self, url: &str) -> Result<()> {
         let response = self.send(|| self.client.request(mkcol(), url)).await?;
         let status = response.status();
-        if status.is_success() || status == StatusCode::METHOD_NOT_ALLOWED || status == StatusCode::CONFLICT {
+        if status.is_success()
+            || status == StatusCode::METHOD_NOT_ALLOWED
+            || status == StatusCode::CONFLICT
+        {
             return Ok(());
         }
         bail!("MKCOL {url} failed with HTTP {status}")
@@ -143,7 +149,10 @@ impl Dav {
 
     pub async fn ensure_directory(&self, relative_path: &str) -> Result<()> {
         let mut walked = String::new();
-        for segment in relative_path.split('/').filter(|segment| !segment.is_empty()) {
+        for segment in relative_path
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+        {
             if !walked.is_empty() {
                 walked.push('/');
             }
@@ -206,7 +215,11 @@ impl Dav {
 
     pub async fn read_from(&self, url: &str, offset: u64) -> Result<String> {
         let response = self
-            .send(|| self.client.get(url).header("Range", format!("bytes={offset}-")))
+            .send(|| {
+                self.client
+                    .get(url)
+                    .header("Range", format!("bytes={offset}-"))
+            })
             .await?;
 
         let status = response.status();
@@ -243,7 +256,10 @@ impl Dav {
             bail!("PROPFIND {url} failed with HTTP {status}");
         }
 
-        let body = response.text().await.context("cannot read the PROPFIND response")?;
+        let body = response
+            .text()
+            .await
+            .context("cannot read the PROPFIND response")?;
         Ok(parse_multistatus(&body, url))
     }
 
@@ -275,7 +291,9 @@ impl Dav {
 
     async fn authorize(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
         match &self.credentials {
-            Credentials::Basic { username, password } => Ok(builder.basic_auth(username, Some(password))),
+            Credentials::Basic { username, password } => {
+                Ok(builder.basic_auth(username, Some(password)))
+            }
             Credentials::OAuth { .. } => Ok(builder.bearer_auth(self.access_token().await?)),
         }
     }
@@ -287,7 +305,11 @@ impl Dav {
             }
         }
 
-        let Credentials::OAuth { client_id, client_secret } = &self.credentials else {
+        let Credentials::OAuth {
+            client_id,
+            client_secret,
+        } = &self.credentials
+        else {
             bail!("no OAuth credentials configured");
         };
 
@@ -302,17 +324,26 @@ impl Dav {
             .context("cannot reach Account Manager for an access token")?;
 
         if !response.status().is_success() {
-            bail!("Account Manager rejected the client credentials (HTTP {})", response.status());
+            bail!(
+                "Account Manager rejected the client credentials (HTTP {})",
+                response.status()
+            );
         }
 
-        let body = response.text().await.context("cannot read the token response")?;
+        let body = response
+            .text()
+            .await
+            .context("cannot read the token response")?;
         let payload: serde_json::Value =
             serde_json::from_str(&body).context("malformed token response")?;
         let value = payload["access_token"]
             .as_str()
             .context("token response without access_token")?
             .to_string();
-        let lifetime = payload["expires_in"].as_u64().unwrap_or(1800).saturating_sub(60);
+        let lifetime = payload["expires_in"]
+            .as_u64()
+            .unwrap_or(1800)
+            .saturating_sub(60);
 
         *self.token.write().await = Some(Token {
             value: value.clone(),
@@ -347,7 +378,10 @@ pub fn encode_path(relative_path: &str) -> String {
     for byte in relative_path.replace('\\', "/").bytes() {
         let character = byte as char;
         let is_safe = character.is_ascii_alphanumeric()
-            || matches!(character, '-' | '_' | '.' | '~' | '/' | '(' | ')' | '$' | '@' | '+' | ',' | '=' | ':');
+            || matches!(
+                character,
+                '-' | '_' | '.' | '~' | '/' | '(' | ')' | '$' | '@' | '+' | ',' | '=' | ':'
+            );
         if is_safe {
             encoded.push(character);
         } else {
@@ -377,7 +411,13 @@ fn decode_path(encoded: &str) -> String {
 }
 
 fn parse_multistatus(body: &str, requested_url: &str) -> Vec<DavEntry> {
-    let requested_name = decode_path(requested_url.trim_end_matches('/').rsplit('/').next().unwrap_or(""));
+    let requested_name = decode_path(
+        requested_url
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(""),
+    );
     let mut entries = Vec::new();
 
     for block in body.split("response>").skip(1) {
@@ -394,7 +434,10 @@ fn parse_multistatus(body: &str, requested_url: &str) -> Vec<DavEntry> {
             size: inner_text(block, "getcontentlength")
                 .and_then(|value| value.trim().parse().ok())
                 .unwrap_or(0),
-            modified: inner_text(block, "getlastmodified").unwrap_or_default().trim().to_string(),
+            modified: inner_text(block, "getlastmodified")
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
         });
     }
     entries
@@ -425,9 +468,15 @@ mod tests {
 
     #[test]
     fn encodes_unsafe_characters_but_keeps_separators() {
-        assert_eq!(encode_path("app/cartridge/a b.js"), "app/cartridge/a%20b.js");
+        assert_eq!(
+            encode_path("app/cartridge/a b.js"),
+            "app/cartridge/a%20b.js"
+        );
         assert_eq!(encode_path(r"app\cartridge\x.js"), "app/cartridge/x.js");
-        assert_eq!(encode_path("app_common-eu/x.min.js"), "app_common-eu/x.min.js");
+        assert_eq!(
+            encode_path("app_common-eu/x.min.js"),
+            "app_common-eu/x.min.js"
+        );
     }
 
     #[test]

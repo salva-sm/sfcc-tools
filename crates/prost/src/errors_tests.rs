@@ -41,7 +41,10 @@ fn a_different_line_number_is_a_different_failure() {
 fn repeats_collapse_and_keep_every_moment_in_order() {
     let entries = vec![
         entry("2026-09-10 09:00:00.000 GMT", &FAILURE),
-        entry("2026-09-10 09:01:00.000 GMT", &["[...] ERROR something else"]),
+        entry(
+            "2026-09-10 09:01:00.000 GMT",
+            &["[...] ERROR something else"],
+        ),
         entry("2026-09-10 09:02:00.000 GMT", &FAILURE),
     ];
 

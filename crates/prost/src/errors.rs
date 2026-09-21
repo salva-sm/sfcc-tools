@@ -4,7 +4,6 @@
 //! exercising a flow and ask afterwards what is new, which is the difference
 //! between watching a stream and getting an answer.
 
-use crate::config::Config;
 use crate::logging;
 use crate::manifest::state_dir;
 use crate::push::Ctx;
@@ -13,6 +12,7 @@ use crate::webdav::encode_path;
 use anyhow::{Context, Result};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use sfcc_core::config::Config;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -33,7 +33,9 @@ pub struct ReportOptions {
 }
 
 fn mark_path(config: &Config) -> PathBuf {
-    state_dir().join("marks").join(format!("{}.json", config.identity()))
+    state_dir()
+        .join("marks")
+        .join(format!("{}.json", config.identity()))
 }
 
 /// Remember how long each of today's log files is right now.
@@ -47,7 +49,8 @@ pub async fn mark(ctx: &Ctx, levels: &[String]) -> Result<()> {
 
     let path = mark_path(&ctx.config);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("cannot create {}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create {}", parent.display()))?;
     }
     std::fs::write(&path, serde_json::to_vec_pretty(&mark)?)
         .with_context(|| format!("cannot write {}", path.display()))?;
@@ -65,7 +68,8 @@ pub async fn mark(ctx: &Ctx, levels: &[String]) -> Result<()> {
 pub async fn report(ctx: &Ctx, options: ReportOptions) -> Result<bool> {
     let path = mark_path(&ctx.config);
     let mark: Mark = match std::fs::read(&path) {
-        Ok(raw) => serde_json::from_slice(&raw).with_context(|| format!("cannot read {}", path.display()))?,
+        Ok(raw) => serde_json::from_slice(&raw)
+            .with_context(|| format!("cannot read {}", path.display()))?,
         Err(_) => anyhow::bail!("no mark for this sandbox yet - run `prost errors --mark` first"),
     };
 
@@ -128,7 +132,12 @@ async fn collect(ctx: &Ctx, mark: &Mark, levels: &[String]) -> Result<Vec<Entry>
             continue;
         }
         // A file that did not exist at mark time is new, so all of it counts.
-        let offset = mark.offsets.get(&file.name).copied().unwrap_or(0).min(file.size);
+        let offset = mark
+            .offsets
+            .get(&file.name)
+            .copied()
+            .unwrap_or(0)
+            .min(file.size);
         if file.size <= offset {
             continue;
         }

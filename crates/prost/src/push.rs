@@ -1,4 +1,3 @@
-use crate::config::Config;
 use crate::logging::{self, Change};
 use crate::manifest::{Entry, Manifest, hash_file, manifest_path};
 use crate::scan::{Ignore, LocalFile, cartridge_directories, scan};
@@ -6,6 +5,7 @@ use crate::webdav::Dav;
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
+use sfcc_core::config::Config;
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -31,7 +31,13 @@ impl Ctx {
         let dav = Dav::new(&config)?;
         let ignore = Ignore::load(&config);
         let manifest_path = manifest_path(&config);
-        Ok(Ctx { config, dav, ignore, manifest_path, jobs })
+        Ok(Ctx {
+            config,
+            dav,
+            ignore,
+            manifest_path,
+            jobs,
+        })
     }
 }
 
@@ -52,15 +58,26 @@ pub struct Stats {
 
 pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
     let started = Instant::now();
-    let mut manifest = if options.full { Manifest::default() } else { Manifest::load(&ctx.manifest_path) };
+    let mut manifest = if options.full {
+        Manifest::default()
+    } else {
+        Manifest::load(&ctx.manifest_path)
+    };
     let files = scan(&ctx.config, &ctx.ignore)?;
 
     let changed = select_changed(&files, &manifest);
-    let removed = if options.full { Vec::new() } else { select_removed(&files, &manifest) };
+    let removed = if options.full {
+        Vec::new()
+    } else {
+        select_removed(&files, &manifest)
+    };
 
     if changed.is_empty() && removed.is_empty() {
         logging::ok(format!("{} already up to date", ctx.config.code_version));
-        return Ok(Stats { elapsed: started.elapsed(), ..Stats::default() });
+        return Ok(Stats {
+            elapsed: started.elapsed(),
+            ..Stats::default()
+        });
     }
 
     let bytes: u64 = changed.iter().map(|file| file.size).sum();
@@ -83,7 +100,9 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
         });
     }
 
-    ctx.dav.wait_until_ready(Some(Duration::from_secs(600))).await?;
+    ctx.dav
+        .wait_until_ready(Some(Duration::from_secs(600)))
+        .await?;
     ctx.dav.mkcol(ctx.dav.base_url()).await?;
 
     if options.full {
@@ -121,7 +140,12 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
         return Err(error);
     }
 
-    let stats = Stats { uploaded, deleted, bytes, elapsed: started.elapsed() };
+    let stats = Stats {
+        uploaded,
+        deleted,
+        bytes,
+        elapsed: started.elapsed(),
+    };
     logging::ok(format!(
         "{} uploaded, {} deleted, {} in {:.1}s",
         stats.uploaded,
@@ -231,7 +255,9 @@ fn outermost(paths: &[String]) -> Vec<String> {
 
     let mut roots: Vec<String> = Vec::with_capacity(sorted.len());
     for path in sorted {
-        let nested = roots.last().is_some_and(|root| path.starts_with(&format!("{root}/")));
+        let nested = roots
+            .last()
+            .is_some_and(|root| path.starts_with(&format!("{root}/")));
         if !nested {
             roots.push(path);
         }
@@ -259,13 +285,21 @@ async fn upload_individually(
         }
         recorded.push((
             file.relative,
-            Entry { hash, size: file.size, modified_millis: file.modified_millis },
+            Entry {
+                hash,
+                size: file.size,
+                modified_millis: file.modified_millis,
+            },
         ));
     }
     Ok(recorded)
 }
 
-async fn upload_chunk(ctx: &Ctx, chunk: Vec<LocalFile>, index: usize) -> Result<Vec<(String, Entry)>> {
+async fn upload_chunk(
+    ctx: &Ctx,
+    chunk: Vec<LocalFile>,
+    index: usize,
+) -> Result<Vec<(String, Entry)>> {
     let (archive, recorded) = tokio::task::spawn_blocking(move || build_archive(chunk))
         .await
         .context("the archive task panicked")??;
@@ -274,7 +308,9 @@ async fn upload_chunk(ctx: &Ctx, chunk: Vec<LocalFile>, index: usize) -> Result<
     ctx.dav.put(&name, archive).await?;
     ctx.dav.unzip(&name).await?;
     if let Err(error) = ctx.dav.delete(&name).await {
-        logging::warn(format!("could not remove the temporary archive {name}: {error:#}"));
+        logging::warn(format!(
+            "could not remove the temporary archive {name}: {error:#}"
+        ));
     }
     Ok(recorded)
 }
@@ -302,11 +338,18 @@ fn build_archive(files: Vec<LocalFile>) -> Result<(Vec<u8>, Vec<(String, Entry)>
 
         recorded.push((
             file.relative,
-            Entry { hash, size: file.size, modified_millis: file.modified_millis },
+            Entry {
+                hash,
+                size: file.size,
+                modified_millis: file.modified_millis,
+            },
         ));
     }
 
-    let archive = writer.finish().context("cannot close the archive")?.into_inner();
+    let archive = writer
+        .finish()
+        .context("cannot close the archive")?
+        .into_inner();
     Ok((archive, recorded))
 }
 
@@ -332,10 +375,16 @@ fn split_into_chunks(files: Vec<LocalFile>) -> Vec<Vec<LocalFile>> {
 async fn clear_remote_cartridges(ctx: &Ctx) -> Result<()> {
     let names: Vec<String> = cartridge_directories(&ctx.config)?
         .iter()
-        .filter_map(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()))
+        .filter_map(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
         .collect();
 
-    logging::info(format!("clearing {} cartridge folder(s) on the sandbox", names.len()));
+    logging::info(format!(
+        "clearing {} cartridge folder(s) on the sandbox",
+        names.len()
+    ));
     let gone = delete_paths(ctx, &names).await?;
     logging::changes(Change::Deleted, &gone);
     Ok(())
@@ -346,7 +395,9 @@ fn build_progress(total: usize, enabled: bool) -> Option<ProgressBar> {
         return None;
     }
     let bar = ProgressBar::new(total as u64);
-    if let Ok(style) = ProgressStyle::with_template("  {bar:32} {pos}/{len} files {elapsed_precise}") {
+    if let Ok(style) =
+        ProgressStyle::with_template("  {bar:32} {pos}/{len} files {elapsed_precise}")
+    {
         bar.set_style(style.progress_chars("=> "));
     }
     Some(bar)
@@ -391,7 +442,11 @@ mod tests {
         ];
         assert_eq!(
             outermost(&paths),
-            vec!["app/cartridge/tmp", "app/cartridge/tmpx/c.js", "other/file.js"]
+            vec![
+                "app/cartridge/tmp",
+                "app/cartridge/tmpx/c.js",
+                "other/file.js"
+            ]
         );
     }
 
@@ -412,7 +467,9 @@ mod tests {
 
     #[test]
     fn closes_a_chunk_when_the_file_budget_is_reached() {
-        let files: Vec<LocalFile> = (0..CHUNK_FILES + 3).map(|index| file_of(index as u64)).collect();
+        let files: Vec<LocalFile> = (0..CHUNK_FILES + 3)
+            .map(|index| file_of(index as u64))
+            .collect();
         let chunks = split_into_chunks(files);
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].len(), CHUNK_FILES);

@@ -1,5 +1,5 @@
-use crate::config::Config;
 use anyhow::{Context, Result, bail};
+use sfcc_core::config::Config;
 use std::path::{Path, PathBuf};
 
 const HOOK_NAME: &str = "post-checkout";
@@ -23,7 +23,10 @@ pub fn install(config: &Config, force: bool) -> Result<PathBuf> {
     if hook.exists() && !force {
         let existing = std::fs::read_to_string(&hook).unwrap_or_default();
         if !existing.contains(HOOK_MARKER) {
-            bail!("{} already exists - re-run with --force to replace it", hook.display());
+            bail!(
+                "{} already exists - re-run with --force to replace it",
+                hook.display()
+            );
         }
     }
 

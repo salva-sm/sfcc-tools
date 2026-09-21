@@ -1,6 +1,6 @@
-use crate::config::Config;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sfcc_core::config::Config;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -31,7 +31,8 @@ impl Manifest {
 
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| format!("cannot create {}", parent.display()))?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("cannot create {}", parent.display()))?;
         }
         let serialized = serde_json::to_string(self).context("cannot serialize the manifest")?;
         std::fs::write(path, serialized).with_context(|| format!("cannot write {}", path.display()))
@@ -58,7 +59,8 @@ impl Manifest {
 
     pub fn forget_prefix(&mut self, prefix: &str) {
         let owned = format!("{prefix}/");
-        self.files.retain(|key, _| key != prefix && !key.starts_with(&owned));
+        self.files
+            .retain(|key, _| key != prefix && !key.starts_with(&owned));
     }
 }
 
@@ -72,19 +74,27 @@ pub fn state_dir() -> PathBuf {
         return PathBuf::from(state).join("prost");
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".local").join("state").join("prost")
+    PathBuf::from(home)
+        .join(".local")
+        .join("state")
+        .join("prost")
 }
 
 pub fn manifest_path(config: &Config) -> PathBuf {
-    state_dir().join("manifests").join(format!("{}.json", config.identity()))
+    state_dir()
+        .join("manifests")
+        .join(format!("{}.json", config.identity()))
 }
 
 pub fn hash_file(path: &Path) -> Result<u64> {
-    let mut file = std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let mut hasher = Xxh3::new();
     let mut buffer = vec![0_u8; HASH_BUFFER_BYTES];
     loop {
-        let read = file.read(&mut buffer).with_context(|| format!("cannot read {}", path.display()))?;
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("cannot read {}", path.display()))?;
         if read == 0 {
             break;
         }

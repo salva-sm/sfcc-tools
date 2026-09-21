@@ -14,7 +14,11 @@ fn sorted(raw: &[&str]) -> Vec<String> {
 
 #[test]
 fn a_single_file_stays_on_the_header_line() {
-    let lines = plain(Change::Uploaded, &sorted(&["app_brand/cartridge/js/checkout.js"]), true);
+    let lines = plain(
+        Change::Uploaded,
+        &sorted(&["app_brand/cartridge/js/checkout.js"]),
+        true,
+    );
     assert_eq!(lines.len(), 1);
     assert!(lines[0].ends_with("app_brand/cartridge/js/checkout.js uploaded"));
 }
@@ -43,7 +47,11 @@ fn files_group_under_their_cartridge_and_folder() {
 #[test]
 fn a_folder_too_long_to_align_takes_its_own_line() {
     let deep = format!("app_brand/{}/file.js", "a".repeat(FOLDER_COLUMN + 5));
-    let lines = plain(Change::Uploaded, &sorted(&[&deep, "app_brand/cartridge/js/cart.js"]), true);
+    let lines = plain(
+        Change::Uploaded,
+        &sorted(&[&deep, "app_brand/cartridge/js/cart.js"]),
+        true,
+    );
 
     assert_eq!(lines[2].trim(), "a".repeat(FOLDER_COLUMN + 5));
     assert_eq!(lines[3].trim(), "file.js");
@@ -61,7 +69,11 @@ fn long_file_lists_collapse_into_a_count() {
 
 #[test]
 fn deleting_a_whole_cartridge_prints_its_name() {
-    let lines = plain(Change::Deleted, &sorted(&["app_brand", "int_rewards"]), true);
+    let lines = plain(
+        Change::Deleted,
+        &sorted(&["app_brand", "int_rewards"]),
+        true,
+    );
 
     assert_eq!(lines.len(), 3);
     assert!(lines[0].contains("2 path(s) deleted in 2 cartridge(s)"));
@@ -76,7 +88,11 @@ fn nothing_to_report_prints_nothing() {
 
 #[test]
 fn a_listing_leaves_the_headline_to_its_caller() {
-    let lines = plain(Change::Uploaded, &sorted(&["app_brand/cartridge/js/cart.js"]), false);
+    let lines = plain(
+        Change::Uploaded,
+        &sorted(&["app_brand/cartridge/js/cart.js"]),
+        false,
+    );
 
     assert_eq!(lines[0].trim(), "app_brand");
     assert_eq!(lines[1].trim(), "cartridge/js  cart.js");
