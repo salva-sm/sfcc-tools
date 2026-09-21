@@ -10,8 +10,8 @@ fn entry(moment: &str, lines: &[&str]) -> Entry {
 }
 
 const FAILURE: [&str; 2] = [
-    "[2026-09-10 09:00:00.000 GMT] ERROR Sites-guess_fr TypeError: x is undefined",
-    " at app_common_eu_guess/cartridge/scripts/x.js:12",
+    "[2026-09-10 09:00:00.000 GMT] ERROR Sites-storefront TypeError: x is undefined",
+    " at app_brand/cartridge/scripts/x.js:12",
 ];
 
 #[test]
@@ -20,8 +20,8 @@ fn the_same_failure_at_another_moment_has_one_fingerprint() {
     let second = entry(
         "2026-09-10 09:04:31.000 GMT",
         &[
-            "[2026-09-10 09:04:31.000 GMT] ERROR Sites-guess_fr TypeError: x is undefined",
-            " at app_common_eu_guess/cartridge/scripts/x.js:12",
+            "[2026-09-10 09:04:31.000 GMT] ERROR Sites-storefront TypeError: x is undefined",
+            " at app_brand/cartridge/scripts/x.js:12",
         ],
     );
     assert_eq!(fingerprint(&first), fingerprint(&second));
@@ -32,7 +32,7 @@ fn a_different_line_number_is_a_different_failure() {
     let first = entry("2026-09-10 09:00:00.000 GMT", &FAILURE);
     let second = entry(
         "2026-09-10 09:00:00.000 GMT",
-        &[FAILURE[0], " at app_common_eu_guess/cartridge/scripts/x.js:99"],
+        &[FAILURE[0], " at app_brand/cartridge/scripts/x.js:99"],
     );
     assert_ne!(fingerprint(&first), fingerprint(&second));
 }

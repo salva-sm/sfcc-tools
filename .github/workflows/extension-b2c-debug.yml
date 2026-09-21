@@ -11,7 +11,7 @@ name: Extension zip
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["b2c-debug-v*"]
   workflow_dispatch:
 
 permissions:

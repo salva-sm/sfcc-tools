@@ -10,17 +10,17 @@ Reads the same `dw.json` as Prophet, talks WebDAV, uploads only what changed.
 ## Install
 
 Download the binary for your platform from the
-[latest release](https://github.com/salva-sm/prost/releases/latest) and put it on your
+[latest release](https://github.com/salva-sm/sfcc-tools/releases/latest) and put it on your
 `PATH`. No toolchain needed; the download URL is stable, so this always gets the newest:
 
 ```powershell
 # Windows
-curl -L -o prost.exe https://github.com/salva-sm/prost/releases/latest/download/prost-x86_64-windows.exe
+curl -L -o prost.exe https://github.com/salva-sm/sfcc-tools/releases/latest/download/prost-x86_64-windows.exe
 ```
 
 ```bash
 # macOS (Apple silicon) / Linux — swap aarch64 for x86_64 as needed
-curl -L https://github.com/salva-sm/prost/releases/latest/download/prost-aarch64-macos.tar.gz | tar -xz
+curl -L https://github.com/salva-sm/sfcc-tools/releases/latest/download/prost-aarch64-macos.tar.gz | tar -xz
 ```
 
 To build it yourself instead, see [Building](#building).
@@ -72,14 +72,14 @@ of a wall.
 
 ```
 [10:23:41] ->  7 file(s) uploaded in 2 cartridge(s)
-           app_common_eu_guess
+           app_brand
              cartridge/client/default/js/checkout  billing.js  summary.js
              cartridge/templates/default/checkout  billing.isml
-           int_loyalty
-             cartridge/scripts/loyalty             vouchers.js  tiers.js
+           int_rewards
+             cartridge/scripts/rewards             vouchers.js  tiers.js
 ```
 
-A single file skips the block and stays on the line: `-> app_common_eu_guess/…/cart.js
+A single file skips the block and stays on the line: `-> app_brand/…/cart.js
 uploaded`. Long lists collapse into a count rather than scrolling the terminal away.
 
 Colour is decided once, for every command: green for what went up, yellow for what was
@@ -204,8 +204,30 @@ changed. An existing hook is never replaced unless `--force` is given.
 
 Optional `.sfccignore` next to the cartridges or next to `dw.json`, one pattern per line:
 a bare name skips it anywhere (`fixtures`), `*` plus a suffix skips by extension
-(`*.test.js`), anything with a slash is a path prefix (`int_analytics/cartridge/static`).
-`node_modules`, `.git`, editor folders and OS junk are always skipped.
+(`*.snap`), anything with a slash is a path prefix (`int_analytics/cartridge/static`).
+
+Always skipped, with no configuration: `node_modules`, `.git`, editor folders, OS junk,
+`*.map` and `*.test.js` / `*.spec.js`. A source map only serves a browser that has the
+sources, and a unit test runs before the upload rather than on the sandbox — neither has
+any business on an instance.
+
+## Telling an editor what the watcher is doing
+
+`watch` and `start` write a JSON status file per watcher under the state directory,
+rewritten on every transition:
+
+```json
+{"state":"uploading","cartridges":"C:/repo/source/cartridges",
+ "hostname":"sbx-001.example.com","code_version":"version1","files":7,"at":1727000000}
+```
+
+`state` is `uploading`, `synced` or `failed`, with `detail` carrying the reason for a
+failure. The file is keyed by the cartridges directory so a reader that knows only the
+folder it has open can find the right watcher, and it is removed when the watcher stops.
+
+It exists so an editor can show whether the sandbox has the code on disk; the ISML
+language server reads it and puts it in Zed's status bar. Writing it never fails an
+upload — a status nobody can write is a status nobody reads, not a reason to stop.
 
 ## How it works
 

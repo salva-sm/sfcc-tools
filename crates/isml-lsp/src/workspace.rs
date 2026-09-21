@@ -1,9 +1,15 @@
 //! Discovery of the SFCC cartridges in the open folder.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+use crate::cartridgepath::{self, CartridgePath};
+use crate::routes::Controllers;
 
 const MAX_DEPTH: usize = 6;
+const TEMPLATE_DEPTH: usize = 10;
 const SKIPPED: [&str; 8] = [
     "node_modules",
     ".git",
@@ -15,28 +21,45 @@ const SKIPPED: [&str; 8] = [
     ".vscode",
 ];
 
+/// One cartridge in the open folder.
 #[derive(Debug, Clone)]
 pub struct Cartridge {
+    /// The directory name, which is how the cartridge path refers to it.
     pub name: String,
-    /// The directory holding `cartridge/`, e.g. `.../cartridges/app_common_eu_guess`.
+    /// The directory holding `cartridge/`, e.g. `.../cartridges/app_brand`.
     pub root: PathBuf,
 }
 
 impl Cartridge {
+    /// The `cartridge/` directory inside it, where everything actually lives.
     pub fn cartridge_dir(&self) -> PathBuf {
         self.root.join("cartridge")
     }
 }
 
+/// What the open folder holds, and the indexes built from it on demand.
 #[derive(Debug, Default)]
 pub struct Workspace {
+    /// Every cartridge found, sorted by name.
     pub cartridges: Vec<Cartridge>,
     /// `cartridges/modules` folders, which hold plain CommonJS modules such as
     /// `server` that are required without a `cartridge/` segment.
     pub module_roots: Vec<PathBuf>,
+    /// The cartridge path of each storefront, from `dw.json` and from any
+    /// site archive in the folder. Empty when the checkout records neither.
+    pub paths: Vec<CartridgePath>,
+    /// Built on the first `template="..."` completion, not at startup: most
+    /// sessions never ask, and walking every cartridge costs a second.
+    templates: OnceLock<Vec<String>>,
+    /// Built on the first question about a route.
+    controllers: OnceLock<Controllers>,
+    /// Built on the first question about a resource key.
+    resource_keys: OnceLock<HashSet<String>>,
 }
 
 impl Workspace {
+    /// Walk the open folders for cartridges and cartridge paths. The heavier
+    /// indexes are left until something asks for them.
     pub fn scan(roots: &[PathBuf]) -> Self {
         let mut workspace = Workspace::default();
         for root in roots {
@@ -44,6 +67,7 @@ impl Workspace {
         }
         workspace.cartridges.sort_by(|a, b| a.name.cmp(&b.name));
         workspace.cartridges.dedup_by(|a, b| a.root == b.root);
+        workspace.paths = cartridgepath::load(roots);
         workspace
     }
 
@@ -64,6 +88,45 @@ impl Workspace {
             Some(cartridge.root.as_path()) != current.map(|c| c.root.as_path())
         }));
         ordered
+    }
+
+    /// Every template path an `isinclude` could name, as SFCC spells them:
+    /// no locale folder, no `.isml`, forward slashes. Sorted and deduplicated,
+    /// since the same path exists in every cartridge that overrides it.
+    pub fn templates(&self) -> &[String] {
+        self.templates.get_or_init(|| {
+            let mut paths: Vec<String> = Vec::new();
+            for cartridge in &self.cartridges {
+                let root = cartridge.cartridge_dir().join("templates").join("default");
+                collect_templates(&root, &root, 0, &mut paths);
+            }
+            paths.sort();
+            paths.dedup();
+            paths
+        })
+    }
+
+    /// Every key any default bundle defines, across every cartridge. Which
+    /// bundle is not recorded: the question worth answering is whether the key
+    /// exists at all, since a form resolves its labels against several.
+    pub fn resource_keys(&self) -> &HashSet<String> {
+        self.resource_keys.get_or_init(|| {
+            let mut keys = HashSet::new();
+            for cartridge in &self.cartridges {
+                let directory = cartridge
+                    .cartridge_dir()
+                    .join("templates")
+                    .join("resources");
+                collect_keys(&directory, &mut keys);
+            }
+            keys
+        })
+    }
+
+    /// Every controller in every cartridge, and the routes each declares.
+    pub fn controllers(&self) -> &Controllers {
+        self.controllers
+            .get_or_init(|| Controllers::scan(&self.cartridges))
     }
 
     fn visit(&mut self, dir: &Path, depth: usize) {
@@ -97,6 +160,75 @@ impl Workspace {
             self.visit(&path, depth + 1);
         }
     }
+}
+
+/// Only the suffix-free bundles: a locale file defines no key of its own.
+fn collect_keys(directory: &Path, into: &mut HashSet<String>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .extension()
+            .is_none_or(|extension| extension != "properties")
+        {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        if stem.contains('_') {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in text.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('#') || trimmed.starts_with('!') {
+                continue;
+            }
+            if let Some((key, _)) = trimmed.split_once('=') {
+                let key = key.trim();
+                if !key.is_empty() {
+                    into.insert(key.to_string());
+                }
+            }
+        }
+    }
+}
+
+fn collect_templates(dir: &Path, root: &Path, depth: usize, into: &mut Vec<String>) {
+    if depth > TEMPLATE_DEPTH {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            collect_templates(&path, root, depth + 1, into);
+            continue;
+        }
+        if path.extension().is_none_or(|extension| extension != "isml") {
+            continue;
+        }
+        if let Some(name) = template_name(&path, root) {
+            into.push(name);
+        }
+    }
+}
+
+fn template_name(file: &Path, root: &Path) -> Option<String> {
+    let relative = file.strip_prefix(root).ok()?.with_extension("");
+    let joined = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    (!joined.is_empty()).then_some(joined)
 }
 
 fn cartridge_at(cartridge_dir: &Path) -> Option<Cartridge> {

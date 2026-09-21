@@ -1,5 +1,6 @@
 //! Finding the reference under the cursor in an ISML or JavaScript line.
 
+/// Something in the source that points at a file, a key or a route.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Reference {
     /// `<isinclude template="account/dashboard"/>`
@@ -7,7 +8,21 @@ pub enum Reference {
     /// `require('*/cartridge/scripts/helpers/brandHelper')`
     Module(String),
     /// `Resource.msg('label.profile.firstname', 'account', null)`
-    Resource { key: String, bundle: String },
+    Resource {
+        /// The key being looked up.
+        key: String,
+        /// The bundle it was asked of.
+        bundle: String,
+    },
+    /// A route: `server.append('Show', ...)` in a controller, or an endpoint
+    /// named in full — `URLUtils.url('Account-Show')`. The controller is known
+    /// only in the second case; otherwise it is the file being edited.
+    Route {
+        /// The controller, when the literal named one.
+        controller: Option<String>,
+        /// The route name.
+        name: String,
+    },
 }
 
 /// The reference the cursor sits on, if any. `column` is a character offset
@@ -24,6 +39,9 @@ pub fn at_cursor(line: &str, column: usize) -> Option<Reference> {
     }
     if ends_with_call(&before, "require") {
         return Some(Reference::Module(literal.text));
+    }
+    if let Some(route) = route_at(&before, &literal.text) {
+        return Some(route);
     }
     if is_template_attribute(&before) {
         return Some(Reference::Template(literal.text));
@@ -88,6 +106,33 @@ fn ends_with_call(before: &str, name: &str) -> bool {
     }
     let preceding = head[..head.len() - name.len()].chars().next_back();
     !matches!(preceding, Some(c) if c.is_alphanumeric() || c == '_' || c == '$')
+}
+
+/// A route is either the first argument of a `server.<verb>(` call, or an
+/// endpoint written out in full anywhere at all.
+fn route_at(before: &str, literal: &str) -> Option<Reference> {
+    const VERBS: [&str; 6] = ["get", "post", "use", "append", "prepend", "replace"];
+    if VERBS
+        .iter()
+        .any(|verb| ends_with_call(before, &format!("server.{verb}")))
+        && is_route_name(literal)
+    {
+        return Some(Reference::Route {
+            controller: None,
+            name: literal.to_string(),
+        });
+    }
+    let (controller, name) = literal.split_once('-')?;
+    (is_route_name(controller) && is_route_name(name)).then(|| Reference::Route {
+        controller: Some(controller.to_string()),
+        name: name.to_string(),
+    })
+}
+
+fn is_route_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.starts_with(|c: char| c.is_ascii_uppercase())
+        && value.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 fn is_template_attribute(before: &str) -> bool {
@@ -239,6 +284,36 @@ mod tests {
             at_cursor(line, column_of(line, "account")),
             Some(Reference::Resource { .. })
         ));
+    }
+
+    #[test]
+    fn finds_a_route_in_a_server_declaration() {
+        let line = "server.append('Show', function (req, res, next) {});";
+        assert_eq!(
+            at_cursor(line, column_of(line, "Show")),
+            Some(Reference::Route {
+                controller: None,
+                name: "Show".into()
+            })
+        );
+    }
+
+    #[test]
+    fn finds_an_endpoint_written_out_in_full() {
+        let line = "var url = URLUtils.url('Account-Show').toString();";
+        assert_eq!(
+            at_cursor(line, column_of(line, "Account-Show")),
+            Some(Reference::Route {
+                controller: Some("Account".into()),
+                name: "Show".into()
+            })
+        );
+    }
+
+    #[test]
+    fn ignores_a_hyphenated_string_that_is_not_an_endpoint() {
+        let line = r#"<div class="product-tile"></div>"#;
+        assert_eq!(at_cursor(line, column_of(line, "product-tile")), None);
     }
 
     #[test]

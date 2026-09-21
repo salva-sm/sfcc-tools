@@ -20,7 +20,12 @@ const DEFAULT_IGNORED_NAMES: [&str; 12] = [
     "desktop.ini",
 ];
 
-const DEFAULT_IGNORED_SUFFIXES: [&str; 5] = [".swp", ".swo", ".orig", ".rej", "~"];
+/// Editor leftovers, plus two things a cartridge never needs on an instance:
+/// a source map, which only serves a browser that has the sources, and a unit
+/// test, which runs before the upload rather than on the sandbox.
+const DEFAULT_IGNORED_SUFFIXES: [&str; 8] = [
+    ".swp", ".swo", ".orig", ".rej", "~", ".map", ".test.js", ".spec.js",
+];
 
 #[derive(Debug, Clone)]
 pub struct LocalFile {
@@ -200,6 +205,15 @@ mod tests {
         assert!(ignore.skips("app_common_ui/node_modules/lit/index.js"));
         assert!(ignore.skips("app_common_ui/cartridge/.DS_Store"));
         assert!(!ignore.skips("app_common_ui/cartridge/client/default/js/utils.js"));
+    }
+
+    #[test]
+    fn skips_source_maps_and_unit_tests_by_default() {
+        let ignore = ignore_with("");
+        assert!(ignore.skips("app/cartridge/static/default/js/main.js.map"));
+        assert!(ignore.skips("app/cartridge/scripts/rules.test.js"));
+        assert!(ignore.skips("app/cartridge/scripts/rules.spec.js"));
+        assert!(!ignore.skips("app/cartridge/static/default/js/main.js"));
     }
 
     #[test]

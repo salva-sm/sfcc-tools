@@ -20,7 +20,7 @@
     "description": "ISML (Salesforce B2C Commerce) grammar for tree-sitter, derived from tree-sitter-html",
     "authors": [
       {
-        "name": "Guess EU storefront team"
+        "name": "salvasm"
       }
     ]
   },

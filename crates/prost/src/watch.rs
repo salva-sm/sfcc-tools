@@ -3,6 +3,7 @@ use crate::logging::{self, Change};
 use crate::manifest::Manifest;
 use crate::push::{Ctx, PushOptions, delete_paths, push, select_changed, upload_files};
 use crate::reload::{Browser, worth_reloading};
+use crate::sync_status;
 use crate::scan::{LocalFile, collect_files, describe};
 use anyhow::{Context, Result};
 use notify::RecursiveMode;
@@ -30,11 +31,13 @@ pub struct WatchOptions {
 pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
     let heartbeat = daemon::heartbeat_path(&ctx.config);
     daemon::write_heartbeat(&heartbeat);
+    sync_status::publish(&ctx.config, sync_status::State::Uploading);
 
     ctx.dav.wait_until_ready(None).await?;
     if options.initial_push {
         push(&ctx, PushOptions { full: options.full, dry_run: false, show_progress: true }).await?;
     }
+    sync_status::publish(&ctx.config, sync_status::State::Synced);
 
     let (sender, mut receiver) = unbounded_channel::<Vec<PathBuf>>();
     let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: notify_debouncer_full::DebounceEventResult| {
@@ -76,20 +79,27 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
             _ = tokio::signal::ctrl_c() => {
                 logging::info("stopping the watcher");
                 manifest.save(&ctx.manifest_path)?;
+                sync_status::clear(&ctx.config);
                 return Ok(());
             }
             batch = receiver.recv() => {
                 let Some(paths) = batch else {
                     manifest.save(&ctx.manifest_path)?;
+                    sync_status::clear(&ctx.config);
                     return Ok(());
                 };
                 pending.extend(paths);
                 drain_into(&mut receiver, &mut pending).await;
                 let touched = std::mem::take(&mut pending);
+                sync_status::publish_uploading(&ctx.config, touched.len());
                 match synchronize(&ctx, &mut manifest, &touched).await {
-                    Ok(sent) => refresh_browser(browser.as_ref(), &sent).await,
+                    Ok(sent) => {
+                        sync_status::publish(&ctx.config, sync_status::State::Synced);
+                        refresh_browser(browser.as_ref(), &sent).await;
+                    }
                     Err(error) => {
                         logging::error(format!("{error:#}"));
+                        sync_status::publish_failure(&ctx.config, format!("{error:#}"));
                         pending.extend(touched);
                     }
                 }

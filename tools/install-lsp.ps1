@@ -21,8 +21,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$root = $PSScriptRoot
-$manifestPath = "$root\extension\extension.toml"
+# The script lives in tools/; everything it touches is one level up.
+$root = Split-Path $PSScriptRoot -Parent
+$manifestPath = "$root\extensions\isml\extension.toml"
 
 function Set-Grammar([string] $Url, [string] $Commit) {
     $content = Get-Content $manifestPath -Raw
@@ -41,7 +42,7 @@ function Set-Grammar([string] $Url, [string] $Commit) {
     # Zed will not re-point an existing checkout: it refuses with "already
     # exists, but is not a git clone of ...". Drop it so the next install
     # clones the URL we just wrote.
-    $checkout = "$root\extension\grammars"
+    $checkout = "$root\extensions\isml\grammars"
     if (Test-Path $checkout) { Remove-Item -Recurse -Force $checkout }
 
     Write-Host "    grammar -> $Url @ $Commit" -ForegroundColor DarkGray
@@ -55,14 +56,14 @@ if (-not $SkipServer) {
     }
 
     Write-Host '==> Building isml-lsp' -ForegroundColor Cyan
-    cargo install --path "$root\isml-lsp" --force
+    cargo install --path "$root\crates\isml-lsp" --force
     if ($LASTEXITCODE -ne 0) { throw "cargo install failed ($LASTEXITCODE)" }
 }
 
 if ($LocalGrammar) {
     # Zed fetches grammars with git, so a work-in-progress grammar needs a
     # throwaway repo of its own. It is a build artifact, kept out of this tree.
-    $staging = "$(Split-Path $root -Parent)\zed-isml-grammar"
+    $staging = "$(Split-Path $root -Parent)\sfcc-tools-grammar"
     Write-Host "==> Staging the grammar in $staging" -ForegroundColor Cyan
     # Mirrors this repo's layout so that `path = "grammar"` holds either way.
     New-Item -ItemType Directory -Force -Path "$staging\grammar" | Out-Null
@@ -91,11 +92,11 @@ if ($LocalGrammar) {
 if ($PinGrammar) {
     Write-Host '==> Pinning the grammar to this repo' -ForegroundColor Cyan
     $commit = (git -C $root rev-parse HEAD).Trim()
-    Set-Grammar 'https://github.com/salva-sm/sfcc-zed-isml' $commit
+    Set-Grammar 'https://github.com/salva-sm/sfcc-tools' $commit
     Write-Host '    commit the manifest and push before tagging a release' -ForegroundColor DarkGray
 }
 
 Write-Host ''
 Write-Host 'Done. In Zed: run `zed: install dev extension` and choose' -ForegroundColor Green
-Write-Host "  $root\extension" -ForegroundColor Green
+Write-Host "  $root\extensions\isml" -ForegroundColor Green
 Write-Host '(already installed? run `zed: reload extensions` instead).' -ForegroundColor Green

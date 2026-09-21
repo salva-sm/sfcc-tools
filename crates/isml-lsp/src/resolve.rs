@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::hover;
 use crate::reference::Reference;
 use crate::workspace::Workspace;
 
@@ -11,7 +12,9 @@ const MODULE_EXTENSIONS: [&str; 3] = ["js", "json", "ds"];
 /// `default`, so it is tried first.
 const TEMPLATE_DIRS: [&str; 1] = ["default"];
 
+/// A place a reference points at.
 pub struct Hit {
+    /// The file.
     pub path: PathBuf,
     /// Zero-based line to put the cursor on.
     pub line: u32,
@@ -23,12 +26,26 @@ impl From<PathBuf> for Hit {
     }
 }
 
+/// Every place a reference points at, most relevant first. More than one
+/// is normal: a template or a script exists in every cartridge overriding it.
 pub fn resolve(reference: &Reference, from: &Path, workspace: &Workspace) -> Vec<Hit> {
     match reference {
         Reference::Template(path) => templates(path, from, workspace),
         Reference::Module(path) => modules(path, from, workspace),
         Reference::Resource { key, bundle } => resources(key, bundle, from, workspace),
+        Reference::Route { .. } => routes(reference, from, workspace),
     }
+}
+
+/// Every cartridge that declares the route, what runs first.
+fn routes(reference: &Reference, from: &Path, workspace: &Workspace) -> Vec<Hit> {
+    let Some(route) = hover::route_of(reference, from) else {
+        return Vec::new();
+    };
+    hover::targets(&hover::chains(&route, workspace))
+        .into_iter()
+        .map(|(path, line)| Hit { path, line })
+        .collect()
 }
 
 fn templates(template: &str, from: &Path, workspace: &Workspace) -> Vec<Hit> {
@@ -87,7 +104,7 @@ fn modules(module: &str, from: &Path, workspace: &Workspace) -> Vec<Hit> {
             push_module(&mut hits, &cartridge.root.join(rest));
         }
     } else if let Some((name, rest)) = module.split_once('/') {
-        // `app_common_eu_guess/cartridge/scripts/x` — an explicit cartridge.
+        // `app_brand/cartridge/scripts/x` — an explicit cartridge.
         for cartridge in workspace.cartridges_from(from) {
             if cartridge.name == name {
                 push_module(&mut hits, &cartridge.root.join(rest));

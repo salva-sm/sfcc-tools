@@ -6,7 +6,7 @@ use zed_extension_api::{
 };
 
 const SERVER_BINARY: &str = "isml-lsp";
-const SERVER_REPOSITORY: &str = "salva-sm/sfcc-zed-isml";
+const SERVER_REPOSITORY: &str = "salva-sm/sfcc-tools";
 
 struct IsmlExtension {
     cached_binary_path: Option<String>,

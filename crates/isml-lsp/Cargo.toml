@@ -1,15 +1,29 @@
 [package]
 name = "isml-lsp"
-version = "0.1.3"
+version = "0.4.0"
 edition = "2021"
-description = "Go-to-definition for ISML template paths, SFCC require() paths and Resource.msg keys"
+description = "ISML completion, SFCC custom-attribute completion and diagnostics, and go-to-definition for SFCC paths"
 license = "MIT"
 
+[lib]
+name = "isml_lsp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "isml-lsp"
+path = "src/main.rs"
+
+[[bin]]
+name = "generate-api"
+path = "src/bin/generate-api.rs"
+
 [dependencies]
+crossbeam-channel = "0.5"
 lsp-server = "0.7"
 lsp-types = "0.94"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+roxmltree = "0.20"
 
 [profile.release]
 opt-level = 2
