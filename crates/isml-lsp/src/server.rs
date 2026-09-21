@@ -120,6 +120,7 @@ impl Server {
         let completer = Completer {
             workspace: &self.workspace,
             metadata: &self.metadata,
+            text,
             file: &file,
         };
         let items = completer.items(&context, position.position);

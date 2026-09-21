@@ -72,6 +72,15 @@ impl Api {
             .map(|(name, class)| (name.replace('.', "/"), class))
     }
 
+    /// Every platform class, by qualified name. `TopLevel` is left out: those
+    /// are globals, not something a `require` brings in.
+    pub fn classes(&self) -> impl Iterator<Item = (&str, &Class)> {
+        self.classes
+            .iter()
+            .filter(|(name, _)| name.starts_with("dw."))
+            .map(|(name, class)| (name.as_str(), class))
+    }
+
     /// A class by the path a `require` gives, `dw/system/Site`.
     pub fn by_module(&self, path: &str) -> Option<&Class> {
         self.class(&path.trim_matches('/').replace('/', "."))
@@ -133,6 +142,85 @@ pub fn bindings(text: &str) -> BTreeMap<String, String> {
         }
     }
     found
+}
+
+/// Where a new `require` belongs in a document, and what it should look like
+/// once it is there.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Imports {
+    /// Classes the document already requires, and under what name.
+    pub names: BTreeMap<String, String>,
+    /// Zero-based line a new `require` goes on.
+    pub line: u32,
+    /// `var`, `const` or `let` — whichever the document already prefers.
+    pub keyword: String,
+}
+
+impl Imports {
+    /// The identifier a class is already bound to here, if it is.
+    pub fn name_of(&self, class: &str) -> Option<&str> {
+        self.names.get(class).map(String::as_str)
+    }
+}
+
+/// Read a document's `require` block: what it already pulls in, where the
+/// block ends, and how it declares things.
+pub fn imports(text: &str) -> Imports {
+    let mut names = BTreeMap::new();
+    let mut last_require: Option<u32> = None;
+    let mut after_directive = 0;
+    let mut keyword = None;
+
+    for (number, line) in text.lines().enumerate() {
+        let number = number as u32;
+        let trimmed = line.trim();
+        if trimmed.starts_with("'use strict'") || trimmed.starts_with("\"use strict\"") {
+            after_directive = number + 1;
+            continue;
+        }
+        let Some(declaration) = require_declaration(line) else {
+            continue;
+        };
+        last_require = Some(number);
+        if keyword.is_none() {
+            keyword = Some(declaration.keyword);
+        }
+        if declaration.module.starts_with("dw/") {
+            names.insert(declaration.module.replace('/', "."), declaration.name);
+        }
+    }
+
+    Imports {
+        names,
+        // After the last require if there is one; otherwise just below the
+        // `'use strict'` a cartridge file opens with, or at the very top.
+        line: last_require.map_or(after_directive, |line| line + 1),
+        keyword: keyword.unwrap_or_else(|| "var".to_string()),
+    }
+}
+
+struct Declaration {
+    keyword: String,
+    name: String,
+    module: String,
+}
+
+/// `var Site = require('dw/system/Site');` broken into its three parts.
+fn require_declaration(line: &str) -> Option<Declaration> {
+    const CALL: &str = "require(";
+    let call = line.find(CALL)?;
+    let module = quoted(&line[call + CALL.len()..])?;
+    let head = line[..call].trim_end().strip_suffix('=')?.trim();
+
+    let (keyword, name) = head.split_once(char::is_whitespace)?;
+    if !matches!(keyword, "var" | "const" | "let") {
+        return None;
+    }
+    Some(Declaration {
+        keyword: keyword.to_string(),
+        name: name.trim().to_string(),
+        module,
+    })
 }
 
 /// The identifier a `var x = ` on the left of the call declares.
@@ -247,6 +335,37 @@ mod tests {
             member_at(line, column, text),
             Some(("dw.system.Site".into(), "getCurrent".into()))
         );
+    }
+
+    #[test]
+    fn puts_a_new_require_under_the_last_one() {
+        let text = "'use strict';\n\n\
+                    var server = require('server');\n\
+                    var Site = require('dw/system/Site');\n\n\
+                    server.get('Show', function () {});\n";
+        let found = imports(text);
+        assert_eq!(found.line, 4);
+        assert_eq!(found.keyword, "var");
+        assert_eq!(found.name_of("dw.system.Site"), Some("Site"));
+        assert_eq!(found.name_of("dw.system.Transaction"), None);
+    }
+
+    #[test]
+    fn falls_back_to_just_under_use_strict() {
+        let found = imports("'use strict';\n\nmodule.exports = {};\n");
+        assert_eq!(found.line, 1);
+        assert!(found.names.is_empty());
+    }
+
+    #[test]
+    fn opens_at_the_top_of_a_file_with_no_preamble() {
+        assert_eq!(imports("module.exports = {};\n").line, 0);
+    }
+
+    #[test]
+    fn keeps_the_declaration_keyword_the_file_already_uses() {
+        let text = "const Logger = require('dw/system/Logger');\n";
+        assert_eq!(imports(text).keyword, "const");
     }
 
     #[test]
