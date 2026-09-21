@@ -2,7 +2,7 @@ id = "b2c-debug"
 name = "B2C Commerce Debugger"
 version = "0.4.0"
 schema_version = 1
-authors = ["salvasm"]
+authors = ["salva-sm"]
 description = "Debug server-side Salesforce B2C Commerce scripts in Zed, through the debug adapter shipped with the official b2c CLI."
 repository = "https://github.com/salva-sm/sfcc-tools"
 
