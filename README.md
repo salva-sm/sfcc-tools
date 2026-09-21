@@ -87,9 +87,9 @@ cargo doc --no-deps --lib --open  # the language server's reference
 
 ## Releasing
 
-One tag, one release, every binary on it — the Zed extension can only ask GitHub for the
-*latest* release, so a per-component tag would leave it looking for an asset that release
-does not carry.
+One tag, one release, everything on it: both binaries for five platforms, and both Zed
+extension zips. The extension can only ask GitHub for the *latest* release, so a
+per-component tag would leave it looking for an asset that release does not carry.
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
