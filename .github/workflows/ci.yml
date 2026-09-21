@@ -20,8 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cargo fmt --check -p prost -p sfcc-core
-      - run: cargo test -p prost -p sfcc-core
+      - run: cargo fmt --check -p prost -p sfcc-core -p sfcc-dap
+      - run: cargo test -p prost -p sfcc-core -p sfcc-dap
+      - run: cargo clippy -p sfcc-dap -p sfcc-core -- -D warnings
 
   grammar:
     name: tree-sitter-isml

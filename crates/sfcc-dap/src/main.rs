@@ -55,7 +55,7 @@ fn main() -> Result<()> {
         }
     };
 
-    let adapter = Adapter::new(session, cartridges, writer);
+    let adapter = Adapter::new(session, cartridges, config.dw_json.clone(), writer);
     let mut input = BufReader::new(std::io::stdin());
     while let Some(request) = protocol::read(&mut input)? {
         if !adapter.handle(&request) {

@@ -31,13 +31,15 @@ These are the pieces that close those gaps. No instance, no network, no `node_mo
 | 🧠 | **[`crates/isml-lsp`](crates/isml-lsp)** | Language server: ISML and `dw.*` completion, metadata-backed checks, route override chains, go-to-definition |
 | 🌳 | **[`grammar`](grammar)** | `tree-sitter-isml` — the only tree-sitter grammar for ISML there is |
 | ✏️ | **[`extensions/isml`](extensions/isml)** | Zed extension wiring the grammar and the language server together |
-| 🐞 | **[`extensions/b2c-debug`](extensions/b2c-debug)** | Zed extension registering a debug adapter for server-side scripts |
+| 🐞 | **[`crates/sfcc-dap`](crates/sfcc-dap)** | Debug adapter for server-side scripts: DAP to the editor, the instance's own debugger API on the other side |
+| 🧩 | **[`extensions/b2c-debug`](extensions/b2c-debug)** | Zed extension registering that adapter |
+| 🔌 | **[`crates/sfcc-core`](crates/sfcc-core)** | The one `dw.json` reader they all share |
 
 Each has its own README. This one only says how they fit together.
 
 ## Install
 
-**Binaries** — no toolchain needed. Grab them from the
+**Binaries** — `prost`, `isml-lsp` and `sfcc-dap`, no toolchain needed. Grab them from the
 [latest release](https://github.com/salva-sm/sfcc-tools/releases/latest):
 
 ```powershell
@@ -64,7 +66,7 @@ cargo install --path crates/isml-lsp
 ## Layout
 
 ```
-crates/       the two Rust programs, one cargo workspace
+crates/       the Rust programs, one cargo workspace
 grammar/      tree-sitter-isml, buildable on its own
 extensions/   the Zed extensions, deliberately outside the workspace
 tools/        packaging and install scripts, shared by both extensions
@@ -77,8 +79,8 @@ a workspace resolves against the workspace root instead.
 ## Building
 
 ```bash
-cargo test                        # both crates
-cargo build --release             # both binaries
+cargo test                        # every crate
+cargo build --release             # every binary
 cargo doc --no-deps --lib --open  # the language server's reference
 ```
 
