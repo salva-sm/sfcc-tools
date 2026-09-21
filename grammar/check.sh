@@ -23,7 +23,7 @@ case "$summary" in
 esac
 
 echo "==> queries"
-for query in ../extension/languages/isml/*.scm; do
+for query in ../extensions/isml/languages/isml/*.scm; do
     npx tree-sitter query --quiet "$query" test/fixtures/syntax.isml >/dev/null
     echo "    ok $(basename "$query")"
 done

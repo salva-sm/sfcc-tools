@@ -1,4 +1,4 @@
-name: Extension zip
+name: Extension zip (isml)
 
 # Builds the drop-in zip a teammate installs without any toolchain, and
 # attaches it to the release for a `v*` tag.
@@ -36,7 +36,7 @@ jobs:
         id: manifest
         run: |
           sed -nE 's/^id = "(.*)"$/id=\1/p;s/^version = "(.*)"$/version=\1/p' \
-            extension/extension.toml | head -2 >> "$GITHUB_OUTPUT"
+            extensions/isml/extension.toml | head -2 >> "$GITHUB_OUTPUT"
 
       - name: Build the extension
         run: |
@@ -62,12 +62,12 @@ jobs:
           ID: ${{ steps.manifest.outputs.id }}
         run: |
           mkdir -p "stage/$ID"
-          cp extension/extension.toml "stage/$ID/"
-          cp extension/target/wasm32-wasip2/release/zed_isml.wasm "stage/$ID/extension.wasm"
+          cp extensions/isml/extension.toml "stage/$ID/"
+          cp extensions/isml/target/wasm32-wasip2/release/zed_isml.wasm "stage/$ID/extension.wasm"
           cp -r payload/grammars "stage/$ID/"
-          cp -r extension/languages "stage/$ID/"
+          cp -r extensions/isml/languages "stage/$ID/"
           cp LICENSE README.md "stage/$ID/"
-          cp packaging/install.ps1 packaging/install.cmd stage/
+          cp tools/packaging/install.ps1 tools/packaging/install.cmd stage/
           ( cd stage && zip -qr "../$ID-${{ steps.manifest.outputs.version }}.zip" . )
           unzip -l "$ID-${{ steps.manifest.outputs.version }}.zip"
 
@@ -89,7 +89,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: extension-zip
+          name: extension-isml-zip
           path: "*.zip"
 
       - name: Attach it to the release
