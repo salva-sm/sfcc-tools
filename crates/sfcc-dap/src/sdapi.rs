@@ -74,8 +74,10 @@ pub struct Location {
 pub struct Variable {
     /// The identifier.
     pub name: String,
-    /// The declared or inferred type.
-    #[serde(default)]
+    /// The declared or inferred type. `type` is a keyword here, so the
+    /// field has to be renamed — and without the rename serde silently
+    /// looks for `type_` in the answer and never finds it.
+    #[serde(rename = "type", default)]
     pub type_: Option<String>,
     /// The value, already rendered by the instance.
     #[serde(default)]
@@ -339,6 +341,14 @@ mod tests {
         assert_eq!(threads.len(), 1);
         assert!(threads[0].is_halted());
         assert_eq!(threads[0].call_stack[0].location.line_number, 42);
+    }
+
+    #[test]
+    fn reads_the_type_the_answer_actually_carries() {
+        let body =
+            r#"{"object_members":[{"name":"currency","type":"dw.util.Currency","value":"EUR"}]}"#;
+        let members = parse::<Variables>(body.into()).unwrap().object_members;
+        assert_eq!(members[0].type_.as_deref(), Some("dw.util.Currency"));
     }
 
     #[test]
