@@ -86,6 +86,49 @@ fn takes_the_api_client_from_the_sfcc_ci_block() {
     let _ = std::fs::remove_dir_all(&home);
 }
 
+#[test]
+fn reads_a_cartridges_dir_written_from_the_repository_root() {
+    let home = std::env::temp_dir().join("prost-test-dwjson-subdir");
+    let _ = std::fs::remove_dir_all(&home);
+    let inner = home.join("source");
+    std::fs::create_dir_all(inner.join("cartridges").join("app_x")).unwrap();
+    std::fs::write(
+        inner.join("dw.json"),
+        r#"{
+            "hostname": "sbx-001.my.commercecloud.salesforce.com",
+            "username": "someone",
+            "password": "secret",
+            "cartridgesDir": "source/cartridges"
+        }"#,
+    )
+    .unwrap();
+
+    let config = Config::load(Some(inner.join("dw.json")), None).expect("dw.json should load");
+    assert!(config.cartridges_dir.join("app_x").is_dir());
+
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn refuses_a_cartridges_dir_that_is_nowhere() {
+    let home = scratch("dwjson-badcartridges");
+    std::fs::write(
+        home.join("dw.json"),
+        r#"{
+            "hostname": "sbx-001.my.commercecloud.salesforce.com",
+            "username": "someone",
+            "password": "secret",
+            "cartridgesDir": "nowhere"
+        }"#,
+    )
+    .unwrap();
+
+    let error = Config::load(Some(home.join("dw.json")), None).unwrap_err();
+    assert!(format!("{error:#}").contains("cartridgesDir"));
+
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 fn scratch(name: &str) -> PathBuf {
     let home = std::env::temp_dir().join(format!("prost-test-{name}"));
     let _ = std::fs::remove_dir_all(&home);

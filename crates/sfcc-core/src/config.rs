@@ -300,13 +300,20 @@ fn resolve_credentials(parsed: &DwJson) -> Option<Credentials> {
 
 fn resolve_cartridges_dir(root: &Path, configured: Option<&str>) -> Result<PathBuf> {
     if let Some(relative) = configured {
-        let candidate = root.join(relative);
-        if candidate.is_dir() {
-            return Ok(normalize(&candidate));
+        // The value is relative to dw.json. When the file sits in a
+        // subdirectory it is routinely written relative to the repository
+        // root instead, which resolves against the parent and nowhere else.
+        let from_root = root.join(relative);
+        let from_parent = root.parent().map(|parent| parent.join(relative));
+        for candidate in [Some(from_root.clone()), from_parent].into_iter().flatten() {
+            if candidate.is_dir() {
+                return Ok(normalize(&candidate));
+            }
         }
         bail!(
-            "\"cartridgesDir\" points to {}, which does not exist",
-            candidate.display()
+            "\"cartridgesDir\": {relative:?} points to {}, which does not exist - the path is \
+             relative to dw.json",
+            from_root.display()
         );
     }
 
