@@ -144,14 +144,11 @@ pub fn bindings(text: &str) -> BTreeMap<String, String> {
     found
 }
 
-/// Where a new `require` belongs in a document, and what it should look like
-/// once it is there.
+/// What a document already requires, and how it declares things.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Imports {
     /// Classes the document already requires, and under what name.
     pub names: BTreeMap<String, String>,
-    /// Zero-based line a new `require` goes on.
-    pub line: u32,
     /// `var`, `const` or `let` — whichever the document already prefers.
     pub keyword: String,
 }
@@ -163,68 +160,31 @@ impl Imports {
     }
 }
 
-/// Read a document's `require` block: what it already pulls in, where the
-/// block ends, and how it declares things.
+/// Read every `require` in a document — the block at the head and the lazy
+/// ones inside handlers alike, since either means the class is already in
+/// hand — and the keyword the file declares them with.
 pub fn imports(text: &str) -> Imports {
     let mut names = BTreeMap::new();
-    let mut last_require: Option<u32> = None;
-    let mut after_directive = 0;
     let mut keyword = None;
 
-    // Only the block at the head of the file counts. Most controllers also
-    // require something lazily inside a handler, indented, halfway down —
-    // appending after *that* would drop the new line into a function body.
-    for (number, line) in text.lines().enumerate() {
-        let number = number as u32;
-        let trimmed = line.trim();
-
-        if trimmed.is_empty() || is_comment(trimmed) {
+    for line in text.lines() {
+        let Some(declaration) = require_declaration(line) else {
             continue;
-        }
-        if trimmed.starts_with("'use strict'") || trimmed.starts_with("\"use strict\"") {
-            after_directive = number + 1;
-            continue;
-        }
-        // Indentation means it is inside something, so the preamble ended.
-        let Some(declaration) = require_declaration(line).filter(|_| !starts_indented(line)) else {
-            break;
         };
-        last_require = Some(number);
         if keyword.is_none() {
             keyword = Some(declaration.keyword);
         }
         if declaration.module.starts_with("dw/") {
-            names.insert(declaration.module.replace('/', "."), declaration.name);
-        }
-    }
-
-    // Anything the file requires later still counts as already imported, even
-    // though it is not where a new one would go.
-    for line in text.lines().filter(|line| starts_indented(line)) {
-        if let Some(declaration) = require_declaration(line) {
-            if declaration.module.starts_with("dw/") {
-                names
-                    .entry(declaration.module.replace('/', "."))
-                    .or_insert(declaration.name);
-            }
+            names
+                .entry(declaration.module.replace('/', "."))
+                .or_insert(declaration.name);
         }
     }
 
     Imports {
         names,
-        // After the last require if there is one; otherwise just below the
-        // `'use strict'` a cartridge file opens with, or at the very top.
-        line: last_require.map_or(after_directive, |line| line + 1),
         keyword: keyword.unwrap_or_else(|| "var".to_string()),
     }
-}
-
-fn is_comment(trimmed: &str) -> bool {
-    trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*')
-}
-
-fn starts_indented(line: &str) -> bool {
-    line.starts_with(' ') || line.starts_with('\t')
 }
 
 struct Declaration {
@@ -366,54 +326,18 @@ mod tests {
     }
 
     #[test]
-    fn puts_a_new_require_under_the_last_one() {
-        let text = "'use strict';\n\n\
-                    var server = require('server');\n\
-                    var Site = require('dw/system/Site');\n\n\
-                    server.get('Show', function () {});\n";
+    fn counts_a_class_as_in_hand_wherever_it_is_required() {
+        let text = "'use strict';
+                    var Site = require('dw/system/Site');
+                    server.get('Show', function () {
+                            var OrderMgr = require('dw/order/OrderMgr');
+                    });
+";
         let found = imports(text);
-        assert_eq!(found.line, 4);
-        assert_eq!(found.keyword, "var");
         assert_eq!(found.name_of("dw.system.Site"), Some("Site"));
-        assert_eq!(found.name_of("dw.system.Transaction"), None);
-    }
-
-    #[test]
-    fn stays_in_the_head_of_the_file_past_a_lazy_require() {
-        let text = "'use strict';\n\
-                    \n\
-                    var server = require('server');\n\
-                    var Site = require('dw/system/Site');\n\
-                    \n\
-                    server.get('Show', function () {\n    \
-                        var OrderMgr = require('dw/order/OrderMgr');\n\
-                    });\n";
-        let found = imports(text);
-        // Line 4, not 7: the indented one is inside a handler.
-        assert_eq!(found.line, 4);
-        // Still counts as imported, so it is never required twice.
+        // Lazy, inside a handler — still no reason to declare it twice.
         assert_eq!(found.name_of("dw.order.OrderMgr"), Some("OrderMgr"));
-    }
-
-    #[test]
-    fn reads_past_blank_lines_and_comments_in_the_preamble() {
-        let text = "'use strict';\n\
-                    \n\
-                    // what this controller is for\n\
-                    var server = require('server');\n";
-        assert_eq!(imports(text).line, 4);
-    }
-
-    #[test]
-    fn falls_back_to_just_under_use_strict() {
-        let found = imports("'use strict';\n\nmodule.exports = {};\n");
-        assert_eq!(found.line, 1);
-        assert!(found.names.is_empty());
-    }
-
-    #[test]
-    fn opens_at_the_top_of_a_file_with_no_preamble() {
-        assert_eq!(imports("module.exports = {};\n").line, 0);
+        assert_eq!(found.name_of("dw.system.Transaction"), None);
     }
 
     #[test]

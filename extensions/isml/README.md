@@ -83,29 +83,28 @@ not exist. The server answers with the real set instead, so the wrong one stops 
 | `server.append('` | the routes this controller already has somewhere in the cartridge path |
 | `require('` | the 398 `dw/...` modules, each with what the class is for |
 | `Site.` — any name bound by `require('dw/...')` | that class's methods, properties and constants, with signatures |
-| `dwSite` | inserts `Site`, and writes `var Site = require('dw/system/Site');` into the require block |
-| `var Site` | completes the declaration in place, `require` and all |
+| `dwSite` | the whole declaration, where the cursor is: `var Site = require('dw/system/Site');` |
+| `var Site` | the same thing, when the keyword is already typed |
 
 Everything from `product.custom.` down works in a `.js` controller as well as in a
 template, and inside `${ ... }`.
 
 ### Importing what you name
 
-Having the API is only half of it if bringing a class in is still manual. Two ways,
-whichever suits where the cursor already is:
+Having the API is only half of it if bringing a class in is still manual. Type the class
+where you want it and the `require` writes itself:
 
 ```js
-    dwTransaction          ->  Transaction
-                               ...and `var Transaction = require('dw/system/Transaction');`
-                               appears in the require block above
-
-var Transaction            ->  var Transaction = require('dw/system/Transaction');
+    dwTransaction     ->  var Transaction = require('dw/system/Transaction');
+var Transaction       ->  var Transaction = require('dw/system/Transaction');
 ```
 
-The new line goes under the last existing `require`, or under `'use strict'` when there
-is none, and it borrows whichever of `var`, `const` or `let` the file already uses. A
-class the document already requires is inserted under **its existing name**, with no
-second copy of the line — and the completion says so.
+The line lands **where the cursor is**, not hoisted to the top of the file — which is how
+most SFRA handlers already pull things in, and keeps the declaration next to its use. It
+borrows whichever of `var`, `const` or `let` the file already uses.
+
+A class the document requires already — anywhere, including lazily inside another
+handler — inserts under **its existing name** instead, so nothing gets declared twice.
 
 `var dwTransaction` works too: inside a declaration the `dw` prefix is optional.
 
