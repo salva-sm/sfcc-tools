@@ -456,27 +456,20 @@ impl Completer<'_> {
             .classes()
             .map(|(qualified, class)| {
                 let short = short_name(qualified);
-                let bound = imports.name_of(qualified);
                 let module = qualified.replace('.', "/");
+                // Already bound higher up? Then the name alone is what was
+                // meant — declaring it twice would shadow it at best.
+                let inserted = match imports.name_of(qualified) {
+                    Some(name) => name.to_string(),
+                    None => format!("{} {short} = require('{module}');", imports.keyword),
+                };
                 CompletionItem {
                     label: format!("dw{short}"),
                     kind: Some(CompletionItemKind::CLASS),
-                    detail: Some(match bound {
-                        Some(_) => format!("{module} (already required)"),
-                        None => module.clone(),
-                    }),
+                    detail: Some(inserted.clone()),
                     documentation: (!class.description.is_empty())
                         .then(|| markdown(class.description.clone())),
-                    text_edit: Some(edit(range, bound.unwrap_or(short).to_string())),
-                    // Sent both ways on purpose: inline for the editors that
-                    // take them, and as `data` for the ones that drop those
-                    // and ask `completionItem/resolve` instead.
-                    additional_text_edits: bound
-                        .is_none()
-                        .then(|| vec![pending(&imports, short, &module).edit()]),
-                    data: bound
-                        .is_none()
-                        .then(|| pending(&imports, short, &module).carried()),
+                    text_edit: Some(edit(range, inserted)),
                     ..Default::default()
                 }
             })
@@ -507,50 +500,6 @@ fn declaration_items(range: Range, keyword: &str, typed: &str) -> Vec<Completion
             }
         })
         .collect()
-}
-
-/// What an import item needs carried to `completionItem/resolve`, for the
-/// editors that ask for the extra edit rather than taking the one sent with
-/// the item.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct PendingRequire {
-    /// Zero-based line the `require` goes on.
-    pub line: u32,
-    /// `var`, `const` or `let`.
-    pub keyword: String,
-    /// The identifier being bound.
-    pub name: String,
-    /// The module path, as a `require` spells it.
-    pub module: String,
-}
-
-impl PendingRequire {
-    /// As it travels on the completion item, for `completionItem/resolve` to
-    /// read back.
-    pub fn carried(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-
-    /// The edit itself, rebuilt from what the item carried.
-    pub fn edit(&self) -> TextEdit {
-        let at = Position::new(self.line, 0);
-        TextEdit {
-            range: Range::new(at, at),
-            new_text: format!(
-                "{} {} = require('{}');\n",
-                self.keyword, self.name, self.module
-            ),
-        }
-    }
-}
-
-fn pending(imports: &api::Imports, name: &str, module: &str) -> PendingRequire {
-    PendingRequire {
-        line: imports.line,
-        keyword: imports.keyword.clone(),
-        name: name.to_string(),
-        module: module.to_string(),
-    }
 }
 
 fn short_name(qualified: &str) -> &str {
