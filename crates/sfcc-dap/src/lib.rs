@@ -7,6 +7,7 @@
 #![warn(missing_docs)]
 
 pub mod adapter;
+pub mod logs;
 pub mod paths;
 pub mod protocol;
 pub mod sdapi;

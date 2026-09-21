@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::logs::Logs;
 use crate::paths::Paths;
 use crate::protocol::{Request, Writer};
 use crate::sdapi::{Breakpoint, Session, Variable};
@@ -44,14 +45,20 @@ pub struct Adapter {
     by_source: Mutex<BTreeMap<String, Vec<Breakpoint>>>,
     raw_variables: AtomicBool,
     stop: Arc<AtomicBool>,
+    /// The `dw.json` this session was given, for the log follower.
+    config: PathBuf,
+    /// Held for as long as the session lasts; dropping it stops the follower.
+    logs: Mutex<Option<Logs>>,
 }
 
 impl Adapter {
     /// Attach to an instance the configuration already resolved.
-    pub fn new(session: Session, cartridges: PathBuf, writer: Writer) -> Adapter {
+    pub fn new(session: Session, cartridges: PathBuf, config: PathBuf, writer: Writer) -> Adapter {
         Adapter {
             session: Arc::new(session),
             paths: Paths::new(cartridges),
+            config,
+            logs: Mutex::new(None),
             writer,
             handles: Mutex::new(BTreeMap::new()),
             next_handle: Mutex::new(1),
@@ -107,9 +114,23 @@ impl Adapter {
         if request.argument("raw_variables") == &Value::Bool(true) {
             self.raw_variables.store(true, Ordering::Relaxed);
         }
+        self.follow_logs(request);
         self.writer.respond(request, json!({}));
         self.writer.event("initialized", json!({}));
         self.watch();
+    }
+
+    /// The error that did *not* stop at a breakpoint shows up in the sandbox
+    /// log, so it belongs in the same window.
+    fn follow_logs(&self, request: &Request) {
+        if request.argument("logs") == &Value::Bool(false) {
+            return;
+        }
+        let levels = request.argument("log_level").as_str().map(str::to_string);
+        let following = Logs::follow(&self.config, levels.as_deref(), &self.writer);
+        if let Ok(mut logs) = self.logs.lock() {
+            *logs = Some(following);
+        }
     }
 
     /// Poll for a halted thread and announce it once, until disconnect.
@@ -435,6 +456,9 @@ impl Adapter {
 
     fn shut_down(&self) {
         self.stop.store(true, Ordering::Relaxed);
+        if let Ok(mut logs) = self.logs.lock() {
+            *logs = None;
+        }
         self.session.close();
         self.writer.event("terminated", json!({}));
     }

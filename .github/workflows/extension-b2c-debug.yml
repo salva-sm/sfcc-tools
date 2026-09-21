@@ -8,6 +8,9 @@ name: Extension zip (b2c-debug)
 # copied in as extension.wasm. Zed also strips custom sections from it, which
 # is a size optimisation - the `zed:api-version` section it reads at load time
 # is present either way. There is no grammar here, so that is the whole build.
+#
+# The adapter itself is `sfcc-dap`, released alongside the binaries; the
+# extension downloads it or finds it on PATH.
 on:
   push:
     branches: [main]
@@ -47,23 +50,18 @@ jobs:
           mkdir -p "stage/$ID"
           cp "$EXT/extension.toml" "stage/$ID/"
           cp "$EXT/target/wasm32-wasip2/release/zed_b2c_debug.wasm" "stage/$ID/extension.wasm"
-          cp -r "$EXT/schemas" "$EXT/tools" "stage/$ID/"
+          cp -r "$EXT/schemas" "stage/$ID/"
           cp "$EXT/README.md" "stage/$ID/"
           cp tools/packaging/install.ps1 tools/packaging/install.cmd stage/
-          # The test harness sits in tools/ next to what it drives; an
-          # installed extension has no use for it.
-          rm -f "stage/$ID/tools/fake-cli.js" "stage/$ID/tools/dap-drive.py"
           ( cd stage && zip -qr "../$ID-${{ steps.manifest.outputs.version }}.zip" . )
           unzip -l "$ID-${{ steps.manifest.outputs.version }}.zip"
 
       # A green run has to mean the zip is usable, since nobody reads the logs.
-      # tools/adapter.js especially: without it the extension installs and then
-      # falls back to the CLI's own adapter, which binds no breakpoints.
       - name: Check the package
         env:
           ID: ${{ steps.manifest.outputs.id }}
         run: |
-          for file in extension.toml extension.wasm tools/adapter.js schemas/b2c.json; do
+          for file in extension.toml extension.wasm schemas/b2c.json; do
             test -f "stage/$ID/$file" || { echo "missing $file"; exit 1; }
           done
           for helper in install.ps1 install.cmd; do
@@ -71,7 +69,6 @@ jobs:
           done
           grep -qa 'zed:api-version' "stage/$ID/extension.wasm" \
             || { echo 'extension.wasm has no zed:api-version section'; exit 1; }
-          node --check "stage/$ID/tools/adapter.js"
 
       - uses: actions/upload-artifact@v4
         with:
