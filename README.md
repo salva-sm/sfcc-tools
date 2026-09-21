@@ -61,6 +61,7 @@ same release, unzip anywhere and run the `install.cmd` inside. The ISML extensio
 ```bash
 cargo install --path crates/prost
 cargo install --path crates/isml-lsp
+cargo install --path crates/sfcc-dap
 ```
 
 ## Layout
@@ -89,8 +90,8 @@ cargo doc --no-deps --lib --open  # the language server's reference
 
 ## Releasing
 
-One tag, one release, everything on it: both binaries for five platforms, and both Zed
-extension zips. The extension can only ask GitHub for the *latest* release, so a
+One tag, one release, everything on it: the three binaries for five platforms each, and
+both Zed extension zips. The extension can only ask GitHub for the *latest* release, so a
 per-component tag would leave it looking for an asset that release does not carry.
 
 ```bash
