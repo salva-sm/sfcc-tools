@@ -96,10 +96,10 @@ function argumentValue(name) {
     return at === -1 ? null : forwarded[at + 1];
 }
 
-function followLogs(configuration) {
-    if (logger || configuration.logs === false) return;
+function followLogs(settings) {
+    if (logger || settings.logs === false) return;
 
-    const args = ['logger', '--color', 'always', '--level', configuration.log_level || 'error,customerror'];
+    const args = ['logger', '--color', 'always', '--level', settings.log_level || 'error,customerror'];
     const config = argumentValue('--config');
     if (config) args.push('--config', config);
 
@@ -120,6 +120,58 @@ function stopLogs() {
 }
 
 const CARTRIDGES = 'cartridges';
+
+/// A stack that crosses four cartridges looks like four unrelated files unless
+/// each frame says which one it is in, and whether another cartridge holds the
+/// same file — the usual reason a breakpoint is never hit is that the copy
+/// being edited is not the copy being loaded.
+function frameName(frame) {
+    const name = frame.function_name || '(anonymous)';
+    const cartridge = cartridgeOf(frame.file);
+    if (!cartridge) return name;
+
+    const others = overridingCartridges(frame.file, cartridge);
+    const shared = others.length ? `, also in ${others.join(', ')}` : '';
+    return `${name}  ·  ${cartridge}${shared}`;
+}
+
+function cartridgesDir() {
+    return argumentValue('--cartridge-path');
+}
+
+function cartridgeOf(file) {
+    const root = cartridgesDir();
+    if (!file || !root) return null;
+    const relative = path.relative(root, file).replace(/\\/g, '/');
+    if (!relative || relative.startsWith('..')) return null;
+    const [cartridge] = relative.split('/');
+    return cartridge || null;
+}
+
+const overrides = new Map();
+
+/// Every other cartridge holding the same path inside `cartridge/`. Which of
+/// them wins needs the cartridge path, which the debugger API does not carry;
+/// naming them is still enough to explain a breakpoint that never binds.
+function overridingCartridges(file, cartridge) {
+    const root = cartridgesDir();
+    const relative = path.relative(path.join(root, cartridge), file);
+    const key = relative.replace(/\\/g, '/');
+    if (overrides.has(key)) return overrides.get(key);
+
+    let found = [];
+    try {
+        found = fs
+            .readdirSync(root, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && entry.name !== cartridge)
+            .map((entry) => entry.name)
+            .filter((name) => fs.existsSync(path.join(root, name, relative)));
+    } catch (error) {
+        note(`cannot list cartridges in ${root}: ${error.message}`);
+    }
+    overrides.set(key, found);
+    return found;
+}
 
 /// The RPC side wants a cartridge-relative path; editors send absolute local ones.
 function toScriptPath(local) {
@@ -144,6 +196,8 @@ const frameId = (threadId, index) => threadId * FRAME_STRIDE + index;
 const frameParts = (id) => ({ threadId: Math.floor(id / FRAME_STRIDE), index: id % FRAME_STRIDE });
 
 const breakpointsBySource = new Map();
+// The launch configuration, kept from `attach` for whatever reads a setting later.
+let configuration = {};
 
 const handlers = {
     initialize: (request) => respond(request, {
@@ -156,13 +210,15 @@ const handlers = {
 
     attach: async (request) => {
         await whenReady();
-        followLogs(request.arguments || {});
+        configuration = request.arguments || {};
+        followLogs(configuration);
         respond(request, {});
         event('initialized', {});
     },
 
     launch: async (request) => {
         await whenReady();
+        configuration = request.arguments || {};
         respond(request, {});
         event('initialized', {});
     },
@@ -209,7 +265,7 @@ const handlers = {
         const result = await rpc('get_stack', { thread_id: threadId }).catch(() => ({ frames: [] }));
         const frames = (result.frames || []).map((frame) => ({
             id: frameId(threadId, frame.index),
-            name: frame.function_name || '(anonymous)',
+            name: frameName(frame),
             line: frame.line,
             column: 1,
             source: { name: path.basename(frame.file || frame.script_path || ''), path: frame.file },
@@ -217,10 +273,14 @@ const handlers = {
         respond(request, { stackFrames: frames, totalFrames: frames.length });
     },
 
+    // SFCC first: `pdict`, `request` and `session` are platform globals, so they are in
+    // neither the local nor the closure scope, and reaching them today means typing into
+    // the watch box at every breakpoint.
     scopes: (request) => {
         const { threadId, index } = frameParts(request.arguments.frameId);
         respond(request, {
             scopes: [
+                { name: 'SFCC', variablesReference: handleFor({ threadId, index, globals: true }), expensive: false },
                 { name: 'Locals', variablesReference: handleFor({ threadId, index, scope: 'local' }), expensive: false },
                 { name: 'Closure', variablesReference: handleFor({ threadId, index, scope: 'closure' }), expensive: false },
             ],
@@ -230,6 +290,7 @@ const handlers = {
     variables: async (request) => {
         const descriptor = handles.get(request.arguments.variablesReference);
         if (!descriptor) return respond(request, { variables: [] });
+        if (descriptor.globals) return respond(request, { variables: await sfccGlobals(descriptor) });
 
         const result = await rpc('get_variables', {
             thread_id: descriptor.threadId,
@@ -244,7 +305,7 @@ const handlers = {
             });
         }
 
-        const raw = result.variables || [];
+        const raw = (result.variables || []).filter((variable) => worthShowing(variable, descriptor));
         const paths = raw.map((variable) =>
             descriptor.objectPath ? `${descriptor.objectPath}.${variable.name}` : variable.name);
         const summaries = await describeAll(raw, paths, descriptor);
@@ -303,6 +364,55 @@ const OPAQUE = '[object Object]';
 const DESCRIBE_LIMIT = 24;
 const SUMMARY_LENGTH = 240;
 
+// The globals the platform injects, in the order they are worth reading. `dw` is left out
+// on purpose: it is the whole API namespace, and expanding it is never what anyone wanted.
+const SFCC_GLOBALS = ['pdict', 'request', 'session', 'customer', 'response', 'out'];
+const ABSENT = 'undefined';
+
+/// One `typeof` per name, in parallel: a global that this frame does not have answers
+/// `undefined` without throwing, so nothing has to be caught or shown.
+async function sfccGlobals(descriptor) {
+    const kinds = await Promise.all(SFCC_GLOBALS.map((name) =>
+        rpc('evaluate', {
+            expression: `typeof ${name}`,
+            thread_id: descriptor.threadId,
+            frame_index: descriptor.index,
+        }).then((answer) => String(answer.result ?? ABSENT).trim()).catch(() => ABSENT)));
+
+    const present = SFCC_GLOBALS
+        .map((name, position) => ({ name, kind: kinds[position] }))
+        .filter((global) => global.kind !== ABSENT && !/Error\b/.test(global.kind));
+
+    const summaries = await Promise.all(present.map((global) => describe(global.name, descriptor)));
+
+    return present.map((global, position) => ({
+        name: global.name,
+        value: oneLine(summaries[position] ?? global.kind),
+        type: global.kind,
+        evaluateName: global.name,
+        variablesReference: global.kind === 'object'
+            ? handleFor({ threadId: descriptor.threadId, index: descriptor.index, objectPath: global.name })
+            : 0,
+    }));
+}
+
+// What the engine puts on every object and nobody ever reads.
+const ENGINE_MEMBERS = new Set([
+    'constructor', 'prototype', 'caller', 'callee', 'arguments',
+    'hasOwnProperty', 'isPrototypeOf', 'propertyIsEnumerable',
+    'toString', 'toLocaleString', 'valueOf', 'class',
+]);
+
+/// Engine members are hidden everywhere; methods only when expanding an object, where a
+/// dw class contributes sixty of them. A local that happens to hold a function is a real
+/// local and stays. `"raw_variables": true` in the debug configuration turns this off.
+function worthShowing(variable, descriptor) {
+    if (configuration.raw_variables === true || process.env.B2C_RAW_VARIABLES) return true;
+    const name = String(variable.name ?? '');
+    if (name.startsWith('__') || ENGINE_MEMBERS.has(name)) return false;
+    return !(descriptor.objectPath && String(variable.type ?? '').toLowerCase() === 'function');
+}
+
 /// `[object Object]` tells nobody anything. dw classes are Java-backed and answer `String()`
 /// with something readable; plain objects only answer `JSON.stringify`.
 async function describeAll(variables, paths, descriptor) {
@@ -323,8 +433,9 @@ async function describe(expression, descriptor) {
         frame_index: descriptor.index,
     }).then((answer) => String(answer.result ?? '')).catch(() => '');
 
+    // `undefined` is never the truth here: describe only runs on `[object Object]`.
     const readable = await ask(`String(${expression})`);
-    if (readable && readable !== OPAQUE && !/Error\b/.test(readable)) {
+    if (readable && readable !== OPAQUE && readable !== 'undefined' && !/Error\b/.test(readable)) {
         return oneLine(readable);
     }
 

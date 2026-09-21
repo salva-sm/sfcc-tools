@@ -1,8 +1,8 @@
 # Packages a *built* Zed dev extension into a zip a teammate can drop in
 # without any toolchain: no Rust, no cargo, no tree-sitter, no clang.
 #
-#   .\package.ps1                                        # this repo's extension/
-#   .\package.ps1 -ExtensionDir C:\dev\zed-b2c-debug     # any other one
+#   tools\package.ps1 -ExtensionDir extensions\isml
+#   tools\package.ps1 -ExtensionDir extensions\b2c-debug
 #
 # It ships only what Zed loads at runtime — the same layout it keeps in
 # %LOCALAPPDATA%\Zed\extensions\installed\<id>:
@@ -16,8 +16,10 @@
 
 [CmdletBinding()]
 param(
-    [string] $ExtensionDir = "$PSScriptRoot\extension",
-    [string] $OutDir = "$PSScriptRoot\dist",
+    # Two extensions live here, so there is no sensible default.
+    [Parameter(Mandatory)]
+    [string] $ExtensionDir,
+    [string] $OutDir = "$PSScriptRoot\..\dist",
     # Extra executables to ship alongside, e.g. the language server.
     [string[]] $Binary = @()
 )

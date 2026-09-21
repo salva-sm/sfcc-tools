@@ -8,6 +8,7 @@ mod ocapi;
 mod push;
 mod reload;
 mod scan;
+mod sync_status;
 mod tail;
 mod watch;
 mod webdav;

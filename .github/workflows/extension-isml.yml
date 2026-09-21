@@ -16,7 +16,7 @@ name: Extension zip
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["isml-v*"]
   workflow_dispatch:
 
 permissions:
@@ -42,7 +42,7 @@ jobs:
         run: |
           rustup target add wasm32-wasip2
           cargo build --release --target wasm32-wasip2
-        working-directory: extension
+        working-directory: extensions/isml
 
       - name: Install wasi-sdk
         run: |

@@ -1,16 +1,21 @@
 name: Release
 
-# Publishes the isml-lsp binaries the extension downloads when the server is
-# not already on the user's PATH. Asset names must stay in sync with
-# `download_binary` in extension/src/isml.rs:
-#   isml-lsp-<x86_64|aarch64>-<windows|macos|linux>.<zip|tar.gz>
+# Attaches prebuilt binaries to the release for a `v*` tag, so installing prost
+# never requires a Rust toolchain. Assets are named without the version, which
+# keeps a stable "latest" download URL:
+#   https://github.com/salva-sm/sfcc-tools/releases/latest/download/prost-x86_64-windows.exe
 on:
   push:
-    tags: ["v*"]
+    tags: ["prost-v*"]
   workflow_dispatch:
 
 permissions:
   contents: write
+
+env:
+  # The committed .cargo/config.toml points target-dir at a Windows path that
+  # only exists on the author's machine.
+  CARGO_TARGET_DIR: target
 
 jobs:
   build:
@@ -22,36 +27,38 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            asset: isml-lsp-x86_64-linux.tar.gz
+            asset: prost-x86_64-linux.tar.gz
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            asset: isml-lsp-aarch64-linux.tar.gz
-          # Cross-compiled on the ARM runner: Xcode ships both SDKs, and the
-          # Intel `macos-13` runners are being retired — jobs asking for one
-          # sit queued instead of failing.
+            asset: prost-aarch64-linux.tar.gz
+          # Both macOS binaries come off the ARM runner: Xcode ships the two
+          # SDKs, and the Intel `macos-13` runners are being retired.
           - os: macos-latest
             target: x86_64-apple-darwin
-            asset: isml-lsp-x86_64-macos.tar.gz
+            asset: prost-x86_64-macos.tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
-            asset: isml-lsp-aarch64-macos.tar.gz
+            asset: prost-aarch64-macos.tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            asset: isml-lsp-x86_64-windows.zip
+            asset: prost-x86_64-windows.exe
     steps:
       - uses: actions/checkout@v4
       - run: rustup target add ${{ matrix.target }}
       - run: cargo build --release --target ${{ matrix.target }}
-        working-directory: isml-lsp
 
+      # Only the finished artifact, never the intermediate libraries: stripping
+      # a proc-macro dylib takes its metadata with it.
       - name: Package (unix)
         if: runner.os != 'Windows'
-        run: tar -czf "${{ matrix.asset }}" -C "isml-lsp/target/${{ matrix.target }}/release" isml-lsp
+        run: |
+          strip "target/${{ matrix.target }}/release/prost"
+          tar -czf "${{ matrix.asset }}" -C "target/${{ matrix.target }}/release" prost
 
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path "isml-lsp/target/${{ matrix.target }}/release/isml-lsp.exe" -DestinationPath "${{ matrix.asset }}"
+        run: Copy-Item "target/${{ matrix.target }}/release/prost.exe" "${{ matrix.asset }}"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -67,5 +74,5 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: isml-lsp-*
+          files: prost-*
           generate_release_notes: true

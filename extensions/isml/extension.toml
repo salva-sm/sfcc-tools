@@ -1,16 +1,16 @@
 id = "isml"
 name = "ISML (Salesforce B2C Commerce)"
-description = "Syntax highlighting for ISML templates, plus go-to-definition on template=, require() and Resource.msg paths."
-version = "0.1.3"
+description = "ISML templates in Zed: syntax highlighting, completion for the ISML tag set and for the custom attributes your metadata defines, and go-to-definition on template=, require() and Resource.msg paths."
+version = "0.4.0"
 schema_version = 1
-authors = ["salva-sm"]
-repository = "https://github.com/salva-sm/sfcc-zed-isml"
+authors = ["salvasm"]
+repository = "https://github.com/salva-sm/sfcc-tools"
 
 [grammars.isml]
-repository = "https://github.com/salva-sm/sfcc-zed-isml"
+repository = "https://github.com/salva-sm/sfcc-tools"
 commit = "95a2f7edd300d157f3c373b4ec073f6490cbe3dc"
 path = "grammar"
 
 [language_servers.isml-lsp]
-name = "SFCC paths"
-languages = ["ISML", "JavaScript"]
+name = "SFCC"
+languages = ["ISML", "JavaScript", "JSON", "XML"]

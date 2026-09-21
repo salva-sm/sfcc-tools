@@ -43,7 +43,7 @@ VS Code extension is attached, this one cannot be.
 Not in the Zed registry, so there are two ways in.
 
 **From a zip — nothing to build.** Take `b2c-debug-<version>.zip` from
-[Releases](https://github.com/salva-sm/sfcc-zed-debugger/releases), unzip it anywhere and run
+[Releases](https://github.com/salva-sm/sfcc-tools/releases), unzip it anywhere and run
 the `install.cmd` inside — Windows blocks a downloaded `.ps1` under the default
 execution policy, and the `.cmd` gets past it without changing anything on the machine. It drops the extension into
 `%LOCALAPPDATA%\Zed\extensions\installed`, which Zed watches, so it is picked up without a
@@ -56,7 +56,7 @@ restart.
    fails on accented paths.
 
    ```bash
-   git clone https://github.com/salva-sm/sfcc-zed-debugger.git C:/dev/sfcc-zed-debugger
+   git clone https://github.com/salva-sm/sfcc-tools.git C:/dev/sfcc-tools
    ```
 
 2. In Zed: **Extensions → Install Dev Extension** and pick the clone.
@@ -100,12 +100,72 @@ call runs that code.
 | `logs` | `false` stops the sandbox log from being followed while attached. On by default |
 | `log_level` | Levels followed in the debug console, comma separated, or `all`. Defaults to `error,customerror` |
 | `client_id` | Client ID reported to the debugger API. Change it when two people share an instance |
+| `raw_variables` | `true` shows every member the engine reports, unfiltered. Off by default |
 | `binary` | Path to the CLI — its `bin/run.js` or the `b2c` executable. Set it when `b2c` is not on the `PATH` Zed inherits |
 | `runtime` | Path to the `node` executable that runs `bin/run.js`. Set it when node is managed by Volta, nvm or another shim |
 
 Both paths are machine-specific: only add them when the session fails to start, and prefer
 making `b2c` and `node` resolvable to a plain `PATH` lookup so the committed `.zed/debug.json`
 stays the same for everyone.
+
+## What you see when it halts
+
+Three scopes, **SFCC** first:
+
+```
+SFCC
+  pdict      {"CurrentCustomer":"anonymous","Order":"00012345"}
+  request    dw.system.Request@3f21
+  session    dw.system.Session@11ac
+  customer   dw.customer.Customer@77be
+  response   dw.system.Response@0a4c
+Locals
+  req        {"locale":"fr_FR","querystring":{}}
+  viewData   {"actionUrl":"/on/demandware.store/Account-Show"}
+Closure
+  server     {"routes":12}
+```
+
+`pdict`, `request`, `session`, `customer`, `response` and `out` are injected by the
+platform, so they are in neither the local nor the closure scope — without this, reaching
+them means typing into the watch box at every single breakpoint. The scope is built by
+asking `typeof` for each name, so a frame that does not have one simply does not list it:
+an ISML frame shows `pdict` and `out`, a controller frame shows neither. `dw` is left out
+on purpose; it is the whole API namespace and expanding it is never what anyone wanted.
+
+Every value is a summary, not `[object Object]`: dw classes are Java-backed and answer
+`String()` with something readable, plain objects answer `JSON.stringify`.
+
+### What is hidden
+
+Expanding a dw object otherwise buries the two fields you want under sixty methods. So:
+
+| Hidden | Where |
+| ------ | ----- |
+| `constructor`, `prototype`, `class`, `caller`, `callee`, `arguments`, `hasOwnProperty`, `valueOf`, `toString`… | everywhere |
+| anything named `__…` | everywhere |
+| members whose type is `function` | only inside an expanded object — a local that holds a function is a real local and stays |
+
+`"raw_variables": true` in the debug configuration, or `B2C_RAW_VARIABLES=1`, turns the
+whole filter off.
+
+The SFCC scope costs one round trip per name to the instance, plus one per object to
+summarise it — about ten, once, each time you expand it.
+
+## Reading a stack that crosses cartridges
+
+A stack that goes through four cartridges looks like four unrelated `Account.js` files.
+Each frame is labelled with the cartridge it is in, and with the other cartridges holding
+the same path:
+
+```
+show  ·  app_brand, also in app_storefront_base, int_payment      Account.js:42
+```
+
+That second half is usually the answer to "why is my breakpoint never hit": the copy
+being edited is not the copy being loaded. Which of them wins needs the cartridge path,
+which the debugger API does not carry — the language server answers that statically,
+from `<custom-cartridges>` or `dw.json`.
 
 ## The sandbox log in the session
 
@@ -129,3 +189,17 @@ Neither is the extension's fault, both bite everyone debugging B2C Commerce:
 Every session is recorded in `b2c-dap.log` in the system temp directory — both the DAP
 conversation with Zed and the RPC one with the CLI. `B2C_DAP_LOG` points it elsewhere. That
 file is the first place to look when a session does not start.
+
+## Exercising the adapter without an instance
+
+`tools/fake-cli.js` stands in for `b2c debug cli --rpc`, answering the RPC subset the
+adapter uses with a frame that has both a plain `pdict` and a dw-style object carrying
+engine noise. `tools/dap-drive.py` speaks DAP to the adapter against it and prints the
+scopes, the variables and one expanded object:
+
+```bash
+python tools/dap-drive.py
+```
+
+Neither ships in the package. They are how a change to scopes, variables or filtering gets
+checked without an instance, a breakpoint and a request to reproduce.

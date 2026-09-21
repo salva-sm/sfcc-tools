@@ -27,7 +27,7 @@ fn files_group_under_their_cartridge_and_folder() {
             "app_brand/cartridge/js/checkout.js",
             "app_brand/cartridge/js/cart.js",
             "app_brand/cartridge/templates/billing.isml",
-            "int_loyalty/cartridge/scripts/vouchers.js",
+            "int_rewards/cartridge/scripts/vouchers.js",
         ]),
         true,
     );
@@ -36,7 +36,7 @@ fn files_group_under_their_cartridge_and_folder() {
     assert_eq!(lines[1].trim(), "app_brand");
     assert_eq!(lines[2].trim(), "cartridge/js         cart.js  checkout.js");
     assert_eq!(lines[3].trim(), "cartridge/templates  billing.isml");
-    assert_eq!(lines[4].trim(), "int_loyalty");
+    assert_eq!(lines[4].trim(), "int_rewards");
     assert_eq!(lines[5].trim(), "cartridge/scripts  vouchers.js");
 }
 
@@ -61,12 +61,12 @@ fn long_file_lists_collapse_into_a_count() {
 
 #[test]
 fn deleting_a_whole_cartridge_prints_its_name() {
-    let lines = plain(Change::Deleted, &sorted(&["app_brand", "int_loyalty"]), true);
+    let lines = plain(Change::Deleted, &sorted(&["app_brand", "int_rewards"]), true);
 
     assert_eq!(lines.len(), 3);
     assert!(lines[0].contains("2 path(s) deleted in 2 cartridge(s)"));
     assert_eq!(lines[1].trim(), "app_brand");
-    assert_eq!(lines[2].trim(), "int_loyalty");
+    assert_eq!(lines[2].trim(), "int_rewards");
 }
 
 #[test]
