@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/isml-lsp", "crates/prost"]
+
+# Zed compiles an extension in place, with a `--target-dir` it hardcodes inside
+# the extension's own directory. A crate that belongs to a workspace resolves
+# against the workspace root instead, and the build stops being reproducible
+# from Zed's side — so the two extension crates stay outside this one.
+exclude = ["extensions/b2c-debug", "extensions/isml"]
+
+[workspace.package]
+license = "MIT"
+repository = "https://github.com/salva-sm/sfcc-tools"

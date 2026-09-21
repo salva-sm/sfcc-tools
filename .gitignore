@@ -1,0 +1,15 @@
+/target
+dist/
+node_modules/
+
+# Sandbox credentials, and the ignore file that sits next to them.
+dw.json
+.sfccignore
+
+# Written into an extension directory by Zed when it builds a dev extension.
+extensions/*/extension.wasm
+extensions/*/grammars/
+*.wasm
+
+# Machine-specific: only needed where the profile path is non-ASCII.
+.cargo/config.toml
