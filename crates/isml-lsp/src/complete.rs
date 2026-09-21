@@ -66,6 +66,19 @@ pub enum Context {
         /// Characters already typed.
         typed: usize,
     },
+    /// A bare `dwSite` being typed, which stands for the class plus the
+    /// `require` that brings it in.
+    DwImport {
+        /// What has been typed, `dw` prefix included.
+        typed: String,
+    },
+    /// `var Trans` at the head of a file, where a `require` is being written.
+    DwDeclaration {
+        /// `var`, `const` or `let`, as written.
+        keyword: String,
+        /// The class name typed so far.
+        typed: String,
+    },
     /// After the dot on an identifier bound to an API class by `require`.
     DwMember {
         /// The qualified class the receiver stands for.
@@ -101,6 +114,14 @@ pub fn context_at(text: &str, offset: usize, is_isml: bool) -> Option<Context> {
     }
     if let Some(member) = pending_member(&head, text) {
         return Some(member);
+    }
+    // The declaration form is checked first: `var dwSite` is being written as
+    // a declaration, not as a bare reference.
+    if let Some(declaration) = pending_declaration(&head) {
+        return Some(declaration);
+    }
+    if let Some(typed) = pending_import(&head) {
+        return Some(Context::DwImport { typed });
     }
     if is_isml {
         return tag_context(&chars, offset);
@@ -241,6 +262,50 @@ fn pending_member(head: &str, text: &str) -> Option<Context> {
     })
 }
 
+/// `var Trans` — a declaration whose right-hand side is still missing.
+fn pending_declaration(head: &str) -> Option<Context> {
+    let line = head.rsplit('\n').next()?;
+    let typed = trailing_word(line);
+    let before = line[..line.len() - typed.len()].trim_end();
+    let keyword = ["var", "const", "let"]
+        .into_iter()
+        .find(|word| before.ends_with(word))?;
+    // Only at the start of a statement: `x = var` is not a declaration, and
+    // neither is an identifier that merely ends in those letters.
+    let head_of_line = before[..before.len() - keyword.len()].trim();
+    if !head_of_line.is_empty() {
+        return None;
+    }
+    Some(Context::DwDeclaration {
+        keyword: keyword.to_string(),
+        typed,
+    })
+}
+
+/// A bare word starting with `dw`, which is the shorthand for importing a class.
+fn pending_import(head: &str) -> Option<String> {
+    let typed = trailing_word(head);
+    if typed.len() < 2 || !typed.to_ascii_lowercase().starts_with("dw") {
+        return None;
+    }
+    // `x.dwSite` is a member access, not a name being introduced.
+    let before = &head[..head.len() - typed.len()];
+    match before.chars().next_back() {
+        Some('.') => None,
+        _ => Some(typed),
+    }
+}
+
+fn trailing_word(text: &str) -> String {
+    text.chars()
+        .rev()
+        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
 fn typed_since_quote(head: &str) -> usize {
     match head.rfind(['\'', '"']) {
         Some(quote) => head[quote + 1..].chars().count(),
@@ -254,6 +319,8 @@ pub struct Completer<'a> {
     pub workspace: &'a Workspace,
     /// The custom attributes the checkout declares.
     pub metadata: &'a Metadata,
+    /// The document being edited, which decides where a new `require` goes.
+    pub text: &'a str,
     /// The file being edited, which names the controller a bare route belongs to.
     pub file: &'a Path,
 }
@@ -277,6 +344,12 @@ impl Completer<'_> {
             }
             Context::RouteName { typed } => self.route_items(replaced(cursor, *typed)),
             Context::DwModule { typed } => module_items(replaced(cursor, *typed)),
+            Context::DwImport { typed } => {
+                self.import_items(replaced(cursor, typed.chars().count()))
+            }
+            Context::DwDeclaration { keyword, typed } => {
+                declaration_items(replaced(cursor, typed.chars().count()), keyword, typed)
+            }
             Context::DwMember { class, typed } => member_items(class, replaced(cursor, *typed)),
         }
     }
@@ -371,6 +444,75 @@ impl Completer<'_> {
         }
         items
     }
+}
+
+impl Completer<'_> {
+    /// `dwSite` becomes `Site`, with `var Site = require('dw/system/Site');`
+    /// added to the require block in the same keystroke — unless the document
+    /// already has it, in which case only the name is inserted.
+    fn import_items(&self, range: Range) -> Vec<CompletionItem> {
+        let imports = api::imports(self.text);
+        api::api()
+            .classes()
+            .map(|(qualified, class)| {
+                let short = short_name(qualified);
+                let bound = imports.name_of(qualified);
+                let module = qualified.replace('.', "/");
+                CompletionItem {
+                    label: format!("dw{short}"),
+                    kind: Some(CompletionItemKind::CLASS),
+                    detail: Some(match bound {
+                        Some(_) => format!("{module} (already required)"),
+                        None => module.clone(),
+                    }),
+                    documentation: (!class.description.is_empty())
+                        .then(|| markdown(class.description.clone())),
+                    text_edit: Some(edit(range, bound.unwrap_or(short).to_string())),
+                    additional_text_edits: bound
+                        .is_none()
+                        .then(|| vec![require_line(&imports, short, &module)]),
+                    ..Default::default()
+                }
+            })
+            .collect()
+    }
+}
+
+/// `var Trans` completes to the whole declaration, in place — no second edit
+/// needed, because the cursor is already where the `require` belongs.
+fn declaration_items(range: Range, keyword: &str, typed: &str) -> Vec<CompletionItem> {
+    let shorthand = typed.to_ascii_lowercase().starts_with("dw");
+    api::api()
+        .classes()
+        .map(|(qualified, class)| {
+            let short = short_name(qualified);
+            let module = qualified.replace('.', "/");
+            CompletionItem {
+                label: short.to_string(),
+                kind: Some(CompletionItemKind::CLASS),
+                detail: Some(format!("{keyword} {short} = require('{module}');")),
+                documentation: (!class.description.is_empty())
+                    .then(|| markdown(class.description.clone())),
+                // Typing `var dwSite` should still find it, so the filter
+                // follows whichever spelling is being used.
+                filter_text: shorthand.then(|| format!("dw{short}")),
+                text_edit: Some(edit(range, format!("{short} = require('{module}');"))),
+                ..Default::default()
+            }
+        })
+        .collect()
+}
+
+fn require_line(imports: &api::Imports, name: &str, module: &str) -> TextEdit {
+    let at = Position::new(imports.line, 0);
+    TextEdit {
+        range: Range::new(at, at),
+        new_text: format!("{} {name} = require('{module}');\n", imports.keyword),
+    }
+}
+
+fn short_name(qualified: &str) -> &str {
+    qualified.rsplit('.').next().unwrap_or(qualified)
 }
 
 fn module_items(range: Range) -> Vec<CompletionItem> {
@@ -563,6 +705,50 @@ mod tests {
             context_at(text, text.chars().count(), false),
             Some(Context::RouteName { typed: 2 })
         );
+    }
+
+    #[test]
+    fn completes_a_declaration_being_written() {
+        let text = "'use strict';\nvar Trans";
+        assert_eq!(
+            context_at(text, text.chars().count(), false),
+            Some(Context::DwDeclaration {
+                keyword: "var".into(),
+                typed: "Trans".into()
+            })
+        );
+    }
+
+    #[test]
+    fn takes_the_shorthand_inside_a_declaration_too() {
+        let text = "const dwSite";
+        assert_eq!(
+            context_at(text, text.chars().count(), false),
+            Some(Context::DwDeclaration {
+                keyword: "const".into(),
+                typed: "dwSite".into()
+            })
+        );
+    }
+
+    #[test]
+    fn completes_a_bare_shorthand_as_an_import() {
+        let text = "    dwSite";
+        assert_eq!(
+            context_at(text, text.chars().count(), false),
+            Some(Context::DwImport {
+                typed: "dwSite".into()
+            })
+        );
+    }
+
+    #[test]
+    fn leaves_a_word_that_merely_ends_in_a_keyword_alone() {
+        let text = "myvar Trans";
+        assert!(!matches!(
+            context_at(text, text.chars().count(), false),
+            Some(Context::DwDeclaration { .. })
+        ));
     }
 
     #[test]
