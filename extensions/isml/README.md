@@ -23,6 +23,9 @@ Three pieces, each buildable on its own:
 
 The extension is not in the Zed registry yet. Two ways in:
 
+The form-definition check also wants Zed's **XML** extension installed; everything else
+works on its own. See [What it checks in the configuration files](#what-it-checks-in-the-configuration-files).
+
 **From a release zip** — nothing to build, no toolchain:
 
 1. Download `isml-<version>.zip` from [Releases](https://github.com/salva-sm/sfcc-tools/releases).
@@ -194,9 +197,12 @@ in another one, and demanding the conventional bundle would be 22 false alarms.
 Both find real absences: on a mature codebase, dozens of form keys that no bundle
 defines, and job steps pointing at modules that are not there.
 
-> Diagnostics on these two need the server attached to XML and JSON, which is what
-> `languages` in `extensions/isml/extension.toml` now asks for. Zed has to know a language by
-> that name for it to take effect; if the forms stay quiet, that is the thing to check.
+> [!IMPORTANT]
+> **The form check needs Zed's [XML extension](https://github.com/zed-extensions/xml).**
+> A language server attaches to a *language*, and Zed ships no XML one — without that
+> extension a `.xml` file belongs to no language, so nothing reaches it and the forms
+> stay quiet. Install XML from the extension list and it works with no further setup.
+> `steptypes.json` needs nothing: JSON is built in.
 
 ## Which `server.append` actually runs
 
