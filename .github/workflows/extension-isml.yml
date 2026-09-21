@@ -1,7 +1,7 @@
 name: Extension zip (isml)
 
 # Builds the drop-in zip a teammate installs without any toolchain, and
-# attaches it to the release for a `v*` tag.
+# attaches it to the release for a `v*` tag, alongside the binaries.
 #
 # It reproduces what Zed's own extension builder does when you run
 # `zed: install dev extension` (crates/extension/src/extension_builder.rs):
@@ -16,7 +16,7 @@ name: Extension zip (isml)
 on:
   push:
     branches: [main]
-    tags: ["isml-v*"]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
