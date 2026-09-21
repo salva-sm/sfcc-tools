@@ -1,0 +1,24 @@
+[package]
+name = "sfcc-dap"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+authors = ["salva-sm"]
+description = "Debug Adapter Protocol adapter for server-side Salesforce B2C Commerce scripts"
+
+[lib]
+name = "sfcc_dap"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sfcc-dap"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sfcc-core = { path = "../sfcc-core" }
+ureq = { version = "3", default-features = false, features = ["native-tls", "json"] }
+base64 = "0.22"

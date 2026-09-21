@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/isml-lsp", "crates/prost", "crates/sfcc-core"]
+members = ["crates/isml-lsp", "crates/prost", "crates/sfcc-core", "crates/sfcc-dap"]
 
 # Zed compiles an extension in place, with a `--target-dir` it hardcodes inside
 # the extension's own directory. A crate that belongs to a workspace resolves
