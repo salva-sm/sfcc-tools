@@ -26,46 +26,39 @@ env:
 
 jobs:
   build:
-    name: ${{ matrix.crate }} ${{ matrix.platform }}
-    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.crate }} ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
+      # Two real axes, not `include`: an include entry whose keys are all new
+      # is merged into every combination, and the last one wins — which
+      # silently collapses ten jobs into two.
       matrix:
         crate: [isml-lsp, prost]
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            platform: x86_64-linux
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            platform: aarch64-linux
+        platform:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: x86_64-linux }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: aarch64-linux }
           # Both macOS binaries come off the ARM runner: Xcode ships the two
           # SDKs, and the Intel `macos-13` runners are being retired — a job
           # asking for one sits queued instead of failing.
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            platform: x86_64-macos
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            platform: aarch64-macos
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            platform: x86_64-windows
+          - { os: macos-latest, target: x86_64-apple-darwin, name: x86_64-macos }
+          - { os: macos-latest, target: aarch64-apple-darwin, name: aarch64-macos }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: x86_64-windows }
     steps:
       - uses: actions/checkout@v4
-      - run: rustup target add ${{ matrix.target }}
-      - run: cargo build --release --target ${{ matrix.target }} -p ${{ matrix.crate }}
+      - run: rustup target add ${{ matrix.platform.target }}
+      - run: cargo build --release --target ${{ matrix.platform.target }} -p ${{ matrix.crate }}
 
       # Only the finished artifact, never the intermediate libraries:
       # stripping a proc-macro dylib takes its metadata with it.
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
-          DIR="target/${{ matrix.target }}/release"
+          DIR="target/${{ matrix.platform.target }}/release"
           strip "$DIR/${{ matrix.crate }}" || true
-          tar -czf "${{ matrix.crate }}-${{ matrix.platform }}.tar.gz" \
+          tar -czf "${{ matrix.crate }}-${{ matrix.platform.name }}.tar.gz" \
             -C "$DIR" "${{ matrix.crate }}"
-          echo "ASSET=${{ matrix.crate }}-${{ matrix.platform }}.tar.gz" >> "$GITHUB_ENV"
+          echo "ASSET=${{ matrix.crate }}-${{ matrix.platform.name }}.tar.gz" >> "$GITHUB_ENV"
 
       # The uploader is installed by downloading one file, so on Windows it
       # ships as a bare .exe; the language server is unpacked by the extension,
@@ -74,12 +67,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $bin = "target/${{ matrix.target }}/release/${{ matrix.crate }}.exe"
+          $bin = "target/${{ matrix.platform.target }}/release/${{ matrix.crate }}.exe"
           if ("${{ matrix.crate }}" -eq "prost") {
-            $asset = "prost-${{ matrix.platform }}.exe"
+            $asset = "prost-${{ matrix.platform.name }}.exe"
             Copy-Item $bin $asset
           } else {
-            $asset = "${{ matrix.crate }}-${{ matrix.platform }}.zip"
+            $asset = "${{ matrix.crate }}-${{ matrix.platform.name }}.zip"
             Compress-Archive -Path $bin -DestinationPath $asset
           }
           "ASSET=$asset" >> $env:GITHUB_ENV
