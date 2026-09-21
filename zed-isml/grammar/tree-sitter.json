@@ -1,0 +1,35 @@
+{
+  "grammars": [
+    {
+      "name": "isml",
+      "camelcase": "ISML",
+      "scope": "source.isml",
+      "path": ".",
+      "external-files": [
+        "src/tag.h"
+      ],
+      "file-types": [
+        "isml"
+      ],
+      "injection-regex": "isml"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "ISML (Salesforce B2C Commerce) grammar for tree-sitter, derived from tree-sitter-html",
+    "authors": [
+      {
+        "name": "Guess EU storefront team"
+      }
+    ]
+  },
+  "bindings": {
+    "c": false,
+    "go": false,
+    "node": false,
+    "python": false,
+    "rust": false,
+    "swift": false
+  }
+}
