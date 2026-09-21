@@ -44,10 +44,16 @@ jobs:
           cargo build --release --target wasm32-wasip2
         working-directory: extensions/isml
 
+      # Downloaded to a file and checked before unpacking: piping straight
+      # into tar turns a truncated response into `not in gzip format`, and
+      # leaves the release half-built because of someone else's CDN.
       - name: Install wasi-sdk
         run: |
           url="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"
-          curl -sSL "$url" | tar -xz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o wasi-sdk.tar.gz "$url"
+          file wasi-sdk.tar.gz | grep -q gzip \
+            || { echo "not an archive:"; head -c 200 wasi-sdk.tar.gz; exit 1; }
+          tar -xzf wasi-sdk.tar.gz
           echo "$PWD/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux/bin" >> "$GITHUB_PATH"
 
       - name: Build the grammar
