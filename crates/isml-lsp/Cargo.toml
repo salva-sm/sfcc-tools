@@ -13,10 +13,6 @@ path = "src/lib.rs"
 name = "isml-lsp"
 path = "src/main.rs"
 
-[[bin]]
-name = "generate-api"
-path = "src/bin/generate-api.rs"
-
 [dependencies]
 crossbeam-channel = "0.5"
 lsp-server = "0.7"

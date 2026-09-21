@@ -268,7 +268,7 @@ production is refused outright, with no override; anything else that is not a sa
 
 ## Measured
 
-57 cartridges, 9.493 files, 631,8 MB, `--jobs 4`. The Prophet column was timed with the same
+A full storefront checkout, `--jobs 4`. The Prophet column was timed with the same
 instrument wherever an equivalent operation exists:
 
 | Scenario | prost | Prophet 1.4.81 |

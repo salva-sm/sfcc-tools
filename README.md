@@ -12,10 +12,8 @@
 </div>
 
 > [!NOTE]
-> **Built with AI assistance.** Requirements, architecture and review are
-> [@salva-sm](https://github.com/salva-sm)'s; the implementation was written with
-> Claude Code under that direction, and verified against a production SFCC
-> storefront — 55 cartridges, 4.400 files — rather than against toy examples.
+> **Built with AI assistance.** The implementation was written with Claude Code,
+> under human direction on requirements, architecture and review.
 
 An SFCC checkout gives a general-purpose editor nothing to work with. There are no type
 definitions for the `dw.*` API, no way to resolve a cartridge-relative `require`, and no
