@@ -1,0 +1,6 @@
+/target
+dw.json
+.sfccignore
+
+# machine-specific: only needed where the profile path is non-ASCII
+.cargo/config.toml
