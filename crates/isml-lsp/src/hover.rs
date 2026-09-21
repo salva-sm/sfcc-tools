@@ -158,8 +158,9 @@ pub fn markdown(route: &Route, chains: &[Chain], current: &Path) -> Option<Strin
 
     if chains.iter().all(|chain| chain.label.is_none()) {
         out.push_str(
-            "\nOrder unknown: no cartridge path in this folder. Add a `cartridge` array to \
-             `dw.json`, or check a site archive in.\n",
+            "\nOrder unknown: nothing here records a cartridge path. Set `cartridge_path` in \
+             this server's initialization options, add a `cartridge` array to `dw.json`, or \
+             check a site archive in.\n",
         );
     }
     Some(out)
@@ -249,7 +250,7 @@ mod tests {
         let here = PathBuf::from("app_brand/Account.js");
         let text = markdown(&route(), &chains, &here).unwrap();
         assert!(text.contains("← this file"));
-        assert!(text.contains("no cartridge path in this folder"));
+        assert!(text.contains("nothing here records a cartridge path"));
     }
 
     #[test]

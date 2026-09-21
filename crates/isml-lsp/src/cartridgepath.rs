@@ -1,12 +1,17 @@
 //! Where the cartridge path comes from.
 //!
 //! Which `server.append` actually runs depends on the order of the cartridge
-//! path, and that order is not in the source. Two places in a checkout hold
-//! it: the `cartridge` array of `dw.json`, and `<custom-cartridges>` in the
-//! site archive, which has one ordered list per storefront.
+//! path, and that order is not in the source. Three places can hold it: the
+//! editor's settings, the `cartridge` array of `dw.json`, and
+//! `<custom-cartridges>` in the site archive, which has one ordered list per
+//! storefront. Plenty of checkouts have neither of the last two — `dw.json` is
+//! personal and usually ignored, and a site archive is instance configuration
+//! nobody wants to import by accident — so the settings come first and win.
 
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use serde_json::Value;
 
 const MAX_DEPTH: usize = 8;
 const SKIPPED: [&str; 6] = ["node_modules", ".git", "static", "build", "dist", "target"];
@@ -27,16 +32,52 @@ impl CartridgePath {
     }
 }
 
-/// Every cartridge path recorded anywhere under the open folders, one per
-/// site plus whatever `dw.json` declares. Empty when the checkout records none.
-pub fn load(roots: &[PathBuf]) -> Vec<CartridgePath> {
-    let mut found = Vec::new();
+/// Every cartridge path this session knows: what the editor was told, then
+/// one per site archive and whatever `dw.json` declares. Empty when nothing
+/// records any.
+pub fn load(roots: &[PathBuf], settings: &Value) -> Vec<CartridgePath> {
+    let mut found = from_settings(settings);
     for root in roots {
         visit(root, 0, &mut found);
     }
+    // A stable sort keeps the settings ahead of a site of the same name, and
+    // dedup keeps the first — so naming a site in the settings corrects it.
     found.sort_by(|a, b| a.label.cmp(&b.label));
     found.dedup_by(|a, b| a.label == b.label);
     found
+}
+
+/// The `cartridge_path` of the server's initialization options: either one
+/// path, or an object naming one per storefront. Each path is a colon-joined
+/// string or an array, whichever reads better in the settings file.
+fn from_settings(settings: &Value) -> Vec<CartridgePath> {
+    let Some(declared) = settings.get("cartridge_path") else {
+        return Vec::new();
+    };
+    if let Some(sites) = declared.as_object() {
+        return sites
+            .iter()
+            .filter_map(|(label, value)| named(label, value))
+            .collect();
+    }
+    named("settings", declared).into_iter().collect()
+}
+
+fn named(label: &str, value: &Value) -> Option<CartridgePath> {
+    let order = match value {
+        Value::String(text) => split_path(text),
+        Value::Array(names) => names
+            .iter()
+            .filter_map(Value::as_str)
+            .map(leaf_name)
+            .filter(|name| !name.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    };
+    (!order.is_empty()).then(|| CartridgePath {
+        label: label.to_string(),
+        order,
+    })
 }
 
 fn visit(dir: &Path, depth: usize, into: &mut Vec<CartridgePath>) {
@@ -146,10 +187,49 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_path_per_storefront_from_the_settings() {
+        let settings = serde_json::json!({
+            "cartridge_path": {
+                "storefront_a": "app_brand:app_storefront_base",
+                "storefront_b": ["int_search", "app_storefront_base"],
+            }
+        });
+        let found = load(&[], &settings);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].label, "storefront_a");
+        assert_eq!(found[0].order, ["app_brand", "app_storefront_base"]);
+        assert_eq!(found[1].order, ["int_search", "app_storefront_base"]);
+    }
+
+    #[test]
+    fn reads_a_single_unnamed_path_from_the_settings() {
+        let settings = serde_json::json!({ "cartridge_path": "app_brand:app_storefront_base" });
+        let found = load(&[], &settings);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].label, "settings");
+    }
+
+    #[test]
+    fn lets_the_settings_correct_a_site_of_the_same_name() {
+        let directory = scratch("isml-lsp-settings-wins");
+        fs::write(directory.join("site.xml"), SITE).unwrap();
+        let settings = serde_json::json!({ "cartridge_path": { "storefront": ["app_brand"] } });
+        let found = load(&[directory], &settings);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].order, ["app_brand"]);
+    }
+
+    #[test]
+    fn ignores_settings_that_declare_nothing() {
+        assert!(load(&[], &Value::Null).is_empty());
+        assert!(load(&[], &serde_json::json!({ "cartridge_path": [] })).is_empty());
+    }
+
+    #[test]
     fn reads_the_ordered_path_of_each_site() {
         let directory = scratch("isml-lsp-site-path");
         fs::write(directory.join("site.xml"), SITE).unwrap();
-        let found = load(&[directory]);
+        let found = load(&[directory], &Value::Null);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].label, "storefront");
         assert_eq!(
@@ -178,7 +258,7 @@ mod tests {
                 "cartridge":["app_brand","app_storefront_base"]}"#,
         )
         .unwrap();
-        let found = load(&[directory]);
+        let found = load(&[directory], &Value::Null);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].label, "dw.json");
         assert_eq!(found[0].order, ["app_brand", "app_storefront_base"]);
@@ -192,6 +272,6 @@ mod tests {
             r#"{"hostname":"x","password":"p"}"#,
         )
         .unwrap();
-        assert!(load(&[directory]).is_empty());
+        assert!(load(&[directory], &Value::Null).is_empty());
     }
 }

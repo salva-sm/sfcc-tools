@@ -64,8 +64,9 @@ pub struct Server {
 impl Server {
     fn new(params: InitializeParams) -> Self {
         let roots = workspace_roots(&params);
+        let settings = params.initialization_options.unwrap_or_default();
         Server {
-            workspace: Workspace::scan(&roots),
+            workspace: Workspace::scan(&roots, &settings),
             metadata: Metadata::scan(&roots),
             documents: HashMap::new(),
         }

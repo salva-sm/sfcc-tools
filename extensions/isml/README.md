@@ -238,18 +238,46 @@ Three things decide a link's fate, and all three are invisible from inside one f
 
 ### Where the order comes from
 
-Whichever of these the folder holds, all of them used:
+Whichever of these is available, all of them used:
 
 | Source | Gives |
 | ------ | ----- |
+| `cartridge_path` in the settings | one path per storefront, labelled as you name it |
 | `<custom-cartridges>` in a site archive (`.../sites/<site>/site.xml`) | one ordered path per storefront, labelled with the site id |
 | the `cartridge` array of `dw.json` | one path, labelled `dw.json` |
 
 Only the `cartridge` key of `dw.json` is read; every other field in it is a credential, and
 an unknown field is dropped rather than held.
 
-With neither, the chain is still listed — every cartridge that declares the route — but
-unordered, and it says so instead of guessing who wins.
+Plenty of checkouts record neither of the last two: `dw.json` is personal and usually
+ignored, and its `cartridge` array means something else to the uploader — which cartridges
+to send, not their order. A site archive, meanwhile, is instance configuration nobody wants
+imported by accident. So the order can be stated in the settings instead, where it is
+editor configuration and nothing more. Project-local `.zed/settings.json` shares it with
+the team:
+
+```json
+{
+    "lsp": {
+        "isml-lsp": {
+            "initialization_options": {
+                "cartridge_path": {
+                    "storefront_a": "app_brand:app_shared:app_storefront_base",
+                    "storefront_b": ["app_other", "app_shared", "app_storefront_base"]
+                }
+            }
+        }
+    }
+}
+```
+
+A colon-joined string or an array, whichever reads better; leftmost wins, as in Business
+Manager. A single path instead of an object works too, and a name given here replaces the
+site archive of the same name. This is read once, at startup — restart the server after
+editing it.
+
+With none of the three, the chain is still listed — every cartridge that declares the
+route — but unordered, and it says so instead of guessing who wins.
 
 ## Is the sandbox running this code?
 

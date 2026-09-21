@@ -58,16 +58,17 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// Walk the open folders for cartridges and cartridge paths. The heavier
-    /// indexes are left until something asks for them.
-    pub fn scan(roots: &[PathBuf]) -> Self {
+    /// Walk the open folders for cartridges and cartridge paths, taking the
+    /// editor's initialization options as another source of the path order.
+    /// The heavier indexes are left until something asks for them.
+    pub fn scan(roots: &[PathBuf], settings: &serde_json::Value) -> Self {
         let mut workspace = Workspace::default();
         for root in roots {
             workspace.visit(root, 0);
         }
         workspace.cartridges.sort_by(|a, b| a.name.cmp(&b.name));
         workspace.cartridges.dedup_by(|a, b| a.root == b.root);
-        workspace.paths = cartridgepath::load(roots);
+        workspace.paths = cartridgepath::load(roots, settings);
         workspace
     }
 
