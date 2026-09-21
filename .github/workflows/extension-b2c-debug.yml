@@ -1,7 +1,7 @@
-name: Extension zip
+name: Extension zip (b2c-debug)
 
 # Builds the drop-in zip a teammate installs without any toolchain, and
-# attaches it to the release for a `v*` tag.
+# attaches it to the release for a `b2c-debug-v*` tag.
 #
 # It reproduces what Zed's own extension builder does on
 # `zed: install dev extension`: cargo build --release --target wasm32-wasip2,
@@ -17,6 +17,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # The extension is excluded from the cargo workspace, so it builds — and
+  # keeps its target directory — on its own.
+  EXT: extensions/b2c-debug
+
 jobs:
   zip:
     runs-on: ubuntu-latest
@@ -27,9 +32,10 @@ jobs:
         id: manifest
         run: |
           sed -nE 's/^id = "(.*)"$/id=\1/p;s/^version = "(.*)"$/version=\1/p' \
-            extension.toml | head -2 >> "$GITHUB_OUTPUT"
+            "$EXT/extension.toml" | head -2 >> "$GITHUB_OUTPUT"
 
       - name: Build the extension
+        working-directory: extensions/b2c-debug
         run: |
           rustup target add wasm32-wasip2
           cargo build --release --target wasm32-wasip2
@@ -39,11 +45,14 @@ jobs:
           ID: ${{ steps.manifest.outputs.id }}
         run: |
           mkdir -p "stage/$ID"
-          cp extension.toml "stage/$ID/"
-          cp target/wasm32-wasip2/release/zed_b2c_debug.wasm "stage/$ID/extension.wasm"
-          cp -r schemas tools "stage/$ID/"
-          cp README.md "stage/$ID/"
-          cp packaging/install.ps1 packaging/install.cmd stage/
+          cp "$EXT/extension.toml" "stage/$ID/"
+          cp "$EXT/target/wasm32-wasip2/release/zed_b2c_debug.wasm" "stage/$ID/extension.wasm"
+          cp -r "$EXT/schemas" "$EXT/tools" "stage/$ID/"
+          cp "$EXT/README.md" "stage/$ID/"
+          cp tools/packaging/install.ps1 tools/packaging/install.cmd stage/
+          # The test harness sits in tools/ next to what it drives; an
+          # installed extension has no use for it.
+          rm -f "stage/$ID/tools/fake-cli.js" "stage/$ID/tools/dap-drive.py"
           ( cd stage && zip -qr "../$ID-${{ steps.manifest.outputs.version }}.zip" . )
           unzip -l "$ID-${{ steps.manifest.outputs.version }}.zip"
 
@@ -66,7 +75,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: extension-zip
+          name: extension-b2c-debug-zip
           path: "*.zip"
 
       - name: Attach it to the release
