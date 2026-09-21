@@ -171,15 +171,23 @@ pub fn imports(text: &str) -> Imports {
     let mut after_directive = 0;
     let mut keyword = None;
 
+    // Only the block at the head of the file counts. Most controllers also
+    // require something lazily inside a handler, indented, halfway down —
+    // appending after *that* would drop the new line into a function body.
     for (number, line) in text.lines().enumerate() {
         let number = number as u32;
         let trimmed = line.trim();
+
+        if trimmed.is_empty() || is_comment(trimmed) {
+            continue;
+        }
         if trimmed.starts_with("'use strict'") || trimmed.starts_with("\"use strict\"") {
             after_directive = number + 1;
             continue;
         }
-        let Some(declaration) = require_declaration(line) else {
-            continue;
+        // Indentation means it is inside something, so the preamble ended.
+        let Some(declaration) = require_declaration(line).filter(|_| !starts_indented(line)) else {
+            break;
         };
         last_require = Some(number);
         if keyword.is_none() {
@@ -190,6 +198,18 @@ pub fn imports(text: &str) -> Imports {
         }
     }
 
+    // Anything the file requires later still counts as already imported, even
+    // though it is not where a new one would go.
+    for line in text.lines().filter(|line| starts_indented(line)) {
+        if let Some(declaration) = require_declaration(line) {
+            if declaration.module.starts_with("dw/") {
+                names
+                    .entry(declaration.module.replace('/', "."))
+                    .or_insert(declaration.name);
+            }
+        }
+    }
+
     Imports {
         names,
         // After the last require if there is one; otherwise just below the
@@ -197,6 +217,14 @@ pub fn imports(text: &str) -> Imports {
         line: last_require.map_or(after_directive, |line| line + 1),
         keyword: keyword.unwrap_or_else(|| "var".to_string()),
     }
+}
+
+fn is_comment(trimmed: &str) -> bool {
+    trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*')
+}
+
+fn starts_indented(line: &str) -> bool {
+    line.starts_with(' ') || line.starts_with('\t')
 }
 
 struct Declaration {
@@ -348,6 +376,32 @@ mod tests {
         assert_eq!(found.keyword, "var");
         assert_eq!(found.name_of("dw.system.Site"), Some("Site"));
         assert_eq!(found.name_of("dw.system.Transaction"), None);
+    }
+
+    #[test]
+    fn stays_in_the_head_of_the_file_past_a_lazy_require() {
+        let text = "'use strict';\n\
+                    \n\
+                    var server = require('server');\n\
+                    var Site = require('dw/system/Site');\n\
+                    \n\
+                    server.get('Show', function () {\n    \
+                        var OrderMgr = require('dw/order/OrderMgr');\n\
+                    });\n";
+        let found = imports(text);
+        // Line 4, not 7: the indented one is inside a handler.
+        assert_eq!(found.line, 4);
+        // Still counts as imported, so it is never required twice.
+        assert_eq!(found.name_of("dw.order.OrderMgr"), Some("OrderMgr"));
+    }
+
+    #[test]
+    fn reads_past_blank_lines_and_comments_in_the_preamble() {
+        let text = "'use strict';\n\
+                    \n\
+                    // what this controller is for\n\
+                    var server = require('server');\n";
+        assert_eq!(imports(text).line, 4);
     }
 
     #[test]
