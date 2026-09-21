@@ -13,3 +13,6 @@ extensions/*/grammars/
 
 # Machine-specific: only needed where the profile path is non-ASCII.
 .cargo/config.toml
+
+# A workspace resolves from the root lock; a member one is dead weight.
+crates/*/Cargo.lock

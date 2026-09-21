@@ -3,7 +3,7 @@
 # the highlight/injection queries must load against the grammar.
 #
 # Pass a directory to also measure a real corpus, e.g.
-#   ./check.sh ~/Github/sfcc-eu/source/cartridges
+#   ./check.sh path/to/cartridges
 set -e
 
 here="$(cd "$(dirname "$0")" && pwd)"
