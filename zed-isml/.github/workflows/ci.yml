@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  language-server:
+    name: isml-lsp
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: isml-lsp
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --check
+      - run: cargo clippy -- -D warnings
+      - run: cargo test
+
+  grammar:
+    name: tree-sitter-isml
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: grammar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci || npm install
+      # Fails if the committed parser is stale.
+      - run: |
+          npx tree-sitter generate
+          git diff --exit-code src/
+      - run: bash check.sh
+
+  extension:
+    name: extension (wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The same target the Zed extension registry builds with.
+      - run: rustup target add wasm32-wasip2
+      - run: cargo build --release --target wasm32-wasip2
+        working-directory: extension

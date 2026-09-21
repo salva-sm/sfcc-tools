@@ -1,0 +1,34 @@
+<iscomment>
+    Raw text: <isif condition="${never.parsed}"> still a comment </isif>
+</iscomment>
+<isscript>
+    var URLUtils = require('dw/web/URLUtils');
+    var brandHelper = require('*/cartridge/scripts/helpers/brandHelper');
+</isscript>
+<isdecorate template="common/layout/page">
+    <isinclude template="/components/modules" sf-toolkit="off" />
+    <isset name="cancelled" value="${item.unitReturned > 0 && list.find(a => a.id === 'x')}" scope="page"/>
+    <isif condition="${pdict.foo}">
+        <div class="tab-pane ${pdict.navTab === "register" ? 'active' : ''}" data-x='${JSON.stringify({a: 1})}'>
+            <isprint value="${Resource.msg('label.x', 'account', null)}" encoding="off"/>
+        </div>
+    <iselseif condition="${1 > 2}">
+    <iselse/>
+        <isloop items="${pdict.items}" var="item" status="s">
+            <li>${item.name}</li>
+        </isloop>
+    </isif>
+
+    <iscomment>ISML in the attribute list, and in an attribute value</iscomment>
+    <form method="POST" <isprint value="${pdict.form.attributes}"/>>
+        <input type="checkbox" ${brand.checked ? 'checked' : ''} />
+        <div class="row <isif condition="${status.first}">no-line</isif>"></div>
+        <meta name="<isprint value="${tag.ID}">" content="<isprint value="${tag.content}">">
+        <span id="x" <iscomment>an ISML comment between attributes</iscomment> class="y"></span>
+        <img alt="${pdict.alt ? pdict.alt.replace(/\"/g, '\'') : ''}" src="a.png"/>
+    </form>
+
+    <p>Shipping &amp; handling, and a bare &amp; too: & fine</p>
+    <script>var x = 1;</script>
+    <style>.a { color: red; }</style>
+</isdecorate>

@@ -1,0 +1,7 @@
+target/
+node_modules/
+dist/
+
+# Written into extension/ by Zed when it builds the dev extension.
+extension/extension.wasm
+extension/grammars/
