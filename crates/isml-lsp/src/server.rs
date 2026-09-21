@@ -9,12 +9,14 @@ use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification,
     PublishDiagnostics,
 };
-use lsp_types::request::{Completion, GotoDefinition, HoverRequest, Request as RequestTrait};
+use lsp_types::request::{
+    Completion, GotoDefinition, HoverRequest, Request as RequestTrait, ResolveCompletionItem,
+};
 use lsp_types::{
-    CompletionList, CompletionOptions, CompletionParams, CompletionResponse, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
-    InitializeParams, Location, MarkupContent, MarkupKind, OneOf, Position,
-    PublishDiagnosticsParams, Range, ServerCapabilities, TextDocumentSyncCapability,
+    CompletionItem, CompletionList, CompletionOptions, CompletionParams, CompletionResponse,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, Location, MarkupContent, MarkupKind, OneOf,
+    Position, PublishDiagnosticsParams, Range, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind, Url,
 };
 
@@ -35,6 +37,11 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
             // `<` opens a tag, `.` reaches a custom attribute, a quote opens an
             // attribute value or the argument of getCustomPreferenceValue.
             trigger_characters: Some(["<", " ", ".", "\"", "'"].map(str::to_string).to_vec()),
+            // An editor is entitled to ignore the `additionalTextEdits` sent
+            // with an item and ask for them here instead, and several do —
+            // without this, the `require` an import completion writes never
+            // reaches the document.
+            resolve_provider: Some(true),
             ..Default::default()
         }),
         ..Default::default()
@@ -104,6 +111,9 @@ impl Server {
             HoverRequest::METHOD => cast::<HoverRequest>(request)
                 .ok()
                 .and_then(|(_, params)| serde_json::to_value(self.hover(params)?).ok()),
+            ResolveCompletionItem::METHOD => cast::<ResolveCompletionItem>(request)
+                .ok()
+                .and_then(|(_, item)| serde_json::to_value(resolve(item)).ok()),
             _ => None,
         };
         Response::new_ok(id, answer.unwrap_or(serde_json::Value::Null))
@@ -280,6 +290,19 @@ fn char_offset(line: &str, utf16_column: usize) -> usize {
         utf16 += c.len_utf16();
     }
     line.chars().count()
+}
+
+/// Attach the `require` line an import completion promised. An editor may
+/// ignore the edits sent with the item and ask for them here instead, so the
+/// item carries what it needs to rebuild them.
+fn resolve(mut item: CompletionItem) -> CompletionItem {
+    let Some(data) = item.data.take() else {
+        return item;
+    };
+    if let Ok(pending) = serde_json::from_value::<complete::PendingRequire>(data) {
+        item.additional_text_edits = Some(vec![pending.edit()]);
+    }
+    item
 }
 
 /// Character offset of a line/column position into the whole document.
