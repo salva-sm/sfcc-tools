@@ -1,0 +1,104 @@
+name: Release
+
+# One tag, one release, every binary on it.
+#
+# The Zed extension downloads its language server with
+# `latest_github_release`, which can only ask for the *latest* release — so if
+# each binary had its own tag, whichever was tagged last would become "latest"
+# and the extension would look for an asset that release does not carry.
+#
+# Assets are named without the version, which keeps a stable download URL:
+#   https://github.com/salva-sm/sfcc-tools/releases/latest/download/prost-x86_64-windows.exe
+# Those names must stay in sync with `download_binary` in
+# `extensions/isml/src/isml.rs`.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # The committed .cargo/config.toml may point target-dir somewhere that only
+  # exists on a developer's machine.
+  CARGO_TARGET_DIR: target
+
+jobs:
+  build:
+    name: ${{ matrix.crate }} ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [isml-lsp, prost]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: x86_64-linux
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: aarch64-linux
+          # Both macOS binaries come off the ARM runner: Xcode ships the two
+          # SDKs, and the Intel `macos-13` runners are being retired — a job
+          # asking for one sits queued instead of failing.
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: x86_64-macos
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: aarch64-macos
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: x86_64-windows
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }} -p ${{ matrix.crate }}
+
+      # Only the finished artifact, never the intermediate libraries:
+      # stripping a proc-macro dylib takes its metadata with it.
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          DIR="target/${{ matrix.target }}/release"
+          strip "$DIR/${{ matrix.crate }}" || true
+          tar -czf "${{ matrix.crate }}-${{ matrix.platform }}.tar.gz" \
+            -C "$DIR" "${{ matrix.crate }}"
+          echo "ASSET=${{ matrix.crate }}-${{ matrix.platform }}.tar.gz" >> "$GITHUB_ENV"
+
+      # The uploader is installed by downloading one file, so on Windows it
+      # ships as a bare .exe; the language server is unpacked by the extension,
+      # which expects a zip.
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = "target/${{ matrix.target }}/release/${{ matrix.crate }}.exe"
+          if ("${{ matrix.crate }}" -eq "prost") {
+            $asset = "prost-${{ matrix.platform }}.exe"
+            Copy-Item $bin $asset
+          } else {
+            $asset = "${{ matrix.crate }}-${{ matrix.platform }}.zip"
+            Compress-Archive -Path $bin -DestinationPath $asset
+          }
+          "ASSET=$asset" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+          path: ${{ env.ASSET }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            isml-lsp-*
+            prost-*
+          generate_release_notes: true
