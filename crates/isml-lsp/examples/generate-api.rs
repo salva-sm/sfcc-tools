@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! npm pack sfcc-dev-mcp && tar -xzf sfcc-dev-mcp-*.tgz
-//! cargo run --bin generate-api -- package/dist/docs src/api.json
+//! cargo run --example generate-api -- package/dist/docs src/api.json
 //! ```
 
 use std::collections::BTreeMap;

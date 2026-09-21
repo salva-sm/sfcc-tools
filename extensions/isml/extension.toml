@@ -8,7 +8,7 @@ repository = "https://github.com/salva-sm/sfcc-tools"
 
 [grammars.isml]
 repository = "https://github.com/salva-sm/sfcc-tools"
-commit = "95a2f7edd300d157f3c373b4ec073f6490cbe3dc"
+commit = "9be6bd612dce3771363445c75bef3e7c35adaeec"
 path = "grammar"
 
 [language_servers.isml-lsp]

@@ -13,11 +13,11 @@ Three pieces, each buildable on its own:
   tree-sitter grammar for ISML there is.
 - **this directory** — the Zed extension: language registration, highlight/injection
   queries, and the glue that launches the language server.
-- **`../../crates/isml-lsp/`** — a library plus the thin binary that serves it: a language server for what no general editor can know: SFCC
-  paths, the ISML tag set, the `dw.*` API, the object metadata checked into the
-  repository, and the cartridge path that decides which `server.append` runs. It answers
-  `textDocument/definition`, `textDocument/completion`, `textDocument/hover` and
-  `textDocument/publishDiagnostics`.
+- **`../../crates/isml-lsp/`** — a library plus the thin binary that serves it. It knows
+  what no general editor can: SFCC paths, the ISML tag set, the `dw.*` API, the object
+  metadata checked into the repository, and the cartridge path that decides which
+  `server.append` runs. It answers `textDocument/definition`, `textDocument/completion`,
+  `textDocument/hover` and `textDocument/publishDiagnostics`.
 
 ## Install
 
@@ -32,11 +32,12 @@ The extension is not in the Zed registry yet. Two ways in:
 **From source** — needs Rust:
 
 ```powershell
-..\..	ools\install-lsp.ps1    # builds isml-lsp onto your PATH
+# from the repository root
+.\tools\install-lsp.ps1    # builds isml-lsp onto your PATH
 ```
 
-Then, from Zed's command palette: **`zed: install dev extension`** and pick the
-`extension` folder (**`zed: reload extensions`** if it is already installed).
+Then, from Zed's command palette: **`zed: install dev extension`** and pick this
+`extensions\isml` folder (**`zed: reload extensions`** if it is already installed).
 
 The extension looks for `isml-lsp` on `PATH` first, then falls back to downloading the
 matching binary from this repo's releases, so it works either way.
@@ -101,8 +102,9 @@ and a page load to find.
 
 Any `*objecttype-extensions.xml` or `*objecttype-definitions.xml` in the open folder — the
 same files a site import uses — often under a `metadata/` directory at the repository
-root. Reading 4.269 attribute definitions takes 0,16 s at startup. **With no such file in the
-folder, completion returns nothing and no diagnostic is ever published**: an unknown
+root. Reading a few thousand attribute definitions takes a fraction of a second at
+startup. **With no such file in the folder, completion returns nothing and no diagnostic
+is ever published**: an unknown
 attribute and an unknown instance look identical, and painting a whole file red would be
 the wrong answer to "I have not checked the metadata in".
 
@@ -122,16 +124,16 @@ deliberately narrow:
 - `getCustomPreferenceValue('logo_' + locale)` names no single preference, so it is
   not checked.
 
-Measured over a 55-cartridge storefront, 4.400 files: 2.720 accesses resolved to a type,
-11 distinct ones flagged. Every one of those is a real absence — dead code, or an attribute
-that never made it into the metadata mirror.
+In practice the guard is narrow enough to stay quiet: across a large codebase only a
+handful of accesses are flagged, and each one is a real absence — dead code, or an
+attribute that never made it into the metadata.
 
 ## The `dw.*` API
 
 There is no `.d.ts` in an SFCC checkout and no package to resolve, so nothing can tell an
 editor what `dw/system/Site` has on it. The platform reference is compiled into the
 server instead: **451 classes, 3.876 methods**, generated from the markdown that ships in
-the `sfcc-dev-mcp` package by `src/bin/generate-api.rs`.
+the `sfcc-dev-mcp` package by `examples/generate-api.rs`.
 
 ```
 var Site = require('dw/system/Site');
@@ -167,8 +169,8 @@ dotted, unspaced value is treated as claiming to be a resource key. And the key 
 exist in **some** bundle, not in `forms`: a quarter of this codebase's form labels live
 in another one, and demanding the conventional bundle would be 22 false alarms.
 
-Measured over the same storefront: 60 distinct form keys that no bundle defines, and 7
-job steps pointing at a module that is not there.
+Both find real absences: on a mature codebase, dozens of form keys that no bundle
+defines, and job steps pointing at modules that are not there.
 
 > Diagnostics on these two need the server attached to XML and JSON, which is what
 > `languages` in `extensions/isml/extension.toml` now asks for. Zed has to know a language by
@@ -246,8 +248,7 @@ writing for ninety seconds is treated as gone rather than quiet.
 
 ## Highlighting
 
-The grammar parses 98.9% of the 2185 ISML templates of a production storefront without a
-single error node; the remainder are templates with genuinely unbalanced markup (a stray `</div>`,
+The grammar parses 98.9% of a large corpus of ISML templates without a single error node; the remainder are templates with genuinely unbalanced markup (a stray `</div>`,
 `</tr class="...">`, a dynamic `<${expr}>` tag name).
 
 On top of plain HTML it handles the ISML idioms that break an HTML parser:
@@ -346,7 +347,7 @@ never ships as a dead link.
 cd ../../grammar
 npx tree-sitter generate                                     # after editing grammar.js
 bash check.sh                                                # fixtures + query load
-bash check.sh path/to/cartridges                             # ...and a real corpus
+bash check.sh path/to/cartridges                             # ...and a corpus of your own
 CC=/c/rust/zig/clang.cmd npx tree-sitter parse some.isml     # inspect one parse tree
 
 cd ../crates/isml-lsp

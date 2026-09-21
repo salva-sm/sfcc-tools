@@ -3,7 +3,7 @@
 //! `require('dw/system/Site')` and what `Site` then has on it are the two
 //! things an editor cannot answer about SFCC script: there is no `.d.ts` in
 //! the checkout and no package to resolve. The index is generated from the
-//! platform reference by `src/bin/generate-api.rs` and embedded, so an answer
+//! platform reference by `examples/generate-api.rs` and embedded, so an answer
 //! never depends on a `node_modules` being present.
 
 use std::collections::BTreeMap;

@@ -8,7 +8,7 @@ behind the numbers in the README: results, raw samples and how they were taken.
 | | |
 | --- | --- |
 | Instance | An on-demand developer sandbox |
-| Volume | 57 cartridges, 9.493 files, 631,8 MB |
+| Volume | A full storefront checkout |
 | Versions | prost 0.1.0 (`--jobs 4`), Prophet 1.4.81 |
 | Instrument | Write files under `source/cartridges`, poll the sandbox with `PROPFIND` until they land. Resolution ~0,5 s |
 | Isolation | Prophet only writes to `version1`, so prost was pointed at a scratch code version and the poll watched only that one |
