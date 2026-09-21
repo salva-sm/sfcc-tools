@@ -59,7 +59,11 @@ impl Browser {
             .map(|tabs| {
                 tabs.iter()
                     .filter(|tab| tab["type"] == "page")
-                    .filter(|tab| tab["url"].as_str().is_some_and(|url| url.contains(&self.host)))
+                    .filter(|tab| {
+                        tab["url"]
+                            .as_str()
+                            .is_some_and(|url| url.contains(&self.host))
+                    })
                     .filter_map(|tab| tab["webSocketDebuggerUrl"].as_str().map(str::to_string))
                     .collect()
             })
@@ -84,6 +88,8 @@ impl Browser {
 pub fn worth_reloading(paths: &[String]) -> bool {
     paths.iter().any(|path| {
         let lowered = path.to_lowercase();
-        BROWSER_EXTENSIONS.iter().any(|extension| lowered.ends_with(extension))
+        BROWSER_EXTENSIONS
+            .iter()
+            .any(|extension| lowered.ends_with(extension))
     })
 }

@@ -129,7 +129,12 @@ pub fn warn(message: impl AsRef<str>) {
 }
 
 pub fn error(message: impl AsRef<str>) {
-    crate::errout!("{} {} {}", prefix(), paint(RED, &format!("{:<3}", "ERR")), message.as_ref());
+    crate::errout!(
+        "{} {} {}",
+        prefix(),
+        paint(RED, &format!("{:<3}", "ERR")),
+        message.as_ref()
+    );
 }
 
 /// A batch of uploads or deletions, grouped by cartridge and folder.
@@ -152,7 +157,11 @@ fn print(change: Change, paths: &[String], headline: bool) {
 }
 
 fn line(marker: &str, tone: &str, message: &str) {
-    crate::out!("{} {} {message}", prefix(), paint(tone, &format!("{marker:<3}")));
+    crate::out!(
+        "{} {} {message}",
+        prefix(),
+        paint(tone, &format!("{marker:<3}"))
+    );
 }
 
 fn prefix() -> String {
@@ -174,7 +183,11 @@ fn render(change: Change, paths: &[String], headline: bool) -> Vec<String> {
             false => paint(tone, name),
             true => format!("{}{}", paint(DIM, &format!("{folder}/")), paint(tone, name)),
         };
-        return vec![format!("{} {marker} {painted} {}", prefix(), paint(DIM, change.verb()))];
+        return vec![format!(
+            "{} {marker} {painted} {}",
+            prefix(),
+            paint(DIM, change.verb())
+        )];
     }
 
     let bundles = bundle(paths);
@@ -195,23 +208,41 @@ fn render(change: Change, paths: &[String], headline: bool) -> Vec<String> {
 
     for bundle in &bundles {
         if left == 0 {
-            hidden += bundle.folders.iter().map(|folder| folder.names.len()).sum::<usize>();
+            hidden += bundle
+                .folders
+                .iter()
+                .map(|folder| folder.names.len())
+                .sum::<usize>();
             continue;
         }
-        lines.push(format!("{:STAMP_WIDTH$}{}", "", paint(CYAN, &bundle.cartridge)));
+        lines.push(format!(
+            "{:STAMP_WIDTH$}{}",
+            "",
+            paint(CYAN, &bundle.cartridge)
+        ));
 
         let width = bundle.column();
         for folder in bundle.folders.iter().take(left) {
             lines.extend(folder.lines(width, tone));
         }
         if bundle.folders.len() > left {
-            hidden += bundle.folders[left..].iter().map(|folder| folder.names.len()).sum::<usize>();
+            hidden += bundle.folders[left..]
+                .iter()
+                .map(|folder| folder.names.len())
+                .sum::<usize>();
         }
         left = left.saturating_sub(bundle.folders.len());
     }
 
     if hidden > 0 {
-        lines.push(paint(DIM, &format!("{:FOLDER_INDENT$}... and {hidden} more {}", "", change.noun())));
+        lines.push(paint(
+            DIM,
+            &format!(
+                "{:FOLDER_INDENT$}... and {hidden} more {}",
+                "",
+                change.noun()
+            ),
+        ));
     }
     lines
 }
@@ -225,7 +256,12 @@ impl Folder {
     /// `templates/default/checkout   billing.isml  summary.isml`, wrapped when
     /// the names do not fit and stacked when the folder is too long to align.
     fn lines(&self, column: usize, tone: &str) -> Vec<String> {
-        let shown: Vec<&str> = self.names.iter().take(MAX_NAMES).map(String::as_str).collect();
+        let shown: Vec<&str> = self
+            .names
+            .iter()
+            .take(MAX_NAMES)
+            .map(String::as_str)
+            .collect();
         let mut names: Vec<String> = wrap(&shown, NAMES_WIDTH)
             .iter()
             .map(|row| paint(tone, row))
@@ -283,7 +319,10 @@ fn bundle(paths: &[String]) -> Vec<Bundle> {
         let bundle = match bundles.iter_mut().find(|bundle| bundle.cartridge == head) {
             Some(existing) => existing,
             None => {
-                bundles.push(Bundle { cartridge: head, folders: Vec::new() });
+                bundles.push(Bundle {
+                    cartridge: head,
+                    folders: Vec::new(),
+                });
                 bundles.last_mut().expect("just pushed")
             }
         };
@@ -295,9 +334,10 @@ fn bundle(paths: &[String]) -> Vec<Bundle> {
         let (folder, name) = split_last(rest);
         match bundle.folders.iter_mut().find(|entry| entry.path == folder) {
             Some(existing) => existing.names.push(name.to_string()),
-            None => bundle
-                .folders
-                .push(Folder { path: folder.to_string(), names: vec![name.to_string()] }),
+            None => bundle.folders.push(Folder {
+                path: folder.to_string(),
+                names: vec![name.to_string()],
+            }),
         }
     }
     bundles

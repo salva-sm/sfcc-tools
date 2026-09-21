@@ -3,8 +3,8 @@ use crate::logging::{self, Change};
 use crate::manifest::Manifest;
 use crate::push::{Ctx, PushOptions, delete_paths, push, select_changed, upload_files};
 use crate::reload::{Browser, worth_reloading};
-use crate::sync_status;
 use crate::scan::{LocalFile, collect_files, describe};
+use crate::sync_status;
 use anyhow::{Context, Result};
 use notify::RecursiveMode;
 use notify_debouncer_full::new_debouncer;
@@ -35,19 +35,34 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
 
     ctx.dav.wait_until_ready(None).await?;
     if options.initial_push {
-        push(&ctx, PushOptions { full: options.full, dry_run: false, show_progress: true }).await?;
+        push(
+            &ctx,
+            PushOptions {
+                full: options.full,
+                dry_run: false,
+                show_progress: true,
+            },
+        )
+        .await?;
     }
     sync_status::publish(&ctx.config, sync_status::State::Synced);
 
     let (sender, mut receiver) = unbounded_channel::<Vec<PathBuf>>();
-    let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: notify_debouncer_full::DebounceEventResult| {
-        if let Ok(events) = result {
-            let paths: Vec<PathBuf> = events.into_iter().flat_map(|event| event.event.paths).collect();
-            if !paths.is_empty() {
-                let _ = sender.send(paths);
+    let mut debouncer = new_debouncer(
+        DEBOUNCE,
+        None,
+        move |result: notify_debouncer_full::DebounceEventResult| {
+            if let Ok(events) = result {
+                let paths: Vec<PathBuf> = events
+                    .into_iter()
+                    .flat_map(|event| event.event.paths)
+                    .collect();
+                if !paths.is_empty() {
+                    let _ = sender.send(paths);
+                }
             }
-        }
-    })
+        },
+    )
     .context("cannot start the file watcher")?;
 
     debouncer
@@ -64,7 +79,9 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
 
     let browser = match options.reload_port {
         Some(port) => {
-            logging::info(format!("reloading storefront tabs through DevTools on port {port}"));
+            logging::info(format!(
+                "reloading storefront tabs through DevTools on port {port}"
+            ));
             Some(Browser::new(port, ctx.config.hostname.clone())?)
         }
         None => None,
@@ -108,10 +125,17 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
     }
 }
 
-async fn drain_into(receiver: &mut UnboundedReceiver<Vec<PathBuf>>, pending: &mut BTreeSet<PathBuf>) {
+async fn drain_into(
+    receiver: &mut UnboundedReceiver<Vec<PathBuf>>,
+    pending: &mut BTreeSet<PathBuf>,
+) {
     let started = Instant::now();
     while started.elapsed() < DRAIN_CAP {
-        let quiet = if pending.len() > BURST_PATHS { DRAIN_BURST } else { DRAIN_QUIET };
+        let quiet = if pending.len() > BURST_PATHS {
+            DRAIN_BURST
+        } else {
+            DRAIN_QUIET
+        };
         match tokio::time::timeout(quiet, receiver.recv()).await {
             Ok(Some(more)) => pending.extend(more),
             _ => break,
@@ -131,7 +155,10 @@ async fn synchronize(
     touched: &BTreeSet<PathBuf>,
 ) -> Result<Vec<String>> {
     let (candidates, removals) = classify(ctx, touched);
-    let work = Work { upserts: select_changed(&candidates, manifest), removals };
+    let work = Work {
+        upserts: select_changed(&candidates, manifest),
+        removals,
+    };
     if work.upserts.is_empty() && work.removals.is_empty() {
         return Ok(Vec::new());
     }
@@ -165,7 +192,11 @@ async fn transfer(ctx: &Ctx, manifest: &mut Manifest, work: Work) -> Result<Vec<
         return Ok(sent);
     }
 
-    let names: Vec<String> = work.upserts.iter().map(|file| file.relative.clone()).collect();
+    let names: Vec<String> = work
+        .upserts
+        .iter()
+        .map(|file| file.relative.clone())
+        .collect();
     let recorded = upload_files(ctx, work.upserts, None).await?;
     for (relative, entry) in recorded {
         manifest.record(relative, entry);

@@ -31,7 +31,10 @@ pub struct Printer<'a> {
 
 pub async fn follow(ctx: &Ctx, options: TailOptions) -> Result<()> {
     let base = ctx.config.logs_url();
-    let printer = Printer { cartridges: &ctx.config.cartridges_dir, history: options.lines };
+    let printer = Printer {
+        cartridges: &ctx.config.cartridges_dir,
+        history: options.lines,
+    };
     let mut offsets: HashMap<String, u64> = HashMap::new();
     let mut announced = false;
 
@@ -112,7 +115,10 @@ pub fn parse_levels(raw: &str) -> Vec<String> {
 impl<'a> Printer<'a> {
     /// A printer with no history to replay, for one-shot reports.
     pub fn plain(cartridges: &'a Path) -> Printer<'a> {
-        Printer { cartridges, history: 0 }
+        Printer {
+            cartridges,
+            history: 0,
+        }
     }
 }
 
@@ -153,7 +159,12 @@ impl Printer<'_> {
             self.body(head, tone)
         );
         for line in lines {
-            crate::out!("{:width$}{}", "", self.body(line, DIM), width = PREFIX_WIDTH);
+            crate::out!(
+                "{:width$}{}",
+                "",
+                self.body(line, DIM),
+                width = PREFIX_WIDTH
+            );
         }
     }
 
@@ -162,16 +173,24 @@ impl Printer<'_> {
             return logging::paint(tone, line);
         };
 
-        let local = self.cartridges.join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let local = self
+            .cartridges
+            .join(path.replace('/', std::path::MAIN_SEPARATOR_STR));
         if !local.is_file() {
             return logging::paint(tone, line);
         }
 
         let target = format!("{}:{number}", local.display());
-        let (before, after) = line.split_once(frame).expect("the frame comes from the line");
-        format!("{}{}{}", logging::paint(tone, before), logging::paint(LINK, &target), logging::paint(tone, after))
+        let (before, after) = line
+            .split_once(frame)
+            .expect("the frame comes from the line");
+        format!(
+            "{}{}{}",
+            logging::paint(tone, before),
+            logging::paint(LINK, &target),
+            logging::paint(tone, after)
+        )
     }
-
 }
 
 pub fn parse_entries(file: &str, text: &str) -> Vec<Entry> {
@@ -219,11 +238,17 @@ pub fn is_wanted(name: &str, levels: &[String], today: &str) -> bool {
     if !name.ends_with(".log") || !name.contains(today) {
         return false;
     }
-    levels.iter().any(|level| level == "all" || name.starts_with(level.as_str()))
+    levels
+        .iter()
+        .any(|level| level == "all" || name.starts_with(level.as_str()))
 }
 
 fn parse_frame(line: &str) -> Option<(&str, &str, &str)> {
-    let frame = line.trim_start().strip_prefix("at ")?.split_whitespace().next()?;
+    let frame = line
+        .trim_start()
+        .strip_prefix("at ")?
+        .split_whitespace()
+        .next()?;
     let (path, number) = frame.rsplit_once(':')?;
     if path.is_empty() || number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
@@ -241,8 +266,16 @@ mod tests {
     #[test]
     fn keeps_only_todays_files_of_the_wanted_levels() {
         let levels = parse_levels(DEFAULT_LEVELS);
-        assert!(is_wanted("error-blade1-1-appserver-20260905.log", &levels, "20260905"));
-        assert!(is_wanted("customerror-blade1-20260905.log", &levels, "20260905"));
+        assert!(is_wanted(
+            "error-blade1-1-appserver-20260905.log",
+            &levels,
+            "20260905"
+        ));
+        assert!(is_wanted(
+            "customerror-blade1-20260905.log",
+            &levels,
+            "20260905"
+        ));
         assert!(!is_wanted("warn-blade1-20260905.log", &levels, "20260905"));
         assert!(!is_wanted("error-blade1-20260904.log", &levels, "20260905"));
         assert!(!is_wanted("error-blade1-20260905.txt", &levels, "20260905"));
@@ -266,7 +299,10 @@ mod tests {
                 "99"
             ))
         );
-        assert_eq!(parse_frame("\tat modules/server/route.js:83 (next)").map(|f| f.2), Some("83"));
+        assert_eq!(
+            parse_frame("\tat modules/server/route.js:83 (next)").map(|f| f.2),
+            Some("83")
+        );
     }
 
     #[test]
@@ -296,7 +332,10 @@ mod tests {
 
     #[test]
     fn lines_arriving_without_a_record_of_their_own_open_one() {
-        let entries = parse_entries("error-blade1-20260909.log", "\tat modules/server/route.js:83");
+        let entries = parse_entries(
+            "error-blade1-20260909.log",
+            "\tat modules/server/route.js:83",
+        );
 
         assert_eq!(entries.len(), 1);
         assert!(entries[0].moment.is_empty());
@@ -304,19 +343,38 @@ mod tests {
 
     #[test]
     fn records_reach_the_screen_in_the_order_the_sandbox_wrote_them() {
-        let mut batch = parse_entries("error-blade1-20260909.log", "[2026-09-09 07:26:31.000 GMT] late");
-        batch.extend(parse_entries("customerror-blade1-20260909.log", "[2026-09-09 07:26:29.000 GMT] early"));
-        batch.extend(parse_entries("error-blade1-20260909.log", "\tat modules/server/route.js:83"));
+        let mut batch = parse_entries(
+            "error-blade1-20260909.log",
+            "[2026-09-09 07:26:31.000 GMT] late",
+        );
+        batch.extend(parse_entries(
+            "customerror-blade1-20260909.log",
+            "[2026-09-09 07:26:29.000 GMT] early",
+        ));
+        batch.extend(parse_entries(
+            "error-blade1-20260909.log",
+            "\tat modules/server/route.js:83",
+        ));
 
         order(&mut batch);
 
         let moments: Vec<&str> = batch.iter().map(|entry| entry.moment.as_str()).collect();
-        assert_eq!(moments, ["", "2026-09-09 07:26:29.000 GMT", "2026-09-09 07:26:31.000 GMT"]);
+        assert_eq!(
+            moments,
+            [
+                "",
+                "2026-09-09 07:26:29.000 GMT",
+                "2026-09-09 07:26:31.000 GMT"
+            ]
+        );
     }
 
     #[test]
     fn reads_the_moment_only_out_of_a_real_timestamp() {
-        assert_eq!(moment("[2026-09-09 07:26:29.103 GMT] ERROR").as_deref(), Some("2026-09-09 07:26:29.103 GMT"));
+        assert_eq!(
+            moment("[2026-09-09 07:26:29.103 GMT] ERROR").as_deref(),
+            Some("2026-09-09 07:26:29.103 GMT")
+        );
         assert!(moment("\tat modules/server/route.js:83 (next)").is_none());
         assert!(moment("[main] Quota object.CouponPO").is_none());
     }
@@ -324,9 +382,15 @@ mod tests {
     #[test]
     fn a_frame_pointing_nowhere_local_is_left_untouched() {
         logging::no_color_in_tests();
-        let printer = Printer { cartridges: Path::new("/nowhere"), history: 0 };
+        let printer = Printer {
+            cartridges: Path::new("/nowhere"),
+            history: 0,
+        };
 
-        assert_eq!(printer.body("\tat modules/server/route.js:83", RED), "\tat modules/server/route.js:83");
+        assert_eq!(
+            printer.body("\tat modules/server/route.js:83", RED),
+            "\tat modules/server/route.js:83"
+        );
     }
 
     #[test]

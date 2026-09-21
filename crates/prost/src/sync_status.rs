@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
 use crate::manifest::state_dir;
+use sfcc_core::config::Config;
 
 /// Where the status files live, one per watcher.
 pub fn status_dir() -> PathBuf {
@@ -146,7 +146,11 @@ mod tests {
             detail: Some("502 Bad Gateway".into()),
             at: 0,
         };
-        assert!(serde_json::to_string(&status).unwrap().contains("502 Bad Gateway"));
+        assert!(
+            serde_json::to_string(&status)
+                .unwrap()
+                .contains("502 Bad Gateway")
+        );
 
         status.detail = None;
         assert!(!serde_json::to_string(&status).unwrap().contains("detail"));

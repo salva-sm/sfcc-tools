@@ -3,21 +3,39 @@ use std::path::PathBuf;
 
 #[test]
 fn recognises_developer_sandboxes() {
-    assert_eq!(classify_host("sbx-001.my.commercecloud.salesforce.com"), Instance::Sandbox);
-    assert_eq!(classify_host("sbx-001.dx.commercecloud.salesforce.com"), Instance::Sandbox);
+    assert_eq!(
+        classify_host("sbx-001.my.commercecloud.salesforce.com"),
+        Instance::Sandbox
+    );
+    assert_eq!(
+        classify_host("sbx-001.dx.commercecloud.salesforce.com"),
+        Instance::Sandbox
+    );
 }
 
 #[test]
 fn recognises_shared_instances() {
-    assert_eq!(classify_host("production-eu01-acme.demandware.net"), Instance::Production);
-    assert_eq!(classify_host("staging-eu01-acme.demandware.net"), Instance::Staging);
-    assert_eq!(classify_host("development-eu01-acme.demandware.net"), Instance::Development);
+    assert_eq!(
+        classify_host("production-eu01-acme.demandware.net"),
+        Instance::Production
+    );
+    assert_eq!(
+        classify_host("staging-eu01-acme.demandware.net"),
+        Instance::Staging
+    );
+    assert_eq!(
+        classify_host("development-eu01-acme.demandware.net"),
+        Instance::Development
+    );
     assert_eq!(classify_host("intranet.acme.example"), Instance::Unknown);
 }
 
 #[test]
 fn does_not_confuse_a_realm_containing_the_word() {
-    assert_eq!(classify_host("prdz-001.my.commercecloud.salesforce.com"), Instance::Sandbox);
+    assert_eq!(
+        classify_host("prdz-001.my.commercecloud.salesforce.com"),
+        Instance::Sandbox
+    );
 }
 
 #[test]
@@ -28,7 +46,13 @@ fn reads_a_dw_json_the_way_prophet_writes_it() {
     assert_eq!(config.hostname, "sbx-001.my.commercecloud.salesforce.com");
     assert_eq!(config.code_version, "version1");
     assert!(config.cartridges_dir.ends_with("cartridges"));
-    assert!(config.cartridges_dir.join("app_x").join("cartridge").is_dir());
+    assert!(
+        config
+            .cartridges_dir
+            .join("app_x")
+            .join("cartridge")
+            .is_dir()
+    );
     assert!(matches!(config.credentials, Credentials::Basic { .. }));
     assert!(config.api_client.is_none());
 

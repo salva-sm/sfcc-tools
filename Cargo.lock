@@ -1094,6 +1094,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sfcc-core",
  "tokio",
  "tokio-tungstenite",
  "walkdir",
@@ -1294,6 +1295,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "sfcc-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

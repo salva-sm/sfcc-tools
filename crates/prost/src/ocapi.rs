@@ -1,6 +1,6 @@
-use crate::config::Config;
 use anyhow::{Context, Result, bail};
 use reqwest::{Client, Method, StatusCode};
+use sfcc_core::config::Config;
 use std::time::Duration;
 
 const TOKEN_URL: &str = "https://account.demandware.com/dwsso/oauth2/access_token";
@@ -52,7 +52,9 @@ impl Ocapi {
 
         match response.status() {
             status if status.is_success() => Ok(()),
-            StatusCode::NOT_FOUND => bail!("code version {code_version} does not exist on the sandbox"),
+            StatusCode::NOT_FOUND => {
+                bail!("code version {code_version} does not exist on the sandbox")
+            }
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => bail!(
                 "the API client is not allowed to touch code versions on {} - add \
                  /code_versions to its OCAPI Data settings",
@@ -74,10 +76,16 @@ impl Ocapi {
             .context("cannot reach Account Manager for an access token")?;
 
         if !response.status().is_success() {
-            bail!("Account Manager rejected the API client (HTTP {})", response.status());
+            bail!(
+                "Account Manager rejected the API client (HTTP {})",
+                response.status()
+            );
         }
 
-        let body = response.text().await.context("cannot read the token response")?;
+        let body = response
+            .text()
+            .await
+            .context("cannot read the token response")?;
         let payload: serde_json::Value =
             serde_json::from_str(&body).context("malformed token response")?;
         Ok(payload["access_token"]
