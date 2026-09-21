@@ -11,3 +11,8 @@ exclude = ["extensions/b2c-debug", "extensions/isml"]
 [workspace.package]
 license = "MIT"
 repository = "https://github.com/salva-sm/sfcc-tools"
+
+# A profile in a member crate is ignored; the workspace root is the only place
+# cargo reads one from.
+[profile.release]
+opt-level = 2
