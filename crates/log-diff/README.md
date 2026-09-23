@@ -35,6 +35,7 @@ log-diff check --fail-on-new      the same, exiting 1 while anything is pending
 log-diff watch [--interval 10s]   the same pass on a timer
 log-diff ack [ID... | --all]      list what is pending, or clear it
 log-diff run --state ledger.json [--sha SHA --build N]   CI: update the team's ledger
+             [--baseline-days N]                         first run: learn N days of history
 log-diff notify --report new.json                        CI: post the report to Teams
 ```
 
@@ -215,9 +216,19 @@ Nothing else needs to see the repository. `log-diff` itself is downloaded from t
 which is public, so the workflow needs no token for that.
 
 The first run — by hand from the Actions tab is fine — has nothing to compare against. It
-learns every signature in today's DEV log (since 00:00 UTC), commits them to `ledger.json`
-and reports nothing. From the second run on, only signatures missing from the ledger are
-reported. A run started by hand or by the schedule records no deploy; only the dispatch from
+learns every signature in the DEV log, commits them to `ledger.json` and reports nothing.
+From the second run on, only signatures missing from the ledger are reported.
+
+How far back the first run learns is `--baseline-days`, the *baseline_days* input when the
+workflow is run by hand (14 unless changed): the log of that many days before today, plus
+today's. Without it, today's log only, since 00:00 UTC. Days of history are worth having:
+a failure that only turns up with a weekly job or a payment method nobody tried today would
+otherwise be reported as new the first time it does, and laid at whatever deploy was live.
+Only the files still in the instance's `Logs` folder are read — the older ones SFCC moves to
+`log_archive`, compressed, are not — so asking for more days than the instance keeps is
+harmless, it just reads what there is. Those signatures have no deploy: none was recorded
+then. The option is ignored once the ledger has a cursor; delete `ledger.json` to take the
+baseline again. A run started by hand or by the schedule records no deploy; only the dispatch from
 Jenkins does.
 
 ### Laying blame

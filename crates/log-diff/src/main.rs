@@ -69,7 +69,8 @@ enum Command {
         With --sha, a deploy is recorded first. Each new signature is laid at the deploy that \
         was live when it was first logged, with the commits since the deploy before as the \
         suspects. The first run has nothing to compare against, and learns instead of \
-        reporting."
+        reporting: today's log, or --baseline-days more. Only what the instance still keeps \
+        in its log folder is read; log_archive is not."
     )]
     Run(RunArgs),
     /// CI: post a report written by `run --report` to a Teams channel
@@ -149,6 +150,9 @@ struct RunArgs {
     /// Exit 1 when something new was found
     #[arg(long)]
     fail_on_new: bool,
+    /// On the first run, learn from this many days of log before today, not only today's
+    #[arg(long, value_name = "DAYS", default_value_t = 0)]
+    baseline_days: u32,
 }
 
 #[derive(Args)]
@@ -264,13 +268,23 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
         at: args.at,
         report: args.report,
         compare_url: args.compare_url,
+        baseline_days: args.baseline_days,
     };
+    let had_cursor = ledger::Ledger::load(&options.state)?
+        .cursor_for(&config.hostname)
+        .is_some();
+    if had_cursor && args.baseline_days > 0 {
+        say(&format!(
+            "--baseline-days ignored: {} already has a baseline - delete it to start over",
+            options.state.display()
+        ));
+    }
     let outcome = ci::run(&config, &dav, &options).await?;
 
     if outcome.baseline {
         say(&format!(
-            "first run on {}: {} signature(s) learned, nothing reported",
-            config.hostname, outcome.known
+            "first run on {}: {} signature(s) learned from the log since {}, nothing reported",
+            config.hostname, outcome.known, outcome.baseline_from
         ));
         return Ok(0);
     }

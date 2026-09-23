@@ -8,7 +8,7 @@
 
 use crate::webdav::{Dav, encode_path};
 use anyhow::{Context, Result};
-use chrono::{NaiveDateTime, SecondsFormat, Utc};
+use chrono::{Duration, NaiveDateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -56,9 +56,17 @@ pub struct Mark {
 impl Mark {
     /// The start of today: every record written today counts as new.
     pub fn start_of_today() -> Mark {
+        Mark::days_back(0)
+    }
+
+    /// The start of the day `days` before today: every record the instance
+    /// still keeps from then on counts as new. Older files may be gone, or
+    /// moved to `log_archive`, which is not read.
+    pub fn days_back(days: u32) -> Mark {
+        let day = Utc::now() - Duration::days(i64::from(days));
         Mark {
             taken: now(),
-            day: today(),
+            day: day.format("%Y%m%d").to_string(),
             offsets: BTreeMap::new(),
         }
     }

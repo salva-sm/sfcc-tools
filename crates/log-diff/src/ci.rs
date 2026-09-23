@@ -34,6 +34,9 @@ pub struct RunOptions {
     pub report: Option<PathBuf>,
     /// A compare link, with `{from}` and `{to}` for the two shas.
     pub compare_url: Option<String>,
+    /// How many days before today the first run learns from. Ignored once
+    /// the ledger has a cursor.
+    pub baseline_days: u32,
 }
 
 /// What a run did.
@@ -42,6 +45,8 @@ pub struct Outcome {
     pub report: Report,
     /// Whether this was the first run, which learns instead of reporting.
     pub baseline: bool,
+    /// The day the first run started learning from, `YYYYMMDD`.
+    pub baseline_from: String,
     /// Signatures in the ledger after the run.
     pub known: usize,
 }
@@ -65,11 +70,14 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
     }
 
     // With nothing to compare against, the first run learns what the
-    // instance already logs today instead of reporting all of it as new.
+    // instance already logs instead of reporting all of it as new - today's
+    // log, or as many days back as asked. The more history, the fewer of
+    // the failures that only turn up once a week get blamed on a deploy.
     let (from, baseline) = match ledger.cursor_for(host) {
         Some(cursor) => (cursor.clone(), false),
-        None => (Mark::start_of_today(), true),
+        None => (Mark::days_back(options.baseline_days), true),
     };
+    let baseline_from = from.day.clone();
     let read = logs::since(dav, &from, &options.levels).await?;
 
     let mut report = Report {
@@ -127,6 +135,7 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
     Ok(Outcome {
         report,
         baseline,
+        baseline_from,
         known: ledger.known_signatures.len(),
     })
 }
