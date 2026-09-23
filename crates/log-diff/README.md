@@ -196,7 +196,7 @@ the way a compiler prints an error, with the local file when the checkout has it
 `dw.json` otherwise:
 
 ```
-C:\dev\site\cartridgespp_acme\cartridge\scripts\checkout\CheckoutServices.js:214: error: [error] TypeError: Cannot read property "shipments" from null (4cfc684705f583bc)
+C:\dev\site\cartridges\app_acme\cartridge\scripts\checkout\CheckoutServices.js:214: error: [error] TypeError: Cannot read property "shipments" from null (4cfc684705f583bc)
 ```
 
 ### VS Code
