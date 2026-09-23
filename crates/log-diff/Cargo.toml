@@ -8,7 +8,7 @@ authors = ["salva-sm"]
 description = "Tell the errors a change introduced on a Salesforce B2C Commerce instance from the ones already known"
 
 [dependencies]
-sfcc-core = { path = "../sfcc-core", features = ["webdav"] }
+sfcc-core = { path = "../sfcc-core", features = ["webdav", "completions"] }
 anyhow = "1.0.104"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 clap = { version = "4.6.6", features = ["derive", "env"] }

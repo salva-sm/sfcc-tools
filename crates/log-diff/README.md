@@ -29,27 +29,30 @@ curl -L https://github.com/salva-sm/sfcc-tools/releases/latest/download/log-diff
 
 ### Tab completion
 
-`log-diff completions <shell>` prints a completion script for bash, zsh, fish, PowerShell or
-elvish, generated from the command definitions themselves, so it covers every command and
-flag and never falls behind. Load it once from your shell's profile:
+Nothing to set up. Every run of `log-diff` — `log-diff --version` is enough — makes sure its
+completion script sits where the shell already looks, and rewrites it only when a new
+version changes it:
+
+| Shell | Where | |
+| :-- | :-- | :-- |
+| Git Bash | `~/bash_completion.d/log-diff.bash` | Sourced by every new Git Bash terminal. It also turns on `completion_strip_exe`, so `log-di` Tab completes to `log-diff`, not `log-diff.exe` |
+| bash on Linux or macOS | `~/.local/share/bash-completion/completions/log-diff` | Loaded on first use by the bash-completion package |
+| fish | `~/.config/fish/completions/log-diff.fish` | Only when fish is set up |
+
+Open a new terminal after the first run. zsh and PowerShell have no such folder, so there
+it takes one line in the profile:
 
 ```bash
-# ~/.bashrc (Git Bash included) or ~/.zshrc - use `zsh` in the latter
-eval "$(log-diff completions bash)"
+eval "$(log-diff completions zsh)"                               # ~/.zshrc
 ```
 
 ```powershell
-# $PROFILE
-log-diff completions powershell | Out-String | Invoke-Expression
+log-diff completions powershell | Out-String | Invoke-Expression  # $PROFILE
 ```
 
-```fish
-# ~/.config/fish/config.fish
-log-diff completions fish | source
-```
-
-Open a new terminal afterwards. In Git Bash the command name itself completes to
-`log-diff.exe`; the script registers itself under that name too.
+The script comes from the command definitions themselves, so every command, flag and fixed
+value completes, and none falls behind. `SFCC_TOOLS_NO_COMPLETIONS=1` stops the files being
+written; delete them to remove it.
 
 ## Usage
 
@@ -58,10 +61,10 @@ log-diff check                    one pass over the sandbox log: report what is 
 log-diff check --fail-on-new      the same, exiting 1 while anything is pending
 log-diff watch [--interval 10s]   the same pass on a timer
 log-diff ack [ID... | --all]      list what is pending, or clear it
-log-diff run --state ledger.json [--sha SHA --build N]   CI: update the team's ledger
+log-diff run [--state ledger.json] [--sha SHA --build N] read DEV, update the team's ledger
              [--baseline-days N]                         first run: learn N days of history
 log-diff notify --report new.json                        CI: post the report to Teams
-log-diff completions <shell>      the tab completion script, see above
+log-diff completions <shell>      the tab completion script for zsh or PowerShell
 ```
 
 Every command takes `--config` for `dw.json` (the nearest one by default, as everywhere
@@ -71,6 +74,19 @@ The team's ledger comes from `--shared` or `LOG_DIFF_SHARED`: a path to a clone 
 ledger repository, or a raw URL. A URL to a private repository is fetched with
 `LOG_DIFF_TOKEN` or `GITHUB_TOKEN`; when it cannot be fetched the last copy is used, so an
 outage does not turn everything the team knows into news.
+
+### Nothing is required
+
+The ledger repository and Teams are both optional, and nothing fails without them:
+
+- **No team ledger anywhere.** `check` and `watch` still work: new means new to you.
+- **No repository yet, but DEV to compare against.** Run `log-diff run --config <DEV dw.json>`
+  on your own machine. With no `--state` it keeps the team's ledger in
+  `log-diff/dev-ledger.json`, next to your own, and `check` and `watch` use it by themselves
+  when `LOG_DIFF_SHARED` is not set. Run it again whenever you want it brought up to date.
+  When the repository exists, copy that file in as `ledger.json` and CI carries on from
+  where it stopped.
+- **No Teams webhook.** `notify` says what it would have sent and exits 0.
 
 ### Exit status
 
@@ -267,8 +283,8 @@ that into a link on the Teams card. Pass `--at` when the deploy went live notice
 the run.
 
 `notify` posts an Adaptive Card, which both Teams Workflows webhooks and the older incoming
-webhooks accept. The webhook comes from `--webhook` or `LOG_DIFF_WEBHOOK`. A report with
-nothing new posts nothing.
+webhooks accept. The webhook comes from `--webhook` or `LOG_DIFF_WEBHOOK`; without one,
+nothing is posted and the run still succeeds. A report with nothing new posts nothing.
 
 ## Building
 

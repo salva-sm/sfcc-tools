@@ -22,6 +22,8 @@ foreach ($tool in $Only) {
     # are zipped for the Zed extensions, which unpack them.
     if ($tool -in @('sfcc-upload', 'log-diff')) {
         Invoke-WebRequest "$base/$tool-x86_64-windows.exe" -OutFile "$Dir\$tool.exe"
+        # A first run puts the tab completion where Git Bash looks for it.
+        & "$Dir\$tool.exe" --version | Out-Null
     } else {
         $zip = Join-Path ([IO.Path]::GetTempPath()) "$tool.zip"
         Invoke-WebRequest "$base/$tool-x86_64-windows.zip" -OutFile $zip

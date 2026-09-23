@@ -1,4 +1,3 @@
-mod completions;
 mod daemon;
 mod errors;
 mod githook;
@@ -156,9 +155,9 @@ enum Command {
     /// Print the shell completion script: bash, zsh, fish, powershell or elvish
     #[command(
         long_about = "Print the shell completion script for SHELL on stdout.\n\n\
-        Load it from your shell's profile - in ~/.bashrc:\n\n\
-        \x20 eval \"$(sfcc-upload completions bash)\"\n\n\
-        or in the PowerShell $PROFILE:\n\n\
+        Git Bash, bash with bash-completion and fish need nothing: every run of sfcc-upload \
+        keeps the script where they look. For zsh, add `eval \"$(sfcc-upload completions zsh)\"` \
+        to ~/.zshrc; for PowerShell, this to the $PROFILE:\n\n\
         \x20 sfcc-upload completions powershell | Out-String | Invoke-Expression"
     )]
     Completions(CompletionsArgs),
@@ -286,6 +285,8 @@ struct CleanArgs {
 
 #[tokio::main]
 async fn main() {
+    // Before parsing, which exits on --help and --version: any run counts.
+    sfcc_core::completions::install::<Cli>("sfcc-upload", env!("CARGO_PKG_VERSION"));
     if let Err(error) = run(Cli::parse()).await {
         logging::error(format!("{error:#}"));
         std::process::exit(1);
@@ -295,7 +296,7 @@ async fn main() {
 async fn run(cli: Cli) -> Result<()> {
     // Before dw.json: completion is set up once, from anywhere.
     if let Command::Completions(args) = &cli.command {
-        completions::print::<Cli>(args.shell, "sfcc-upload");
+        sfcc_core::completions::print::<Cli>(args.shell, "sfcc-upload");
         return Ok(());
     }
     logging::configure_color(&cli.color);

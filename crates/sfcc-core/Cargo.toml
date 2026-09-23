@@ -11,11 +11,15 @@ description = "What every SFCC tool here needs: the sandbox credentials in dw.js
 # WebDAV and the log reader built on it. Off by default: the debug adapter
 # only needs dw.json, and has no reason to carry an async HTTP stack.
 webdav = ["dep:chrono", "dep:reqwest", "dep:tokio"]
+# Tab completion for the command-line tools, installed by the tools themselves.
+completions = ["dep:clap", "dep:clap_complete"]
 
 [dependencies]
 anyhow = "1.0.104"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+clap = { version = "4.6.6", optional = true }
+clap_complete = { version = "4.6.11", optional = true }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"], optional = true }
 reqwest = { version = "0.13.4", default-features = false, features = ["native-tls"], optional = true }
 tokio = { version = "1.53.1", features = ["sync", "time"], optional = true }
