@@ -3,12 +3,14 @@ use sfcc_core::config::Config;
 use std::path::{Path, PathBuf};
 
 const HOOK_NAME: &str = "post-checkout";
-const HOOK_MARKER: &str = "prost";
+const HOOK_MARKER: &str = "sfcc-upload";
+/// What the hook said before the uploader was renamed, so it is still ours to replace.
+const OLD_HOOK_MARKER: &str = "prost";
 const HOOK_BODY: &str = r#"#!/bin/sh
-# prost: upload what the branch switch changed
+# sfcc-upload: upload what the branch switch changed
 [ "$3" = "1" ] || exit 0
-command -v prost >/dev/null 2>&1 || exit 0
-prost push || true
+command -v sfcc-upload >/dev/null 2>&1 || exit 0
+sfcc-upload push || true
 "#;
 
 pub fn install(config: &Config, force: bool) -> Result<PathBuf> {
@@ -22,7 +24,7 @@ pub fn install(config: &Config, force: bool) -> Result<PathBuf> {
     let hook = hooks.join(HOOK_NAME);
     if hook.exists() && !force {
         let existing = std::fs::read_to_string(&hook).unwrap_or_default();
-        if !existing.contains(HOOK_MARKER) {
+        if !existing.contains(HOOK_MARKER) && !existing.contains(OLD_HOOK_MARKER) {
             bail!(
                 "{} already exists - re-run with --force to replace it",
                 hook.display()
@@ -65,7 +67,7 @@ mod tests {
 
     #[test]
     fn finds_the_hooks_directory_of_a_plain_repository() {
-        let home = std::env::temp_dir().join("prost-test-hooks-plain");
+        let home = std::env::temp_dir().join("sfcc-upload-test-hooks-plain");
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join(".git")).unwrap();
         std::fs::create_dir_all(home.join("source").join("cartridges")).unwrap();
@@ -78,7 +80,7 @@ mod tests {
 
     #[test]
     fn follows_the_gitdir_pointer_of_a_worktree() {
-        let home = std::env::temp_dir().join("prost-test-hooks-worktree");
+        let home = std::env::temp_dir().join("sfcc-upload-test-hooks-worktree");
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
         std::fs::write(home.join(".git"), "gitdir: ../real/.git/worktrees/one\n").unwrap();

@@ -2,12 +2,11 @@ use crate::logging::{self, CYAN, DIM, LINK, RED, YELLOW};
 use crate::push::Ctx;
 use crate::webdav::{DavEntry, encode_path};
 use anyhow::Result;
-use chrono::Local;
+pub use sfcc_core::logs::{DEFAULT_LEVELS, Entry, parse_levels};
+use sfcc_core::logs::{is_wanted, order, parse_entries, today};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
-
-pub const DEFAULT_LEVELS: &str = "error,customerror,custom";
 
 const LOOKBACK_BYTES: u64 = 256 * 1024;
 const PREFIX_WIDTH: usize = 24;
@@ -16,12 +15,6 @@ pub struct TailOptions {
     pub levels: Vec<String>,
     pub interval: Duration,
     pub lines: usize,
-}
-
-pub struct Entry {
-    pub label: String,
-    pub moment: String,
-    pub lines: Vec<String>,
 }
 
 pub struct Printer<'a> {
@@ -39,7 +32,7 @@ pub async fn follow(ctx: &Ctx, options: TailOptions) -> Result<()> {
     let mut announced = false;
 
     loop {
-        let today = Local::now().format("%Y%m%d").to_string();
+        let day = today();
         let entries = match ctx.dav.list(&base).await {
             Ok(entries) => entries,
             Err(error) => {
@@ -51,7 +44,7 @@ pub async fn follow(ctx: &Ctx, options: TailOptions) -> Result<()> {
 
         let wanted: Vec<_> = entries
             .iter()
-            .filter(|entry| !entry.is_dir && is_wanted(&entry.name, &options.levels, &today))
+            .filter(|entry| !entry.is_dir && is_wanted(&entry.name, &options.levels, &day))
             .collect();
 
         let bootstrap = !announced;
@@ -103,13 +96,6 @@ pub async fn follow(ctx: &Ctx, options: TailOptions) -> Result<()> {
 
         tokio::time::sleep(options.interval).await;
     }
-}
-
-pub fn parse_levels(raw: &str) -> Vec<String> {
-    raw.split(',')
-        .map(|level| level.trim().to_lowercase())
-        .filter(|level| !level.is_empty())
-        .collect()
 }
 
 impl<'a> Printer<'a> {
@@ -193,38 +179,6 @@ impl Printer<'_> {
     }
 }
 
-pub fn parse_entries(file: &str, text: &str) -> Vec<Entry> {
-    let label = file.split('-').next().unwrap_or(file).to_string();
-    let mut entries: Vec<Entry> = Vec::new();
-
-    for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        match (moment(line), entries.last_mut()) {
-            (None, Some(entry)) => entry.lines.push(line.to_string()),
-            (moment, _) => entries.push(Entry {
-                label: label.clone(),
-                moment: moment.unwrap_or_default(),
-                lines: vec![line.to_string()],
-            }),
-        }
-    }
-    entries
-}
-
-/// Leftovers from an entry of an earlier poll carry no moment and stay in front.
-pub fn order(batch: &mut [Entry]) {
-    batch.sort_by(|left, right| left.moment.cmp(&right.moment));
-}
-
-/// The timestamp every record opens with: `[2026-09-09 07:26:29.103 GMT]`.
-fn moment(line: &str) -> Option<String> {
-    let inner = line.strip_prefix('[')?.split_once(']')?.0;
-    let shape = inner.as_bytes();
-    if shape.len() < 19 || shape[4] != b'-' || shape[7] != b'-' || shape[13] != b':' {
-        return None;
-    }
-    Some(inner.to_string())
-}
-
 fn tone(label: &str) -> &'static str {
     match label {
         "error" | "customerror" | "fatal" => RED,
@@ -232,15 +186,6 @@ fn tone(label: &str) -> &'static str {
         label if label.starts_with("custom") => CYAN,
         _ => "",
     }
-}
-
-pub fn is_wanted(name: &str, levels: &[String], today: &str) -> bool {
-    if !name.ends_with(".log") || !name.contains(today) {
-        return false;
-    }
-    levels
-        .iter()
-        .any(|level| level == "all" || name.starts_with(level.as_str()))
 }
 
 fn parse_frame(line: &str) -> Option<(&str, &str, &str)> {
@@ -262,31 +207,6 @@ fn parse_frame(line: &str) -> Option<(&str, &str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn keeps_only_todays_files_of_the_wanted_levels() {
-        let levels = parse_levels(DEFAULT_LEVELS);
-        assert!(is_wanted(
-            "error-blade1-1-appserver-20260905.log",
-            &levels,
-            "20260905"
-        ));
-        assert!(is_wanted(
-            "customerror-blade1-20260905.log",
-            &levels,
-            "20260905"
-        ));
-        assert!(!is_wanted("warn-blade1-20260905.log", &levels, "20260905"));
-        assert!(!is_wanted("error-blade1-20260904.log", &levels, "20260905"));
-        assert!(!is_wanted("error-blade1-20260905.txt", &levels, "20260905"));
-    }
-
-    #[test]
-    fn the_all_level_keeps_every_log_of_the_day() {
-        let levels = parse_levels("all");
-        assert!(is_wanted("warn-blade1-20260905.log", &levels, "20260905"));
-        assert!(!is_wanted("warn-blade1-20260904.log", &levels, "20260905"));
-    }
 
     #[test]
     fn reads_the_file_and_line_out_of_a_stack_frame() {
@@ -311,72 +231,6 @@ mod tests {
         assert!(parse_frame("TypeError: Cannot read property \"ID\" from null").is_none());
         assert!(parse_frame("\tat something-without-a-line.js (main)").is_none());
         assert!(parse_frame("\tat bare.js:12 (main)").is_none());
-    }
-
-    #[test]
-    fn a_stack_trace_belongs_to_the_record_above_it() {
-        let text = concat!(
-            "[2026-09-09 07:26:29.103 GMT] ERROR PipelineCallServlet custom [] TypeError\n",
-            "\tat app_common_brand/cartridge/controllers/Account.js:99 (anonymous)\n",
-            "\tat modules/server/route.js:83 (next)\n",
-            "[2026-09-09 07:26:30.000 GMT] ERROR PipelineCallServlet custom [] another one\n"
-        );
-
-        let entries = parse_entries("error-blade1-20260909.log", text);
-
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].label, "error");
-        assert_eq!(entries[0].lines.len(), 3);
-        assert_eq!(entries[1].lines.len(), 1);
-    }
-
-    #[test]
-    fn lines_arriving_without_a_record_of_their_own_open_one() {
-        let entries = parse_entries(
-            "error-blade1-20260909.log",
-            "\tat modules/server/route.js:83",
-        );
-
-        assert_eq!(entries.len(), 1);
-        assert!(entries[0].moment.is_empty());
-    }
-
-    #[test]
-    fn records_reach_the_screen_in_the_order_the_sandbox_wrote_them() {
-        let mut batch = parse_entries(
-            "error-blade1-20260909.log",
-            "[2026-09-09 07:26:31.000 GMT] late",
-        );
-        batch.extend(parse_entries(
-            "customerror-blade1-20260909.log",
-            "[2026-09-09 07:26:29.000 GMT] early",
-        ));
-        batch.extend(parse_entries(
-            "error-blade1-20260909.log",
-            "\tat modules/server/route.js:83",
-        ));
-
-        order(&mut batch);
-
-        let moments: Vec<&str> = batch.iter().map(|entry| entry.moment.as_str()).collect();
-        assert_eq!(
-            moments,
-            [
-                "",
-                "2026-09-09 07:26:29.000 GMT",
-                "2026-09-09 07:26:31.000 GMT"
-            ]
-        );
-    }
-
-    #[test]
-    fn reads_the_moment_only_out_of_a_real_timestamp() {
-        assert_eq!(
-            moment("[2026-09-09 07:26:29.103 GMT] ERROR").as_deref(),
-            Some("2026-09-09 07:26:29.103 GMT")
-        );
-        assert!(moment("\tat modules/server/route.js:83 (next)").is_none());
-        assert!(moment("[main] Quota object.CouponPO").is_none());
     }
 
     #[test]

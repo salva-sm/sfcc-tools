@@ -88,7 +88,7 @@ fn takes_the_api_client_from_the_sfcc_ci_block() {
 
 #[test]
 fn reads_a_cartridges_dir_written_from_the_repository_root() {
-    let home = std::env::temp_dir().join("prost-test-dwjson-subdir");
+    let home = std::env::temp_dir().join("sfcc-test-dwjson-subdir");
     let _ = std::fs::remove_dir_all(&home);
     let inner = home.join("source");
     std::fs::create_dir_all(inner.join("cartridges").join("app_x")).unwrap();
@@ -130,7 +130,7 @@ fn refuses_a_cartridges_dir_that_is_nowhere() {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let home = std::env::temp_dir().join(format!("prost-test-{name}"));
+    let home = std::env::temp_dir().join(format!("sfcc-test-{name}"));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(home.join("cartridges").join("app_x").join("cartridge")).unwrap();
     std::fs::write(

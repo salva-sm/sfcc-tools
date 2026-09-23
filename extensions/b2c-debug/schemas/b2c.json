@@ -18,7 +18,7 @@
     },
     "logs": {
       "type": "boolean",
-      "description": "Follow the sandbox log with `prost logger` while attached, printing it in the debug console.",
+      "description": "Follow the sandbox log with `sfcc-upload logger` while attached, printing it in the debug console.",
       "default": true
     },
     "log_level": {

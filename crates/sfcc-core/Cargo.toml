@@ -1,13 +1,21 @@
 [package]
 name = "sfcc-core"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license.workspace = true
 repository.workspace = true
 authors = ["salva-sm"]
-description = "What every SFCC tool here needs: the sandbox credentials in dw.json, and what may be written to"
+description = "What every SFCC tool here needs: the sandbox credentials in dw.json, what may be written to, and the instance log"
+
+[features]
+# WebDAV and the log reader built on it. Off by default: the debug adapter
+# only needs dw.json, and has no reason to carry an async HTTP stack.
+webdav = ["dep:chrono", "dep:reqwest", "dep:tokio"]
 
 [dependencies]
 anyhow = "1.0.104"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"], optional = true }
+reqwest = { version = "0.13.4", default-features = false, features = ["native-tls"], optional = true }
+tokio = { version = "1.53.1", features = ["sync", "time"], optional = true }

@@ -64,20 +64,34 @@ impl Manifest {
     }
 }
 
+/// The uploader's state directory. It was `prost` before the rename; the old
+/// one is moved over the first time, so the manifests survive and the next
+/// push does not re-upload everything.
 pub fn state_dir() -> PathBuf {
-    if cfg!(windows) {
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            return PathBuf::from(local).join("prost");
+    let current = state_root().join(STATE_NAME);
+    if !current.exists() {
+        let old = state_root().join(OLD_STATE_NAME);
+        if old.is_dir() {
+            let _ = std::fs::rename(&old, &current);
         }
     }
+    current
+}
+
+const STATE_NAME: &str = "sfcc-upload";
+const OLD_STATE_NAME: &str = "prost";
+
+fn state_root() -> PathBuf {
+    if cfg!(windows)
+        && let Ok(local) = std::env::var("LOCALAPPDATA")
+    {
+        return PathBuf::from(local);
+    }
     if let Ok(state) = std::env::var("XDG_STATE_HOME") {
-        return PathBuf::from(state).join("prost");
+        return PathBuf::from(state);
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
-        .join(".local")
-        .join("state")
-        .join("prost")
+    PathBuf::from(home).join(".local").join("state")
 }
 
 pub fn manifest_path(config: &Config) -> PathBuf {

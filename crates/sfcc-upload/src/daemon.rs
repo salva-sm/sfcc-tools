@@ -62,7 +62,7 @@ pub fn start(config: &Config, args: SpawnArgs) -> Result<u32> {
         );
     }
 
-    let executable = std::env::current_exe().context("cannot locate the prost executable")?;
+    let executable = std::env::current_exe().context("cannot locate the sfcc-upload executable")?;
     let log = log_path(config);
     prepare_log(&log)?;
 

@@ -1167,30 +1167,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost"
-version = "0.5.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "futures",
- "indicatif",
- "libc",
- "notify",
- "notify-debouncer-full",
- "reqwest",
- "serde",
- "serde_json",
- "sfcc-core",
- "tokio",
- "tokio-tungstenite",
- "walkdir",
- "windows-sys 0.61.2",
- "xxhash-rust",
- "zip",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1386,11 +1362,14 @@ dependencies = [
 
 [[package]]
 name = "sfcc-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "reqwest",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -1403,6 +1382,30 @@ dependencies = [
  "serde_json",
  "sfcc-core",
  "ureq",
+]
+
+[[package]]
+name = "sfcc-upload"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "futures",
+ "indicatif",
+ "libc",
+ "notify",
+ "notify-debouncer-full",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sfcc-core",
+ "tokio",
+ "tokio-tungstenite",
+ "walkdir",
+ "windows-sys 0.61.2",
+ "xxhash-rust",
+ "zip",
 ]
 
 [[package]]
