@@ -126,3 +126,17 @@ fn a_mark_written_before_it_knew_its_day_still_reads() {
     assert!(mark.day.is_empty());
     assert_eq!(mark.offsets["error-blade1-20260910.log"], 42);
 }
+
+#[test]
+fn a_mark_days_back_starts_that_many_days_before_today() {
+    assert_eq!(Mark::days_back(0).day, today());
+    let week = Mark::days_back(7);
+    assert!(week.offsets.is_empty());
+    assert!(week.day < today());
+    assert_eq!(
+        week.day,
+        (Utc::now() - chrono::Duration::days(7))
+            .format("%Y%m%d")
+            .to_string()
+    );
+}

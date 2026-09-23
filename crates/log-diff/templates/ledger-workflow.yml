@@ -22,6 +22,11 @@ on:
     # Every 30 minutes through the working day, Monday to Friday (UTC).
     - cron: "*/30 6-19 * * 1-5"
   workflow_dispatch:
+    inputs:
+      baseline_days:
+        description: "First run only: days of DEV log before today to learn from (ignored once ledger.json exists)"
+        required: false
+        default: "14"
 
 # Two runs writing the ledger at once would each lose the other's update.
 concurrency:
@@ -66,6 +71,7 @@ jobs:
           SHA: ${{ github.event.client_payload.sha }}
           BUILD: ${{ github.event.client_payload.build_number }}
           DEPLOYED_AT: ${{ github.event.client_payload.deployed_at }}
+          BASELINE_DAYS: ${{ inputs.baseline_days }}
           # Where the suspects of a deploy can be read: the repository holding the
           # SFCC code. Optional - it only adds a link to the Teams card.
           LOG_DIFF_COMPARE_URL: https://github.com/<owner>/<sfcc-repo>/compare/{from}...{to}
@@ -74,6 +80,7 @@ jobs:
           [ -n "$SHA" ] && args+=(--sha "$SHA")
           [ -n "$SHA" ] && [ -n "$BUILD" ] && args+=(--build "$BUILD")
           [ -n "$SHA" ] && [ -n "$DEPLOYED_AT" ] && args+=(--at "$DEPLOYED_AT")
+          [ -n "$BASELINE_DAYS" ] && args+=(--baseline-days "$BASELINE_DAYS")
           log-diff run --config "$RUNNER_TEMP/sfcc/dw.json" --state ledger.json \
             --report "$RUNNER_TEMP/new.json" "${args[@]}"
 
