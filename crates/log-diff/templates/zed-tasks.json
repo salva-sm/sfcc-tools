@@ -1,0 +1,17 @@
+// Copy into the SFCC project as .zed/tasks.json, then start it from the
+// command palette ("task: spawn" -> "log-diff: watch"). Its output is a
+// terminal like any other: the paths in it open with a click.
+[
+  {
+    "label": "log-diff: watch",
+    "command": "log-diff",
+    "args": ["watch"],
+    "env": {
+      "LOG_DIFF_SHARED": "https://raw.githubusercontent.com/<org>/sfcc-log-ledger/main/ledger.json"
+    },
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "no_focus",
+    "hide": "never"
+  }
+]

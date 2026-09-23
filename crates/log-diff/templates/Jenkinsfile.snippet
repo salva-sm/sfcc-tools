@@ -1,0 +1,19 @@
+// After the stage that deploys to DEV - not at the end of the pipeline, which
+// goes on to STG and PRD. Needs a GitHub token allowed to dispatch to the
+// ledger repository (fine-grained: Contents read/write on that one repo),
+// stored in Jenkins as a secret text credential.
+stage('Tell log-diff') {
+  steps {
+    withCredentials([string(credentialsId: 'sfcc-log-ledger-dispatch', variable: 'GH_TOKEN')]) {
+      sh '''
+        payload=$(printf '{"event_type":"sfcc-deploy","client_payload":{"sha":"%s","build_number":%s,"deployed_at":"%s"}}' \
+          "$GIT_COMMIT" "$BUILD_NUMBER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+        curl -fsS -X POST \
+          -H "Authorization: Bearer $GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          https://api.github.com/repos/<org>/sfcc-log-ledger/dispatches \
+          -d "$payload" || echo "log-diff was not told about this deploy"
+      '''
+    }
+  }
+}

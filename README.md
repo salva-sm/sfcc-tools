@@ -27,30 +27,36 @@ These are the pieces that close those gaps. No instance, no network, no `node_mo
 
 | | | |
 | :-- | :-- | :-- |
-| 📤 | **[`crates/prost`](crates/prost)** | Cartridge uploader for sandboxes, as a CLI. Same job as Prophet, with no editor attached |
+| 📤 | **[`crates/sfcc-upload`](crates/sfcc-upload)** | Cartridge uploader for sandboxes, as a CLI. Same job as Prophet, with no editor attached. Formerly `prost` |
+| 🔎 | **[`crates/log-diff`](crates/log-diff)** | Tells the errors a deploy or a change introduced from the ones already known, on DEV for the team and on each sandbox |
 | 🧠 | **[`crates/isml-lsp`](crates/isml-lsp)** | Language server: ISML and `dw.*` completion, metadata-backed checks, route override chains, go-to-definition |
 | 🌳 | **[`grammar`](grammar)** | `tree-sitter-isml` — the only tree-sitter grammar for ISML there is |
 | ✏️ | **[`extensions/isml`](extensions/isml)** | Zed extension wiring the grammar and the language server together |
 | 🐞 | **[`crates/sfcc-dap`](crates/sfcc-dap)** | Debug adapter for server-side scripts: DAP to the editor, the instance's own debugger API on the other side |
 | 🧩 | **[`extensions/b2c-debug`](extensions/b2c-debug)** | Zed extension registering that adapter |
-| 🔌 | **[`crates/sfcc-core`](crates/sfcc-core)** | The one `dw.json` reader they all share |
+| 🔌 | **[`crates/sfcc-core`](crates/sfcc-core)** | The one `dw.json` reader they all share, and the WebDAV log reader the uploader and `log-diff` share |
 
 Each has its own README. This one only says how they fit together.
 
 ## Install
 
-**Binaries** — `prost`, `isml-lsp` and `sfcc-dap`, no toolchain needed. Grab them from the
-[latest release](https://github.com/salva-sm/sfcc-tools/releases/latest):
+**Binaries** — `sfcc-upload`, `log-diff`, `isml-lsp` and `sfcc-dap`, no toolchain needed, each
+on its own. Grab them from the [latest release](https://github.com/salva-sm/sfcc-tools/releases/latest):
 
 ```powershell
 # Windows
-curl -L -o prost.exe https://github.com/salva-sm/sfcc-tools/releases/latest/download/prost-x86_64-windows.exe
+curl -L -o sfcc-upload.exe https://github.com/salva-sm/sfcc-tools/releases/latest/download/sfcc-upload-x86_64-windows.exe
+curl -L -o log-diff.exe https://github.com/salva-sm/sfcc-tools/releases/latest/download/log-diff-x86_64-windows.exe
 ```
 
 ```bash
 # macOS (Apple silicon) / Linux — swap aarch64 for x86_64 as needed
-curl -L https://github.com/salva-sm/sfcc-tools/releases/latest/download/prost-aarch64-macos.tar.gz | tar -xz
+curl -L https://github.com/salva-sm/sfcc-tools/releases/latest/download/sfcc-upload-aarch64-macos.tar.gz | tar -xz
+curl -L https://github.com/salva-sm/sfcc-tools/releases/latest/download/log-diff-aarch64-macos.tar.gz | tar -xz
 ```
+
+Or all of them at once, into one folder: [`tools/install-all.ps1`](tools/install-all.ps1) on
+Windows, [`tools/install-all.sh`](tools/install-all.sh) elsewhere.
 
 **Zed extensions** — download `isml-<version>.zip` or `b2c-debug-<version>.zip` from the
 same release, unzip anywhere and run the `install.cmd` inside. The ISML extension finds
@@ -59,7 +65,8 @@ same release, unzip anywhere and run the `install.cmd` inside. The ISML extensio
 **From source:**
 
 ```bash
-cargo install --path crates/prost
+cargo install --path crates/sfcc-upload
+cargo install --path crates/log-diff
 cargo install --path crates/isml-lsp
 cargo install --path crates/sfcc-dap
 ```
@@ -90,7 +97,7 @@ cargo doc --no-deps --lib --open  # the language server's reference
 
 ## Releasing
 
-One tag, one release, everything on it: the three binaries for five platforms each, and
+One tag, one release, everything on it: the four binaries for five platforms each, and
 both Zed extension zips. The extension can only ask GitHub for the *latest* release, so a
 per-component tag would leave it looking for an asset that release does not carry.
 
@@ -101,7 +108,7 @@ git tag v0.2.0 && git push origin v0.2.0
 ## History
 
 This repository is the three that came before it, merged with their history intact:
-[`prost`](https://github.com/salva-sm/prost),
+[`prost`](https://github.com/salva-sm/prost) (now `sfcc-upload`),
 [`sfcc-zed-isml`](https://github.com/salva-sm/sfcc-zed-isml) and
 [`sfcc-zed-debugger`](https://github.com/salva-sm/sfcc-zed-debugger). All three are
 archived; everything continues here.
