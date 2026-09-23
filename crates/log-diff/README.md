@@ -175,19 +175,34 @@ running, `check` finds what it already recorded and does not report it again.
 `check --baseline` takes everything logged so far as known, for a sandbox that has been
 failing for reasons of its own.
 
-Each pending signature is printed the way a compiler prints an error, so an editor's problem
-matcher reads it as one:
+Each signature is printed as a card: what failed, the message, where, and when. The mark and
+its colour say the level at a glance — red `✖` for `error`, magenta for `customerror`, `‼` for
+`fatal`, yellow `▲` for warnings — and new ones carry a red **NEW** badge:
 
 ```
-C:\dev\site\cartridges\app_acme\cartridge\scripts\checkout\CheckoutServices.js:214: error: [error] TypeError: Cannot read property "shipments" from null (4cfc684705f583bc)
+13:05:12 ✖ 1 new error on dev01-eu01-acme.demandware.net
+
+ ✖ TypeError  NEW  Checkout-Begin · error · x3
+   Cannot read property "shipments" from null
+   ↳ app_acme/cartridge/scripts/checkout/CheckoutServices.js:214 in validateBasket
+   first 13:04 · last 13:05 · 4cfc684705f583bc
 ```
 
-The path is the local file when the checkout has it, `dw.json` otherwise.
+Colour follows the terminal: on when stdout is one and `NO_COLOR` is not set, or as
+`--color always|never` says.
+
+`--problems` prints for an editor's problem matcher instead, one line per pending signature
+the way a compiler prints an error, with the local file when the checkout has it and
+`dw.json` otherwise:
+
+```
+C:\dev\site\cartridgespp_acme\cartridge\scripts\checkout\CheckoutServices.js:214: error: [error] TypeError: Cannot read property "shipments" from null (4cfc684705f583bc)
+```
 
 ### VS Code
 
 [`templates/vscode-tasks.json`](templates/vscode-tasks.json) is a `.vscode/tasks.json` that
-starts `log-diff watch` when the folder opens (`runOn: folderOpen`; VS Code asks once whether
+starts `log-diff watch --problems` when the folder opens (`runOn: folderOpen`; VS Code asks once whether
 the folder may do that) with a problem matcher that puts pending signatures in the
 **Problems** panel. Each report re-lists every pending signature between a `log-diff:
 checking` line and a summary line, which is what a background problem matcher needs to keep

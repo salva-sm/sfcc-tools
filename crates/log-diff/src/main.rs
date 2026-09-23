@@ -4,10 +4,12 @@ mod ledger;
 mod local;
 mod normalize;
 mod notify;
+mod output;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueHint};
-use local::{Local, reachable, say};
+use local::{Local, reachable};
+use output::{Badge, Card, Tone, status};
 use sfcc_core::config::Config;
 use sfcc_core::logs::parse_levels;
 use sfcc_core::webdav::Dav;
@@ -48,6 +50,16 @@ all, check and watch still work, comparing against what you have seen.";
     after_help = EXAMPLES
 )]
 struct Cli {
+    /// Colour the output: auto, always, never
+    #[arg(
+        long,
+        global = true,
+        value_name = "WHEN",
+        default_value = "auto",
+        value_parser = ["auto", "always", "never"]
+    )]
+    color: String,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -122,6 +134,9 @@ struct LocalArgs {
     /// No desktop notification, only the terminal
     #[arg(long)]
     no_desktop: bool,
+    /// Print `path:line: error:` lines for an editor's problem matcher instead of cards
+    #[arg(long)]
+    problems: bool,
 }
 
 #[derive(Args)]
@@ -212,13 +227,19 @@ async fn main() {
     match run(Cli::parse()).await {
         Ok(code) => std::process::exit(code),
         Err(error) => {
-            eprintln!("log-diff: {error:#}");
+            output::error(&format!("{error:#}"));
             std::process::exit(EXIT_FAILED);
         }
     }
 }
 
 async fn run(cli: Cli) -> Result<i32> {
+    let problems = match &cli.command {
+        Command::Check(args) => args.local.problems,
+        Command::Watch(args) => args.local.problems,
+        _ => false,
+    };
+    output::configure(&cli.color, problems);
     match cli.command {
         Command::Check(args) => check(args).await,
         Command::Watch(args) => {
@@ -230,18 +251,24 @@ async fn run(cli: Cli) -> Result<i32> {
         Command::Notify(args) => {
             let report = notify::Report::load(&args.report)?;
             if report.new.is_empty() {
-                say("nothing new to notify");
+                status(Tone::Ok, "nothing new to notify");
                 return Ok(0);
             }
             let Some(webhook) = args.webhook.filter(|webhook| !webhook.trim().is_empty()) else {
-                say(&format!(
-                    "{} new signature(s), but no Teams webhook (LOG_DIFF_WEBHOOK) - nothing sent",
-                    report.new.len()
-                ));
+                status(
+                    Tone::Info,
+                    &format!(
+                        "{} new signature(s), but no Teams webhook (LOG_DIFF_WEBHOOK) - nothing sent",
+                        report.new.len()
+                    ),
+                );
                 return Ok(0);
             };
             notify::teams(&webhook, &report).await?;
-            say(&format!("posted {} new signature(s)", report.new.len()));
+            status(
+                Tone::Ok,
+                &format!("posted {} new signature(s) to Teams", report.new.len()),
+            );
             Ok(0)
         }
         Command::Completions(args) => {
@@ -266,23 +293,32 @@ async fn check(args: CheckArgs) -> Result<i32> {
         Err(_) => Some(format!("no answer in {}s", PROBE_LIMIT.as_secs())),
     };
     if let Some(reason) = unreachable {
-        say(&format!(
-            "{} unreachable ({reason}) - nothing checked",
-            local.config.hostname
-        ));
+        status(
+            Tone::Warn,
+            &format!(
+                "{} unreachable ({reason}) - nothing checked",
+                local.config.hostname
+            ),
+        );
         return Ok(0);
     }
 
     let team = local.team().await?;
     let outcome = local.pass(&dav, &team, args.baseline).await?;
     if args.baseline {
-        say("baseline taken; what the sandbox logged so far is known now");
+        status(
+            Tone::Ok,
+            "baseline taken; what the sandbox logged so far is known now",
+        );
         return Ok(0);
     }
     local.report(&outcome);
 
     if args.fail_on_new && !outcome.pending.is_empty() {
-        say("`log-diff ack` once they are dealt with, or commit with --no-verify");
+        status(
+            Tone::Info,
+            "or commit with --no-verify to skip the check once",
+        );
         return Ok(EXIT_NEW);
     }
     Ok(0)
@@ -309,43 +345,65 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
         .cursor_for(&config.hostname)
         .is_some();
     if had_cursor && args.baseline_days > 0 {
-        say(&format!(
-            "--baseline-days ignored: {} already has a baseline - delete it to start over",
-            options.state.display()
-        ));
+        status(
+            Tone::Warn,
+            &format!(
+                "--baseline-days ignored: {} already has a baseline - delete it to start over",
+                options.state.display()
+            ),
+        );
     }
     let outcome = ci::run(&config, &dav, &options).await?;
 
     if outcome.baseline {
-        say(&format!(
-            "first run on {}: {} signature(s) learned from the log since {}, nothing reported",
-            config.hostname, outcome.known, outcome.baseline_from
-        ));
+        status(
+            Tone::Ok,
+            &format!(
+                "first run on {}: {} signature(s) learned from the log since {}, nothing reported",
+                config.hostname, outcome.known, outcome.baseline_from
+            ),
+        );
         return Ok(0);
     }
+    let new = outcome.report.new.len();
+    match new {
+        0 => status(
+            Tone::Ok,
+            &format!("{} · nothing new, {} known", config.hostname, outcome.known),
+        ),
+        _ => status(
+            Tone::New,
+            &format!(
+                "{new} new error{} on {} · {} known",
+                if new == 1 { "" } else { "s" },
+                config.hostname,
+                outcome.known
+            ),
+        ),
+    }
     for item in &outcome.report.new {
-        let deploy = item
-            .deploy
-            .as_ref()
-            .map(|deploy| format!(" since {}", deploy.sha))
-            .unwrap_or_default();
+        let deploy = item.deploy.as_ref().map(|deploy| match deploy.build {
+            Some(build) => format!("deploy {} (build {build})", short(&deploy.sha)),
+            None => format!("deploy {}", short(&deploy.sha)),
+        });
+        let card = Card {
+            id: &item.id,
+            label: &item.label,
+            exception: item.exception_class.as_deref(),
+            location: item.location.as_deref(),
+            example: &item.example,
+            count: item.count,
+            first_seen: &item.first_seen,
+            last_seen: None,
+            badge: Badge::New,
+            deploy,
+        };
         println!(
-            "{}  x{:<5} {}{deploy}",
-            item.id,
-            item.count,
-            notify::headline(
-                &item.label,
-                item.exception_class.as_deref(),
-                item.location.as_deref()
-            )
+            "
+{}",
+            output::card(&card)
         );
     }
-    say(&format!(
-        "{} new, {} known on {}",
-        outcome.report.new.len(),
-        outcome.known,
-        config.hostname
-    ));
 
     match args.fail_on_new && !outcome.report.new.is_empty() {
         true => Ok(EXIT_NEW),
@@ -372,6 +430,10 @@ fn local(args: LocalArgs) -> Result<(Local, Dav)> {
         desktop,
     };
     Ok((local, dav))
+}
+
+fn short(sha: &str) -> &str {
+    sha.get(..9).unwrap_or(sha)
 }
 
 fn default_state() -> PathBuf {
