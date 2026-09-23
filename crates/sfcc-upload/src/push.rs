@@ -109,6 +109,7 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
         clear_remote_cartridges(ctx).await?;
     }
 
+    forget_files(&mut manifest, &changed);
     let progress = build_progress(changed.len(), options.show_progress);
     let outcome = upload_files(ctx, changed, progress.as_ref()).await;
     if let Some(bar) = progress {
@@ -166,6 +167,16 @@ pub fn select_changed(files: &[LocalFile], manifest: &Manifest) -> Vec<LocalFile
         })
         .cloned()
         .collect()
+}
+
+/// Drops the entries of files about to be sent, so a transfer that fails
+/// halfway leaves them unknown rather than recorded at their previous content.
+/// Otherwise a file that reaches the sandbox and is then edited back to that
+/// content passes for unchanged, and the sandbox keeps the version in between.
+pub fn forget_files(manifest: &mut Manifest, files: &[LocalFile]) {
+    for file in files {
+        manifest.forget(&file.relative);
+    }
 }
 
 pub fn select_removed(files: &[LocalFile], manifest: &Manifest) -> Vec<String> {
@@ -270,29 +281,47 @@ async fn upload_individually(
     files: Vec<LocalFile>,
     progress: Option<&ProgressBar>,
 ) -> Result<Vec<(String, Entry)>> {
+    // One file the sandbox refuses, such as a `.bak` it answers 403 to, must
+    // not keep the others of the batch from being sent and recorded.
     let mut recorded = Vec::new();
+    let mut failure = None;
     for file in files {
-        let body = std::fs::read(&file.absolute)
-            .with_context(|| format!("cannot read {}", file.absolute.display()))?;
-        let hash = hash_file(&file.absolute)?;
-
-        if let Some((parent, _)) = file.relative.rsplit_once('/') {
-            ctx.dav.ensure_directory(parent).await?;
+        match upload_one(ctx, &file).await {
+            Ok(hash) => recorded.push((
+                file.relative,
+                Entry {
+                    hash,
+                    size: file.size,
+                    modified_millis: file.modified_millis,
+                },
+            )),
+            Err(error) => failure = Some(error),
         }
-        ctx.dav.put(&file.relative, body).await?;
         if let Some(bar) = progress {
             bar.inc(1);
         }
-        recorded.push((
-            file.relative,
-            Entry {
-                hash,
-                size: file.size,
-                modified_millis: file.modified_millis,
-            },
-        ));
     }
-    Ok(recorded)
+
+    match failure {
+        Some(error) if recorded.is_empty() => Err(error),
+        Some(error) => {
+            logging::error(format!("{error:#}"));
+            Ok(recorded)
+        }
+        None => Ok(recorded),
+    }
+}
+
+async fn upload_one(ctx: &Ctx, file: &LocalFile) -> Result<u64> {
+    let body = std::fs::read(&file.absolute)
+        .with_context(|| format!("cannot read {}", file.absolute.display()))?;
+    let hash = xxhash_rust::xxh3::xxh3_64(&body);
+
+    if let Some((parent, _)) = file.relative.rsplit_once('/') {
+        ctx.dav.ensure_directory(parent).await?;
+    }
+    ctx.dav.put(&file.relative, body).await?;
+    Ok(hash)
 }
 
 async fn upload_chunk(
@@ -448,6 +477,29 @@ mod tests {
                 "other/file.js"
             ]
         );
+    }
+
+    #[test]
+    fn a_file_whose_transfer_failed_is_sent_again_at_its_old_content() {
+        let path = std::env::temp_dir().join(format!("sfcc-upload-{}.js", std::process::id()));
+        std::fs::write(&path, "recorded").unwrap();
+        let file = crate::scan::describe(&path, path.parent().unwrap()).unwrap();
+
+        let mut manifest = Manifest::default();
+        manifest.record(
+            file.relative.clone(),
+            Entry {
+                hash: hash_file(&path).unwrap(),
+                size: file.size,
+                modified_millis: file.modified_millis - 1,
+            },
+        );
+        assert!(select_changed(std::slice::from_ref(&file), &manifest).is_empty());
+
+        forget_files(&mut manifest, std::slice::from_ref(&file));
+        let changed = select_changed(std::slice::from_ref(&file), &manifest);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(changed.len(), 1);
     }
 
     #[test]
