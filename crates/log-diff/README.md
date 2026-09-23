@@ -9,6 +9,42 @@ the team's ledger and posts what is new to Teams. On a developer's machine, agai
 sandbox, it reads that ledger without writing to it and only speaks up about what the team
 does not already know.
 
+## Demo
+
+A `watch` on a sandbox, while a change to checkout is being tried out. Nothing is printed
+while nothing changes; the two failures below turned up in one pass, one of them twice.
+Everything in it is made up.
+
+```console
+$ log-diff watch
+09:41:02 · watching sbx-001.dx.commercecloud.salesforce.com every 10s
+09:41:03 ✔ sbx-001.dx.commercecloud.salesforce.com · nothing new
+09:47:23 ✖ 2 new errors on sbx-001.dx.commercecloud.salesforce.com
+
+ ✖ TypeError  NEW  Checkout-SubmitShipping · error · x1
+   Cannot read property "shippingMethod" from undefined
+   ↳ app_example/cartridge/scripts/checkout/shippingHelpers.js:88 in selectShippingMethod
+   first 09:47 · 7d1e0c42a9b35f16
+
+ ✖ Custom error  NEW  Cart-AddProduct · customerror · x2
+   Basket <n> has no default shipment for <email>
+   first 09:46 · last 09:47 · c93a51f07e4d28b0
+
+09:47:23 · `log-diff ack <id>` or `log-diff ack --all` once dealt with
+```
+
+Order numbers, emails and ids are scrubbed before anything is shown or kept, which is why
+the second message reads `<n>` and `<email>` — and why its two occurrences, for two
+different baskets, are one signature. In a terminal the marks are coloured by level (red
+for `error`, magenta for `customerror`) and **NEW** is a red badge.
+
+Once it is fixed, or known not to matter:
+
+```console
+$ log-diff ack 7d1e
+09:52:10 ✔ 1 acknowledged
+```
+
 ## Install
 
 One file, from the [latest release](https://github.com/salva-sm/sfcc-tools/releases/latest).
