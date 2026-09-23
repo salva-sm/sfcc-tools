@@ -129,3 +129,97 @@ fn repeats_in_one_read_become_one_finding() {
     assert_eq!(all[0].first, "2026-09-22T21:38:04Z");
     assert_eq!(all[0].last, "2026-09-22T21:39:00Z");
 }
+
+fn at(moment: &str) -> Finding {
+    found(&FAILURE.replace("2026-09-22 21:38:04.112", moment))
+}
+
+#[test]
+fn a_pending_signature_not_logged_for_long_enough_resolves() {
+    let mut mine = Ledger::default();
+    let finding = at("2026-09-22 10:00:00.000");
+    assert_eq!(mine.observe_local(&finding, false), Seen::New);
+
+    assert_eq!(
+        mine.expire("2026-09-22T09:00:00Z", "2026-09-25T10:00:00Z", &[]),
+        0
+    );
+    assert_eq!(
+        mine.expire("2026-09-22T11:00:00Z", "2026-09-25T10:00:00Z", &[]),
+        1
+    );
+
+    let known = &mine.known_signatures[&finding.signature.id];
+    assert!(!known.pending);
+    assert_eq!(known.resolved_at.as_deref(), Some("2026-09-25T10:00:00Z"));
+}
+
+#[test]
+fn what_a_pass_just_reported_does_not_expire_in_it() {
+    let mut mine = Ledger::default();
+    let finding = at("2026-09-22 10:00:00.000");
+    mine.observe_local(&finding, false);
+
+    let spared = [finding.signature.id.as_str()];
+    assert_eq!(
+        mine.expire("2026-09-30T00:00:00Z", "2026-09-30T00:00:00Z", &spared),
+        0
+    );
+}
+
+#[test]
+fn a_resolved_signature_logged_again_comes_back_and_can_expire_again() {
+    let mut mine = Ledger::default();
+    mine.observe_local(&at("2026-09-22 10:00:00.000"), false);
+    mine.expire("2026-09-23T00:00:00Z", "2026-09-25T10:00:00Z", &[]);
+
+    // Logged before it was resolved: a late read, not a return.
+    assert_eq!(
+        mine.observe_local(&at("2026-09-24 10:00:00.000"), false),
+        Seen::Known
+    );
+    // Logged after.
+    let again = at("2026-09-26 10:00:00.000");
+    assert_eq!(mine.observe_local(&again, false), Seen::Back);
+    let known = &mine.known_signatures[&again.signature.id];
+    assert!(known.pending && known.back && known.resolved_at.is_none());
+
+    assert_eq!(
+        mine.expire("2026-09-30T00:00:00Z", "2026-09-30T00:00:00Z", &[]),
+        1
+    );
+    assert_eq!(
+        mine.observe_local(&at("2026-10-01 10:00:00.000"), false),
+        Seen::Back
+    );
+}
+
+#[test]
+fn only_pending_signatures_expire() {
+    let mut mine = Ledger::default();
+    let muted = at("2026-09-22 10:00:00.000");
+    mine.observe_local(&muted, true);
+
+    assert_eq!(
+        mine.expire("2026-12-31T00:00:00Z", "2026-12-31T00:00:00Z", &[]),
+        0
+    );
+    assert!(
+        mine.known_signatures[&muted.signature.id]
+            .resolved_at
+            .is_none()
+    );
+}
+
+#[test]
+fn a_muted_or_baseline_signature_never_comes_back() {
+    let mut mine = Ledger::default();
+    assert_eq!(
+        mine.observe_local(&at("2026-09-22 10:00:00.000"), true),
+        Seen::Known
+    );
+    assert_eq!(
+        mine.observe_local(&at("2026-12-01 10:00:00.000"), false),
+        Seen::Known
+    );
+}

@@ -4,12 +4,20 @@
 //! `check` is one pass and `watch` is the same pass on a timer, so a hook that
 //! runs while a watcher is going finds the ledger the watcher left and does
 //! not report the same thing twice.
+//!
+//! A signature reported is pending until it is dealt with: acknowledged, or
+//! not logged again for as long as `--expire` says, after which it resolves on
+//! its own. Only pending signatures expire. A resolved one that is logged
+//! again comes back - pending once more, and able to expire again - so being
+//! wrong about a fix costs one more notification, never a missed one. A muted
+//! one, or one taken in with a baseline, is never reported again.
 
 use crate::finding::{Finding, findings};
-use crate::ledger::{Known, Ledger, load_shared, local_dir};
+use crate::ledger::{Known, Ledger, Seen, load_shared, local_dir};
 use crate::notify::{self, headline};
 use crate::output::{self, Badge, Card, Tone, status};
 use anyhow::{Result, bail};
+use chrono::{SecondsFormat, Utc};
 use sfcc_core::config::Config;
 use sfcc_core::logs::{self, Mark};
 use sfcc_core::webdav::{Availability, Dav};
@@ -33,14 +41,32 @@ pub struct Local {
     pub shared: Option<String>,
     /// Whether to pop a desktop notification for what is new.
     pub desktop: bool,
+    /// How long a pending signature stays pending without being logged again.
+    /// `None` keeps it until it is acknowledged.
+    pub expire: Option<Duration>,
 }
 
 /// What one pass found.
 pub struct Outcome {
     /// Signatures seen for the first time in this pass.
     pub new: Vec<Finding>,
-    /// Everything reported and not acknowledged, new or not.
+    /// Signatures resolved before, and logged again in this pass.
+    pub back: Vec<Finding>,
+    /// Everything reported and not acknowledged, new, back or older.
     pub pending: Vec<(String, Known)>,
+    /// Pending signatures this pass resolved for not having been logged in time.
+    pub expired: usize,
+}
+
+impl Outcome {
+    fn badge(&self, id: &str) -> Badge {
+        let has = |found: &[Finding]| found.iter().any(|finding| finding.signature.id == id);
+        match (has(&self.new), has(&self.back)) {
+            (true, _) => Badge::New,
+            (_, true) => Badge::Back,
+            _ => Badge::Pending,
+        }
+    }
 }
 
 /// Whether the sandbox can be read right now. `None` when it cannot, which
@@ -51,6 +77,10 @@ pub async fn reachable(dav: &Dav) -> Result<Option<String>> {
         Availability::Unauthorized => bail!("the instance rejected the credentials in dw.json"),
         Availability::Unavailable(reason) => Ok(Some(reason)),
     }
+}
+
+fn now() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 impl Local {
@@ -81,15 +111,35 @@ impl Local {
         // Loaded again after the read, which is where the time goes: a hook
         // that ran meanwhile has already recorded what it found.
         let mut mine = Ledger::load(&self.state)?;
-        let mut new = Vec::new();
+        let (mut new, mut back) = (Vec::new(), Vec::new());
         for finding in findings(&read.entries) {
             if team.knows(&finding.signature.id) {
                 continue;
             }
-            if mine.observe(&finding, None, !baseline) && !baseline {
-                new.push(finding);
+            match mine.observe_local(&finding, baseline) {
+                Seen::New => new.push(finding),
+                Seen::Back => back.push(finding),
+                Seen::Known => {}
             }
         }
+
+        let expired = match self.expire {
+            Some(expire) => {
+                let cutoff = Utc::now() - chrono::Duration::from_std(expire).unwrap_or_default();
+                // What this pass reports is shown at least once, however old.
+                let spared: Vec<&str> = new
+                    .iter()
+                    .chain(&back)
+                    .map(|finding: &Finding| finding.signature.id.as_str())
+                    .collect();
+                mine.expire(
+                    &cutoff.to_rfc3339_opts(SecondsFormat::Secs, true),
+                    &now(),
+                    &spared,
+                )
+            }
+            None => 0,
+        };
         mine.advance(host, read.next);
         mine.save(&self.state)?;
 
@@ -97,90 +147,123 @@ impl Local {
             .pending(team)
             .map(|(id, known)| (id.clone(), known.clone()))
             .collect();
-        Ok(Outcome { new, pending })
+        Ok(Outcome {
+            new,
+            back,
+            pending,
+            expired,
+        })
     }
 
     /// Tell whoever is looking: the terminal always, the desktop when asked.
     pub fn report(&self, outcome: &Outcome) {
         let host = &self.config.hostname;
-        let (new, pending) = (outcome.new.len(), outcome.pending.len());
+        let (new, back, pending) = (outcome.new.len(), outcome.back.len(), outcome.pending.len());
+        let fresh = new + back;
 
         if output::problems() {
+            // The begin and end lines a background problem matcher waits for.
             status(Tone::Info, &format!("checking {host}"));
             for (id, known) in &outcome.pending {
                 println!("{}", self.problem(id, known));
             }
             status(
                 Tone::Info,
-                &match (new, pending) {
+                &match (fresh, pending) {
                     (0, 0) => "up to date".to_string(),
                     (0, pending) => format!("{pending} pending, nothing new"),
-                    (new, pending) => format!("{new} new, {pending} pending"),
+                    (fresh, pending) => format!("{fresh} new, {pending} pending"),
                 },
             );
         } else {
-            match (new, pending) {
+            let mut parts = Vec::new();
+            if new > 0 {
+                parts.push(format!(
+                    "{new} new error{}",
+                    if new == 1 { "" } else { "s" }
+                ));
+            }
+            if back > 0 {
+                parts.push(format!("{back} back"));
+            }
+            match (fresh, pending) {
                 (0, 0) => status(Tone::Ok, &format!("{host} · nothing new")),
                 (0, pending) => status(
                     Tone::Pending,
                     &format!("{host} · nothing new, {pending} still pending"),
                 ),
-                (new, pending) => status(
+                (fresh, pending) => status(
                     Tone::New,
                     &format!(
-                        "{new} new error{} on {host}{}",
-                        if new == 1 { "" } else { "s" },
-                        match pending > new {
+                        "{} on {host}{}",
+                        parts.join(", "),
+                        match pending > fresh {
                             true => format!(" · {pending} pending in all"),
                             false => String::new(),
                         }
                     ),
                 ),
             }
+
             // What turned up in this pass first, then what is still waiting.
-            let is_new = |id: &str| outcome.new.iter().any(|finding| finding.signature.id == id);
             let mut shown: Vec<&(String, Known)> = outcome.pending.iter().collect();
-            shown.sort_by_key(|(id, _)| !is_new(id));
+            shown.sort_by_key(|(id, _)| outcome.badge(id) == Badge::Pending);
             for (id, known) in shown {
-                let badge = match is_new(id) {
-                    true => Badge::New,
-                    false => Badge::Pending,
-                };
-                println!(
-                    "
-{}",
-                    output::card(&card_of(id, known, badge))
-                );
+                println!();
+                println!("{}", output::card(&card_of(id, known, outcome.badge(id))));
             }
             if pending > 0 {
                 println!();
                 status(
                     Tone::Info,
-                    "`log-diff ack <id>` or `log-diff ack --all` once dealt with",
+                    "`log-diff ack <id>` once fixed, `log-diff ack --mute <id>` if it does not matter",
                 );
             }
         }
+        if outcome.expired > 0 {
+            status(
+                Tone::Ok,
+                &format!(
+                    "{} pending signature{} not logged for {} resolved on {}",
+                    outcome.expired,
+                    if outcome.expired == 1 { "" } else { "s" },
+                    self.expire.map(worded).unwrap_or_default(),
+                    if outcome.expired == 1 {
+                        "its own"
+                    } else {
+                        "their own"
+                    },
+                ),
+            );
+        }
 
         if self.desktop {
+            let headline_of = |finding: &Finding| {
+                let signature = &finding.signature;
+                headline(
+                    &signature.label,
+                    signature.exception_class.as_deref(),
+                    signature.location.as_deref(),
+                )
+            };
             let headlines: Vec<String> = outcome
                 .new
                 .iter()
-                .map(|finding| {
-                    let signature = &finding.signature;
-                    headline(
-                        &signature.label,
-                        signature.exception_class.as_deref(),
-                        signature.location.as_deref(),
-                    )
-                })
+                .map(headline_of)
+                .chain(
+                    outcome
+                        .back
+                        .iter()
+                        .map(|finding| format!("Back: {}", headline_of(finding))),
+                )
                 .collect();
             notify::desktop(&self.config.hostname, &headlines);
         }
     }
 
-    /// `path:line: error: [level] message (id)` - the shape a compiler prints, which
-    /// every editor's problem matcher already reads. The path is the local
-    /// file when the frame names one this checkout has.
+    /// `path:line: error: [level] message (id)` - the shape a compiler prints,
+    /// which every editor's problem matcher already reads. The path is the
+    /// local file when the frame names one this checkout has.
     fn problem(&self, id: &str, known: &Known) -> String {
         let (file, line) = self.local_position(known.location.as_deref());
         let head = known.example.lines().next().unwrap_or_default();
@@ -256,7 +339,8 @@ impl Local {
                         Ok(outcome) => {
                             let ids: Vec<String> =
                                 outcome.pending.iter().map(|(id, _)| id.clone()).collect();
-                            if shown.as_ref() != Some(&ids) || !outcome.new.is_empty() {
+                            let fresh = !outcome.new.is_empty() || !outcome.back.is_empty();
+                            if shown.as_ref() != Some(&ids) || fresh {
                                 self.report(&outcome);
                                 shown = Some(ids);
                             }
@@ -270,8 +354,22 @@ impl Local {
     }
 }
 
-/// Mark pending signatures as dealt with. No ids lists what is pending.
-pub fn acknowledge(state: &Path, ids: &[String], all: bool) -> Result<()> {
+/// `3d`, `36h`, `90m`: an expiry the way it was most likely written.
+pub fn worded(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    match seconds {
+        s if s % 86_400 == 0 => format!("{}d", s / 86_400),
+        s if s % 3_600 == 0 => format!("{}h", s / 3_600),
+        s if s % 60 == 0 => format!("{}m", s / 60),
+        s => format!("{s}s"),
+    }
+}
+
+/// Deal with pending signatures. No ids lists them instead.
+///
+/// Acknowledged means fixed: logged again later, it comes back. Muted means it
+/// does not matter: it is never reported again.
+pub fn acknowledge(state: &Path, ids: &[String], all: bool, mute: bool) -> Result<()> {
     let mut mine = Ledger::load(state)?;
     let pending: Vec<String> = mine
         .known_signatures
@@ -283,33 +381,48 @@ pub fn acknowledge(state: &Path, ids: &[String], all: bool) -> Result<()> {
     if ids.is_empty() && !all {
         for id in &pending {
             let known = &mine.known_signatures[id];
-            println!(
-                "{}
-",
-                output::card(&card_of(id, known, Badge::None))
-            );
+            let badge = match known.back {
+                true => Badge::Back,
+                false => Badge::None,
+            };
+            println!("{}", output::card(&card_of(id, known, badge)));
+            println!();
         }
         match pending.len() {
             0 => status(Tone::Ok, "nothing pending"),
             count => status(
                 Tone::Pending,
-                &format!("{count} pending - `log-diff ack <id>` or `log-diff ack --all`"),
+                &format!(
+                    "{count} pending - `log-diff ack <id>` once fixed, `--mute` if it does not matter"
+                ),
             ),
         }
         return Ok(());
     }
 
-    let mut acknowledged = 0;
+    let resolved_at = now();
+    let mut dealt = 0;
     for id in &pending {
         if (all || ids.iter().any(|wanted| id.starts_with(wanted.as_str())))
             && let Some(known) = mine.known_signatures.get_mut(id)
         {
             known.pending = false;
-            acknowledged += 1;
+            known.back = false;
+            known.resolved_at = match mute {
+                true => None,
+                false => Some(resolved_at.clone()),
+            };
+            dealt += 1;
         }
     }
     mine.save(state)?;
-    status(Tone::Ok, &format!("{acknowledged} acknowledged"));
+    match mute {
+        true => status(Tone::Ok, &format!("{dealt} muted - never reported again")),
+        false => status(
+            Tone::Ok,
+            &format!("{dealt} acknowledged - reported again if logged again"),
+        ),
+    }
     Ok(())
 }
 

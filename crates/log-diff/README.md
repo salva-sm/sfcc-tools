@@ -30,7 +30,7 @@ $ log-diff watch
    Basket <n> has no default shipment for <email>
    first 09:46 · last 09:47 · c93a51f07e4d28b0
 
-09:47:23 · `log-diff ack <id>` or `log-diff ack --all` once dealt with
+09:47:23 · `log-diff ack <id>` once fixed, `log-diff ack --mute <id>` if it does not matter
 ```
 
 Order numbers, emails and ids are scrubbed before anything is shown or kept, which is why
@@ -42,8 +42,11 @@ Once it is fixed, or known not to matter:
 
 ```console
 $ log-diff ack 7d1e
-09:52:10 ✔ 1 acknowledged
+09:52:10 ✔ 1 acknowledged - reported again if logged again
 ```
+
+Left alone, a pending signature resolves on its own once it has not been logged for three
+days; if it is logged again after that, it comes back marked **BACK**.
 
 ## Install
 
@@ -96,7 +99,7 @@ written; delete them to remove it.
 log-diff check                    one pass over the sandbox log: report what is new
 log-diff check --fail-on-new      the same, exiting 1 while anything is pending
 log-diff watch [--interval 10s]   the same pass on a timer
-log-diff ack [ID... | --all]      list what is pending, or clear it
+log-diff ack [ID... | --all]      list what is pending, or resolve it; --mute to never hear of it again
 log-diff run [--state ledger.json] [--sha SHA --build N] read DEV, update the team's ledger
              [--baseline-days N]                         first run: learn N days of history
 log-diff notify --report new.json                        CI: post the report to Teams
@@ -202,8 +205,24 @@ only ever written by `check`, `watch` and `ack`, and the team's is only ever wri
 
 `check` reads the sandbox log since its last pass — today's log, the first time — and reports
 every signature neither the team's ledger nor yours has. Those become **pending**: they are
-listed by every `check` and `watch` until `log-diff ack` clears them or the team's ledger
-learns them. A desktop notification goes out the first time each one appears, and only then.
+listed by every `check` and `watch`, and hold the pre-commit hook, until they are dealt with.
+A desktop notification goes out when one appears, and only then.
+
+### When a pending signature goes away
+
+| | What happens | Logged again later |
+| :-- | :-- | :-- |
+| `log-diff ack <id>` | Resolved: fixed | Comes back, marked **BACK**, pending again |
+| Not logged for `--expire` (3 days by default) | Resolved on its own | Comes back, marked **BACK**, pending again |
+| `log-diff ack --mute <id>` | Muted: it does not matter | Never reported again |
+| The team's ledger learns it | Known to the team, so not news | Never reported again |
+
+Only pending signatures expire, and the clock runs from the last time one was logged, not
+the first: a failure that keeps happening never expires. A **BACK** is pending like any other
+— it expires the same way, and comes back again if it returns — so being wrong about a fix
+costs one more notification, never a missed one. Whatever a pass reports is shown at least
+once, however old its records are. `--expire 0` (or `LOG_DIFF_EXPIRE=0`) keeps everything
+pending until it is acknowledged. What `check --baseline` took in behaves as muted.
 
 `watch` is the same pass on a timer. `check` needs nothing running beforehand; if `watch` is
 running, `check` finds what it already recorded and does not report it again.

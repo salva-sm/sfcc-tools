@@ -137,6 +137,15 @@ struct LocalArgs {
     /// Print `path:line: error:` lines for an editor's problem matcher instead of cards
     #[arg(long)]
     problems: bool,
+    /// Resolve a pending signature not logged again for this long: 3d, 36h, or 0 for never
+    #[arg(
+        long,
+        value_name = "DURATION",
+        default_value = "3d",
+        env = "LOG_DIFF_EXPIRE",
+        value_parser = parse_span
+    )]
+    expire: Duration,
 }
 
 #[derive(Args)]
@@ -215,6 +224,9 @@ struct AckArgs {
     /// Every pending signature
     #[arg(long, conflicts_with = "ids")]
     all: bool,
+    /// It does not matter: never report it again, even if it keeps being logged
+    #[arg(long)]
+    mute: bool,
     /// Your own ledger
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     state: Option<PathBuf>,
@@ -277,7 +289,7 @@ async fn run(cli: Cli) -> Result<i32> {
         }
         Command::Ack(args) => {
             let state = args.state.unwrap_or_else(default_state);
-            local::acknowledge(&state, &args.ids, args.all)?;
+            local::acknowledge(&state, &args.ids, args.all, args.mute)?;
             Ok(0)
         }
     }
@@ -428,6 +440,7 @@ fn local(args: LocalArgs) -> Result<(Local, Dav)> {
                 here.is_file().then(|| here.to_string_lossy().into_owned())
             }),
         desktop,
+        expire: Some(args.expire).filter(|expire| !expire.is_zero()),
     };
     Ok((local, dav))
 }
@@ -446,7 +459,13 @@ fn team_on_this_machine() -> PathBuf {
     ledger::local_dir().join("dev-ledger.json")
 }
 
+/// Time between passes: never less than a second.
 fn parse_interval(raw: &str) -> Result<Duration> {
+    Ok(parse_span(raw)?.max(Duration::from_secs(1)))
+}
+
+/// `10s`, `2m`, `36h`, `3d`, or plain seconds.
+fn parse_span(raw: &str) -> Result<Duration> {
     let raw = raw.trim();
     let (number, unit) = match raw.find(|c: char| !c.is_ascii_digit()) {
         Some(at) => raw.split_at(at),
@@ -454,26 +473,36 @@ fn parse_interval(raw: &str) -> Result<Duration> {
     };
     let value: u64 = number
         .parse()
-        .with_context(|| format!("{raw:?} is not a duration like 10s or 2m"))?;
+        .with_context(|| format!("{raw:?} is not a duration like 10s, 2m, 36h or 3d"))?;
     let seconds = match unit {
         "s" => value,
         "m" => value * 60,
-        _ => bail!("{raw:?} is not a duration like 10s or 2m"),
+        "h" => value * 3_600,
+        "d" => value * 86_400,
+        _ => bail!("{raw:?} is not a duration like 10s, 2m, 36h or 3d"),
     };
-    Ok(Duration::from_secs(seconds.max(1)))
+    Ok(Duration::from_secs(seconds))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_interval;
+    use super::{parse_interval, parse_span};
     use std::time::Duration;
 
     #[test]
-    fn reads_an_interval_in_seconds_or_minutes() {
-        assert_eq!(parse_interval("10s").unwrap(), Duration::from_secs(10));
-        assert_eq!(parse_interval("2m").unwrap(), Duration::from_secs(120));
-        assert_eq!(parse_interval("15").unwrap(), Duration::from_secs(15));
-        assert!(parse_interval("10h").is_err());
-        assert!(parse_interval("soon").is_err());
+    fn reads_a_duration_in_seconds_minutes_hours_or_days() {
+        assert_eq!(parse_span("10s").unwrap(), Duration::from_secs(10));
+        assert_eq!(parse_span("2m").unwrap(), Duration::from_secs(120));
+        assert_eq!(parse_span("36h").unwrap(), Duration::from_secs(129_600));
+        assert_eq!(parse_span("3d").unwrap(), Duration::from_secs(259_200));
+        assert_eq!(parse_span("15").unwrap(), Duration::from_secs(15));
+        assert!(parse_span("2w").is_err());
+        assert!(parse_span("soon").is_err());
+    }
+
+    #[test]
+    fn an_expiry_of_zero_is_allowed_but_an_interval_is_at_least_a_second() {
+        assert!(parse_span("0").unwrap().is_zero());
+        assert_eq!(parse_interval("0").unwrap(), Duration::from_secs(1));
     }
 }
