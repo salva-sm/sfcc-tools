@@ -136,6 +136,70 @@ pub fn stop(config: &Config) -> Result<Option<u32>> {
     Ok(Some(pid))
 }
 
+/// A detached watcher found by its pid file alone, without the dw.json that
+/// started it - so it can be stopped from anywhere.
+#[derive(Debug, Clone)]
+pub struct Running {
+    /// The sandbox and code version, as the state files are named.
+    pub identity: String,
+    pub pid: u32,
+    /// What it watches, when its status file says.
+    pub description: Option<String>,
+}
+
+/// Every detached watcher still alive, whatever project started it. Pid files
+/// of watchers that died are cleared on the way.
+pub fn running_anywhere() -> Vec<Running> {
+    let Ok(entries) = std::fs::read_dir(state_dir().join("daemons")) else {
+        return Vec::new();
+    };
+    let mut running = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("pid") {
+            continue;
+        }
+        let Some(identity) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let pid = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u32>().ok());
+        match pid {
+            Some(pid) if is_alive(pid) => running.push(Running {
+                identity: identity.to_string(),
+                pid,
+                description: describe_identity(identity),
+            }),
+            _ => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    running.sort_by(|left, right| left.identity.cmp(&right.identity));
+    running
+}
+
+/// `hostname / code version - cartridges folder`, from the watcher's status file.
+fn describe_identity(identity: &str) -> Option<String> {
+    let path = crate::sync_status::status_dir().join(format!("{identity}.json"));
+    let status: crate::sync_status::Status =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    Some(format!(
+        "{} / {} - {}",
+        status.hostname, status.code_version, status.cartridges
+    ))
+}
+
+/// Stop a watcher found by [`running_anywhere`].
+pub fn stop_running(watcher: &Running) -> Result<()> {
+    terminate(watcher.pid)?;
+    let daemons = state_dir().join("daemons");
+    let _ = std::fs::remove_file(daemons.join(format!("{}.pid", watcher.identity)));
+    let _ = std::fs::remove_file(daemons.join(format!("{}.beat", watcher.identity)));
+    Ok(())
+}
+
 pub fn tail(config: &Config, lines: usize) -> Result<String> {
     let path = log_path(config);
     let Ok(contents) = std::fs::read_to_string(&path) else {

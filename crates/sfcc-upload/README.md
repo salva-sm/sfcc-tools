@@ -65,7 +65,8 @@ sfcc-upload push --dry-run      # list what would go up, without touching the sa
 sfcc-upload watch               # push, then upload on every save (foreground)
 sfcc-upload start               # same, detached: survives closing the editor
 sfcc-upload start --reload      # same, and reload the storefront tab after each upload
-sfcc-upload stop                # stop the detached watcher
+sfcc-upload stop                # stop the detached watcher - from anywhere, when only one runs
+sfcc-upload stop --all          # stop every detached watcher, whichever project started it
 sfcc-upload status              # watcher, sandbox and local sync state
 sfcc-upload activity -f         # what the watcher has been uploading
 sfcc-upload logger              # follow the sandbox log, where server-side errors land

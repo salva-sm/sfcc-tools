@@ -100,8 +100,14 @@ enum Command {
         check it with `status`, end it with `stop`."
     )]
     Start(WatchArgs),
-    /// Stop the detached watcher
-    Stop,
+    /// Stop the detached watcher - from anywhere, when only one is running
+    #[command(
+        long_about = "Stop the detached watcher.\n\nInside a project, it stops that project's \
+        watcher. Anywhere else - no dw.json around - it stops the one watcher running, \
+        whichever project started it; with several running it lists them, and `--all` stops \
+        every one."
+    )]
+    Stop(StopArgs),
     /// Show the watcher, the sandbox and the local sync state
     Status,
     /// Show what the background watcher has been doing
@@ -161,6 +167,13 @@ enum Command {
         \x20 sfcc-upload completions powershell | Out-String | Invoke-Expression"
     )]
     Completions(CompletionsArgs),
+}
+
+#[derive(Args)]
+struct StopArgs {
+    /// Every watcher running, whichever project started it
+    #[arg(long)]
+    all: bool,
 }
 
 #[derive(Args)]
@@ -300,6 +313,10 @@ async fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
     logging::configure_color(&cli.color);
+    // A watcher is found by its pid file, so stopping one needs no dw.json.
+    if let Command::Stop(args) = &cli.command {
+        return stop(&cli, args.all);
+    }
     let mut config = Config::load(cli.config.clone(), cli.code_version.clone())?;
     if !cli.cartridge.is_empty() {
         config.cartridge_filter = Some(cli.cartridge.clone());
@@ -345,7 +362,8 @@ async fn run(cli: Cli) -> Result<()> {
             };
             start_detached(&config, spawn)
         }
-        Command::Stop => stop_detached(&config),
+        // Handled before dw.json was read, above.
+        Command::Stop(_) => Ok(()),
         Command::Status => report_status(config, jobs).await,
         Command::Activity(args) => print_logs(&config, &args),
         Command::Activate(args) => activate(&config, args.name).await,
@@ -440,12 +458,78 @@ fn start_detached(config: &Config, spawn: daemon::SpawnArgs) -> Result<()> {
     Ok(())
 }
 
-fn stop_detached(config: &Config) -> Result<()> {
-    match daemon::stop(config)? {
-        Some(pid) => logging::ok(format!("watcher stopped (pid {pid})")),
-        None => logging::info("no watcher was running"),
+/// Stop this project's watcher; outside a project, the one running anywhere.
+fn stop(cli: &Cli, all: bool) -> Result<()> {
+    if all {
+        let running = daemon::running_anywhere();
+        if running.is_empty() {
+            logging::info("no watcher was running");
+        }
+        for watcher in &running {
+            daemon::stop_running(watcher)?;
+            logging::ok(format!(
+                "watcher stopped (pid {}) {}",
+                watcher.pid,
+                name(watcher)
+            ));
+        }
+        return Ok(());
+    }
+
+    match Config::load(cli.config.clone(), cli.code_version.clone()) {
+        Ok(config) => match daemon::stop(&config)? {
+            Some(pid) => logging::ok(format!("watcher stopped (pid {pid})")),
+            None => {
+                logging::info("no watcher was running for this project");
+                let elsewhere = daemon::running_anywhere();
+                if !elsewhere.is_empty() {
+                    logging::info(format!(
+                        "{} running elsewhere - `sfcc-upload stop --all` stops {}",
+                        elsewhere.len(),
+                        match elsewhere.len() {
+                            1 => "it",
+                            _ => "them",
+                        }
+                    ));
+                }
+            }
+        },
+        // An explicit --config that does not load is a mistake to report,
+        // not a reason to go and stop something else.
+        Err(error) if cli.config.is_some() => return Err(error),
+        Err(_) => match daemon::running_anywhere().as_slice() {
+            [] => logging::info("no watcher was running"),
+            [watcher] => {
+                daemon::stop_running(watcher)?;
+                logging::ok(format!(
+                    "watcher stopped (pid {}) {}",
+                    watcher.pid,
+                    name(watcher)
+                ));
+            }
+            several => {
+                logging::warn(format!(
+                    "no dw.json here, and {} watchers are running:",
+                    several.len()
+                ));
+                for watcher in several {
+                    crate::out!("  pid {:<7} {}", watcher.pid, name(watcher));
+                }
+                bail!(
+                    "run `sfcc-upload stop` inside the project, or `sfcc-upload stop --all` to stop every one"
+                );
+            }
+        },
     }
     Ok(())
+}
+
+/// What a watcher found without its dw.json watches, as far as is known.
+fn name(watcher: &daemon::Running) -> String {
+    watcher
+        .description
+        .clone()
+        .unwrap_or_else(|| watcher.identity.clone())
 }
 
 async fn activate(config: &Config, name: Option<String>) -> Result<()> {
