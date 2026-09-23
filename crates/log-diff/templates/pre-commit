@@ -1,0 +1,13 @@
+# log-diff: hold the commit while the sandbox logs errors nobody had seen.
+# Paste into .githooks/pre-commit. It does its own pass, so nothing needs to
+# be running beforehand. Only exit status 1 (something pending) blocks the
+# commit: an unreachable sandbox, a missing dw.json or no log-diff at all let
+# it through. `log-diff ack` clears what was dealt with; `git commit
+# --no-verify` skips the check once.
+if command -v log-diff >/dev/null 2>&1; then
+  log_diff_status=0
+  log-diff check --fail-on-new --no-desktop || log_diff_status=$?
+  if [ "$log_diff_status" -eq 1 ]; then
+    exit 1
+  fi
+fi

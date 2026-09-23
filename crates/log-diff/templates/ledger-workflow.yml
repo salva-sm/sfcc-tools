@@ -1,0 +1,92 @@
+# .github/workflows/log-diff.yml in the sfcc-log-ledger repository.
+#
+# Runs on every DEV deploy (a repository_dispatch sent by Jenkins) and on a
+# schedule in between, because a deploy's errors only show up once somebody
+# uses what it shipped. Each run reads the DEV log since the last one, commits
+# ledger.json, and posts what is new to Teams.
+#
+# Secrets:
+#   SFCC_DEV_HOSTNAME                     the DEV instance host
+#   SFCC_DEV_USERNAME, SFCC_DEV_PASSWORD  a Business Manager user and its WebDAV access key
+#     - or -
+#   SFCC_DEV_CLIENT_ID, SFCC_DEV_CLIENT_SECRET  an API client with WebDAV read on /logs
+#   TEAMS_WEBHOOK                         a Teams Workflows (or incoming) webhook URL
+name: log-diff
+
+on:
+  repository_dispatch:
+    types: [sfcc-deploy]
+  schedule:
+    # Every 30 minutes through the working day, Monday to Friday (UTC).
+    - cron: "*/30 6-19 * * 1-5"
+  workflow_dispatch:
+
+# Two runs writing the ledger at once would each lose the other's update.
+concurrency:
+  group: ledger
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install log-diff
+        run: |
+          curl -fsSL https://github.com/salva-sm/sfcc-tools/releases/latest/download/log-diff-x86_64-linux.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      # Outside the checkout, so it can never be committed. dw.json needs a
+      # cartridges folder next to it even though nothing is uploaded.
+      - name: dw.json from secrets
+        env:
+          HOST: ${{ secrets.SFCC_DEV_HOSTNAME }}
+          USERNAME: ${{ secrets.SFCC_DEV_USERNAME }}
+          PASSWORD: ${{ secrets.SFCC_DEV_PASSWORD }}
+          CLIENT_ID: ${{ secrets.SFCC_DEV_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.SFCC_DEV_CLIENT_SECRET }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/sfcc/cartridges"
+          jq -n --arg hostname "$HOST" --arg username "$USERNAME" --arg password "$PASSWORD" \
+                --arg id "$CLIENT_ID" --arg secret "$CLIENT_SECRET" \
+            '{hostname: $hostname}
+             + (if $username != "" then {username: $username, password: $password} else {} end)
+             + (if $id != "" then {"client-id": $id, "client-secret": $secret} else {} end)' \
+            > "$RUNNER_TEMP/sfcc/dw.json"
+
+      - name: Read the DEV log
+        env:
+          SHA: ${{ github.event.client_payload.sha }}
+          BUILD: ${{ github.event.client_payload.build_number }}
+          DEPLOYED_AT: ${{ github.event.client_payload.deployed_at }}
+          # Where the suspects of a deploy can be read. Adjust to the SFCC repository.
+          LOG_DIFF_COMPARE_URL: https://github.com/<org>/<sfcc-repo>/compare/{from}...{to}
+        run: |
+          args=()
+          [ -n "$SHA" ] && args+=(--sha "$SHA")
+          [ -n "$SHA" ] && [ -n "$BUILD" ] && args+=(--build "$BUILD")
+          [ -n "$SHA" ] && [ -n "$DEPLOYED_AT" ] && args+=(--at "$DEPLOYED_AT")
+          log-diff run --config "$RUNNER_TEMP/sfcc/dw.json" --state ledger.json \
+            --report "$RUNNER_TEMP/new.json" "${args[@]}"
+
+      - name: Commit the ledger
+        env:
+          SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          git config user.name "log-diff"
+          git config user.email "log-diff@users.noreply.github.com"
+          git add ledger.json
+          if ! git diff --cached --quiet; then
+            git commit -m "ledger: ${SHA:-scheduled read}"
+            git push
+          fi
+
+      - name: Tell Teams
+        env:
+          LOG_DIFF_WEBHOOK: ${{ secrets.TEAMS_WEBHOOK }}
+        run: log-diff notify --report "$RUNNER_TEMP/new.json"

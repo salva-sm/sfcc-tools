@@ -34,7 +34,7 @@ jobs:
       # is merged into every combination, and the last one wins — which
       # silently collapses ten jobs into two.
       matrix:
-        crate: [isml-lsp, sfcc-upload, sfcc-dap]
+        crate: [isml-lsp, log-diff, sfcc-upload, sfcc-dap]
         platform:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: x86_64-linux }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: aarch64-linux }
@@ -93,6 +93,7 @@ jobs:
         with:
           files: |
             isml-lsp-*
+            log-diff-*
             sfcc-upload-*
             sfcc-dap-*
           generate_release_notes: true
