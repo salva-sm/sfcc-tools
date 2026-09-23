@@ -1801,6 +1801,8 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "clap",
+ "clap_complete",
  "reqwest",
  "serde",
  "serde_json",

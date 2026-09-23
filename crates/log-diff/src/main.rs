@@ -1,5 +1,4 @@
 mod ci;
-mod completions;
 mod finding;
 mod ledger;
 mod local;
@@ -31,12 +30,15 @@ Examples:
   log-diff check --fail-on-new         the same, exiting 1 while anything is pending (a git hook)
   log-diff watch                       the same pass every 10s, until Ctrl-C
   log-diff ack                         list what is pending; `ack <id>` or `ack --all` to clear it
+  log-diff run --config dev/dw.json    read DEV, keeping the team's ledger on this machine
   log-diff run --state ledger.json --sha 9451cff --build 4821
                                        CI: record a deploy and update the team's ledger
   log-diff notify --report new.json    CI: post what `run --report` found to Teams
 
 The team's ledger comes from --shared or LOG_DIFF_SHARED: a path to a clone of the
-ledger repository, or a raw URL (with LOG_DIFF_TOKEN or GITHUB_TOKEN when it is private).";
+ledger repository, or a raw URL (with LOG_DIFF_TOKEN or GITHUB_TOKEN when it is private).
+With neither, the one `run` keeps on this machine is used, if there is one; with none at
+all, check and watch still work, comparing against what you have seen.";
 
 #[derive(Parser)]
 #[command(
@@ -81,9 +83,9 @@ enum Command {
     /// Print the shell completion script: bash, zsh, fish, powershell or elvish
     #[command(
         long_about = "Print the shell completion script for SHELL on stdout.\n\n\
-        Load it from your shell's profile - in ~/.bashrc:\n\n\
-        \x20 eval \"$(log-diff completions bash)\"\n\n\
-        or in the PowerShell $PROFILE:\n\n\
+        Git Bash, bash with bash-completion and fish need nothing: every run of log-diff \
+        keeps the script where they look. For zsh, add `eval \"$(log-diff completions zsh)\"` \
+        to ~/.zshrc; for PowerShell, this to the $PROFILE:\n\n\
         \x20 log-diff completions powershell | Out-String | Invoke-Expression"
     )]
     Completions(CompletionsArgs),
@@ -113,7 +115,8 @@ struct LocalArgs {
     /// Your own ledger (default: log-diff/local-ledger.json in the user config directory)
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     state: Option<PathBuf>,
-    /// The team's ledger: a path, or a URL
+    /// The team's ledger: a path, or a URL (default: the one `run` keeps on this machine,
+    /// when there is one)
     #[arg(long, value_name = "PATH|URL", env = "LOG_DIFF_SHARED")]
     shared: Option<String>,
     /// No desktop notification, only the terminal
@@ -146,9 +149,10 @@ struct WatchArgs {
 struct RunArgs {
     #[command(flatten)]
     instance: InstanceArgs,
-    /// The team's ledger, in a checkout of its repository
+    /// The team's ledger: ledger.json in a checkout of its repository on CI (default:
+    /// log-diff/dev-ledger.json in the user config directory, which check and watch read)
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
-    state: PathBuf,
+    state: Option<PathBuf>,
     /// The commit just deployed
     #[arg(long, value_name = "SHA")]
     sha: Option<String>,
@@ -174,14 +178,15 @@ struct RunArgs {
 
 #[derive(Args)]
 struct NotifyArgs {
-    /// Teams webhook (a Workflows webhook, or a legacy incoming webhook)
+    /// Teams webhook (a Workflows webhook, or a legacy incoming webhook). Without one,
+    /// nothing is sent and nothing fails
     #[arg(
         long,
         value_name = "URL",
         env = "LOG_DIFF_WEBHOOK",
         hide_env_values = true
     )]
-    webhook: String,
+    webhook: Option<String>,
     /// The report `run --report` wrote
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     report: PathBuf,
@@ -202,6 +207,8 @@ struct AckArgs {
 
 #[tokio::main]
 async fn main() {
+    // Before parsing, which exits on --help and --version: any run counts.
+    sfcc_core::completions::install::<Cli>("log-diff", env!("CARGO_PKG_VERSION"));
     match run(Cli::parse()).await {
         Ok(code) => std::process::exit(code),
         Err(error) => {
@@ -226,12 +233,19 @@ async fn run(cli: Cli) -> Result<i32> {
                 say("nothing new to notify");
                 return Ok(0);
             }
-            notify::teams(&args.webhook, &report).await?;
+            let Some(webhook) = args.webhook.filter(|webhook| !webhook.trim().is_empty()) else {
+                say(&format!(
+                    "{} new signature(s), but no Teams webhook (LOG_DIFF_WEBHOOK) - nothing sent",
+                    report.new.len()
+                ));
+                return Ok(0);
+            };
+            notify::teams(&webhook, &report).await?;
             say(&format!("posted {} new signature(s)", report.new.len()));
             Ok(0)
         }
         Command::Completions(args) => {
-            completions::print::<Cli>(args.shell, "log-diff");
+            sfcc_core::completions::print::<Cli>(args.shell, "log-diff");
             Ok(0)
         }
         Command::Ack(args) => {
@@ -283,7 +297,7 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
 
     let options = ci::RunOptions {
         levels: parse_levels(&args.instance.level),
-        state: args.state,
+        state: args.state.unwrap_or_else(team_on_this_machine),
         sha: args.sha,
         build: args.build,
         at: args.at,
@@ -348,7 +362,13 @@ fn local(args: LocalArgs) -> Result<(Local, Dav)> {
         config,
         levels: parse_levels(&args.instance.level),
         state: args.state.unwrap_or_else(default_state),
-        shared: args.shared.filter(|shared| !shared.trim().is_empty()),
+        shared: args
+            .shared
+            .filter(|shared| !shared.trim().is_empty())
+            .or_else(|| {
+                let here = team_on_this_machine();
+                here.is_file().then(|| here.to_string_lossy().into_owned())
+            }),
         desktop,
     };
     Ok((local, dav))
@@ -356,6 +376,12 @@ fn local(args: LocalArgs) -> Result<(Local, Dav)> {
 
 fn default_state() -> PathBuf {
     ledger::local_dir().join("local-ledger.json")
+}
+
+/// With no ledger repository yet, `run` against DEV from this machine keeps
+/// the team's ledger here, and `check` and `watch` pick it up on their own.
+fn team_on_this_machine() -> PathBuf {
+    ledger::local_dir().join("dev-ledger.json")
 }
 
 fn parse_interval(raw: &str) -> Result<Duration> {

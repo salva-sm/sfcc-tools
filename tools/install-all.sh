@@ -26,6 +26,8 @@ esac
 mkdir -p "$DIR"
 for tool in "$@"; do
   curl -fsSL "$BASE/$tool-$arch-$os.tar.gz" | tar -xz -C "$DIR"
+  # A first run puts the tab completion where the shell looks for it.
+  case "$tool" in sfcc-upload | log-diff) "$DIR/$tool" --version >/dev/null 2>&1 || true ;; esac
   echo "installed $tool"
 done
 

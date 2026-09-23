@@ -11,6 +11,9 @@
 
 #![warn(missing_docs)]
 
+/// Tab completion for the command-line tools.
+#[cfg(feature = "completions")]
+pub mod completions;
 /// The sandbox credentials in `dw.json`, and what may be written to.
 pub mod config;
 /// The instance log: records, a mark, and what was written since.

@@ -29,27 +29,30 @@ To build it yourself instead, see [Building](#building).
 
 ### Tab completion
 
-`sfcc-upload completions <shell>` prints a completion script for bash, zsh, fish, PowerShell or
-elvish, generated from the command definitions themselves, so it covers every command and
-flag and never falls behind. Load it once from your shell's profile:
+Nothing to set up. Every run of `sfcc-upload` — `sfcc-upload --version` is enough — makes sure its
+completion script sits where the shell already looks, and rewrites it only when a new
+version changes it:
+
+| Shell | Where | |
+| :-- | :-- | :-- |
+| Git Bash | `~/bash_completion.d/sfcc-upload.bash` | Sourced by every new Git Bash terminal. It also turns on `completion_strip_exe`, so `sfcc-u` Tab completes to `sfcc-upload`, not `sfcc-upload.exe` |
+| bash on Linux or macOS | `~/.local/share/bash-completion/completions/sfcc-upload` | Loaded on first use by the bash-completion package |
+| fish | `~/.config/fish/completions/sfcc-upload.fish` | Only when fish is set up |
+
+Open a new terminal after the first run. zsh and PowerShell have no such folder, so there
+it takes one line in the profile:
 
 ```bash
-# ~/.bashrc (Git Bash included) or ~/.zshrc - use `zsh` in the latter
-eval "$(sfcc-upload completions bash)"
+eval "$(sfcc-upload completions zsh)"                               # ~/.zshrc
 ```
 
 ```powershell
-# $PROFILE
-sfcc-upload completions powershell | Out-String | Invoke-Expression
+sfcc-upload completions powershell | Out-String | Invoke-Expression  # $PROFILE
 ```
 
-```fish
-# ~/.config/fish/config.fish
-sfcc-upload completions fish | source
-```
-
-Open a new terminal afterwards. In Git Bash the command name itself completes to
-`sfcc-upload.exe`; the script registers itself under that name too.
+The script comes from the command definitions themselves, so every command, flag and fixed
+value completes, and none falls behind. `SFCC_TOOLS_NO_COMPLETIONS=1` stops the files being
+written; delete them to remove it.
 
 ## Usage
 
@@ -75,7 +78,7 @@ sfcc-upload rm <PATH>           # delete something left behind up there
 sfcc-upload clean               # delete this project's cartridges from the code version
 sfcc-upload activate [NAME]     # make a code version the active one
 sfcc-upload install-hook        # push automatically after a branch switch
-sfcc-upload completions bash    # the tab completion script, see Install
+sfcc-upload completions zsh     # the tab completion script for zsh or PowerShell, see Install
 ```
 
 `sfcc-upload --help` lists the commands, `sfcc-upload help <command>` explains one.
