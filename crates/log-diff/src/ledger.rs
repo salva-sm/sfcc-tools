@@ -76,6 +76,60 @@ pub struct Known {
     /// taken in with a baseline - is never reported again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_at: Option<String>,
+    /// Local only: muted on purpose, as opposed to taken in with a baseline.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub muted: bool,
+}
+
+/// Where a signature stands in a developer's own ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Standing {
+    /// Reported, and not dealt with yet.
+    Pending,
+    /// Acknowledged or expired; reported again if it is logged again.
+    Resolved,
+    /// Muted on purpose: never reported again.
+    Muted,
+    /// Taken in with a baseline, or dealt with before log-diff kept track of
+    /// how: never reported again.
+    Baseline,
+}
+
+impl Known {
+    /// Where it stands.
+    pub fn standing(&self) -> Standing {
+        match (self.pending, self.muted, self.resolved_at.is_some()) {
+            (true, _, _) => Standing::Pending,
+            (_, true, _) => Standing::Muted,
+            (_, _, true) => Standing::Resolved,
+            _ => Standing::Baseline,
+        }
+    }
+
+    /// Whether it is the kind of failure a shopper sees as an error page: an
+    /// uncaught `error` or a `fatal` - which SFCC answers with a 500 - or a
+    /// record that says 500 itself.
+    pub fn serious(&self) -> bool {
+        serious(&self.label, &self.example)
+    }
+}
+
+/// See [`Known::serious`].
+pub fn serious(label: &str, example: &str) -> bool {
+    let head = example.lines().next().unwrap_or_default();
+    matches!(label, "error" | "fatal")
+        || head.contains(" 500")
+        || head.contains("Internal Server Error")
+}
+
+/// Most important first: what shows as a 500, then what happened most, then
+/// what happened last.
+pub fn by_importance(left: &Known, right: &Known) -> std::cmp::Ordering {
+    right
+        .serious()
+        .cmp(&left.serious())
+        .then(right.count.cmp(&left.count))
+        .then(right.last_seen.cmp(&left.last_seen))
 }
 
 /// What recording a finding in a developer's own ledger made of it.
@@ -207,6 +261,7 @@ impl Ledger {
                 pending,
                 back: false,
                 resolved_at: None,
+                muted: false,
             },
         );
         true

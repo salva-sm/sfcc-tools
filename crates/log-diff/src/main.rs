@@ -8,6 +8,7 @@ mod output;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueHint};
+use ledger::Standing;
 use local::{Local, reachable};
 use output::{Badge, Card, Tone, status};
 use sfcc_core::config::Config;
@@ -32,6 +33,8 @@ Examples:
   log-diff check --fail-on-new         the same, exiting 1 while anything is pending (a git hook)
   log-diff watch                       the same pass every 10s, until Ctrl-C
   log-diff ack                         list what is pending; `ack <id>` or `ack --all` to clear it
+  log-diff list --muted --baseline     what is never reported, most important first
+  log-diff unmute <id>                 hear of a muted one again
   log-diff run --config dev/dw.json    read DEV, keeping the team's ledger on this machine
   log-diff run --state ledger.json --sha 9451cff --build 4821
                                        CI: record a deploy and update the team's ledger
@@ -92,6 +95,16 @@ enum Command {
     Notify(NotifyArgs),
     /// List pending signatures, or mark them as dealt with
     Ack(AckArgs),
+    /// List signatures by standing - pending, resolved, muted, baseline - most important first
+    #[command(
+        long_about = "List the signatures in your own ledger by standing, the most important \
+        first: what shows as an error page - an uncaught error or a fatal, which SFCC answers \
+        with a 500, or a message that says 500 - then what happened most.\n\n\
+        With no flag every standing is listed; each flag narrows it down, and they combine."
+    )]
+    List(ListArgs),
+    /// Hear of muted signatures again, or start watching baseline ones
+    Unmute(UnmuteArgs),
     /// Print the shell completion script: bash, zsh, fish, powershell or elvish
     #[command(
         long_about = "Print the shell completion script for SHELL on stdout.\n\n\
@@ -232,6 +245,41 @@ struct AckArgs {
     state: Option<PathBuf>,
 }
 
+#[derive(Args)]
+struct ListArgs {
+    /// Reported and not dealt with
+    #[arg(long)]
+    pending: bool,
+    /// Acknowledged or expired: reported again if logged again
+    #[arg(long)]
+    resolved: bool,
+    /// Muted on purpose: never reported again
+    #[arg(long)]
+    muted: bool,
+    /// Taken in with a baseline: known from the start, never reported
+    #[arg(long)]
+    baseline: bool,
+    /// Signatures shown per standing, 0 for all
+    #[arg(long, short = 'n', value_name = "N", default_value_t = 10)]
+    limit: usize,
+    /// Your own ledger
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    state: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct UnmuteArgs {
+    /// Signature ids, or the start of them - muted or baseline ones
+    #[arg(value_name = "ID", required_unless_present = "all")]
+    ids: Vec<String>,
+    /// Every muted signature (not the baseline ones)
+    #[arg(long, conflicts_with = "ids")]
+    all: bool,
+    /// Your own ledger
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    state: Option<PathBuf>,
+}
+
 #[tokio::main]
 async fn main() {
     // Before parsing, which exits on --help and --version: any run counts.
@@ -285,6 +333,25 @@ async fn run(cli: Cli) -> Result<i32> {
         }
         Command::Completions(args) => {
             sfcc_core::completions::print::<Cli>(args.shell, "log-diff");
+            Ok(0)
+        }
+        Command::List(args) => {
+            let wanted: Vec<Standing> = [
+                (args.pending, Standing::Pending),
+                (args.resolved, Standing::Resolved),
+                (args.muted, Standing::Muted),
+                (args.baseline, Standing::Baseline),
+            ]
+            .into_iter()
+            .filter_map(|(asked, standing)| asked.then_some(standing))
+            .collect();
+            let state = args.state.unwrap_or_else(default_state);
+            local::list(&state, &wanted, args.limit)?;
+            Ok(0)
+        }
+        Command::Unmute(args) => {
+            let state = args.state.unwrap_or_else(default_state);
+            local::unmute(&state, &args.ids, args.all)?;
             Ok(0)
         }
         Command::Ack(args) => {
@@ -408,6 +475,7 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
             first_seen: &item.first_seen,
             last_seen: None,
             badge: Badge::New,
+            serious: ledger::serious(&item.label, &item.example),
             deploy,
         };
         println!(

@@ -100,6 +100,8 @@ log-diff check                    one pass over the sandbox log: report what is 
 log-diff check --fail-on-new      the same, exiting 1 while anything is pending
 log-diff watch [--interval 10s]   the same pass on a timer
 log-diff ack [ID... | --all]      list what is pending, or resolve it; --mute to never hear of it again
+log-diff list [--pending --resolved --muted --baseline]   everything, most important first
+log-diff unmute <ID... | --all>   hear of a muted signature again
 log-diff run [--state ledger.json] [--sha SHA --build N] read DEV, update the team's ledger
              [--baseline-days N]                         first run: learn N days of history
 log-diff notify --report new.json                        CI: post the report to Teams
@@ -214,7 +216,7 @@ A desktop notification goes out when one appears, and only then.
 | :-- | :-- | :-- |
 | `log-diff ack <id>` | Resolved: fixed | Comes back, marked **BACK**, pending again |
 | Not logged for `--expire` (3 days by default) | Resolved on its own | Comes back, marked **BACK**, pending again |
-| `log-diff ack --mute <id>` | Muted: it does not matter | Never reported again |
+| `log-diff ack --mute <id>` | Muted: it does not matter | Never reported again, until `log-diff unmute <id>` |
 | The team's ledger learns it | Known to the team, so not news | Never reported again |
 
 Only pending signatures expire, and the clock runs from the last time one was logged, not
@@ -223,6 +225,25 @@ the first: a failure that keeps happening never expires. A **BACK** is pending l
 costs one more notification, never a missed one. Whatever a pass reports is shown at least
 once, however old its records are. `--expire 0` (or `LOG_DIFF_EXPIRE=0`) keeps everything
 pending until it is acknowledged. What `check --baseline` took in behaves as muted.
+
+`log-diff unmute <id>` takes a muted signature back — or a baseline one, to start watching
+it — and treats it as resolved: the next time it is logged, it comes back. `--all` unmutes
+every muted one, never the baseline.
+
+### Listing
+
+```console
+$ log-diff list                       # every standing
+$ log-diff list --muted --baseline    # what is never reported
+$ log-diff list --pending -n 0        # everything pending, not only the first ten
+```
+
+Signatures are grouped by standing — pending, resolved, muted, baseline — and listed most
+important first: what shows as an error page comes before anything else, then what happened
+most, then what happened last. An error page is an uncaught `error` or a `fatal`, which SFCC
+answers with a 500, or any record whose message says `500` or `Internal Server Error`; its
+card carries a red **500**. `check` and `watch` order what is pending the same way, after
+what is new.
 
 `watch` is the same pass on a timer. `check` needs nothing running beforehand; if `watch` is
 running, `check` finds what it already recorded and does not report it again.
