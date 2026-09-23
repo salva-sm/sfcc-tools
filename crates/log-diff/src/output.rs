@@ -19,6 +19,7 @@ const YELLOW: &str = "\x1b[33m";
 const MAGENTA: &str = "\x1b[35m";
 const CYAN: &str = "\x1b[36m";
 const NEW_BADGE: &str = "\x1b[1;97;41m";
+const BACK_BADGE: &str = "\x1b[1;97;45m";
 /// Longest message on a card before it is cut.
 const MESSAGE_CHARS: usize = 160;
 
@@ -115,6 +116,8 @@ fn stamp() -> String {
 pub enum Badge {
     /// First seen in this pass.
     New,
+    /// Resolved before, and logged again in this pass.
+    Back,
     /// Reported before, not acknowledged.
     Pending,
     /// Nothing to mark.
@@ -167,6 +170,7 @@ pub fn card(card: &Card) -> String {
     meta.push(format!("x{}", card.count));
     let badge = match card.badge {
         Badge::New => format!("  {}", paint(NEW_BADGE, " NEW ")),
+        Badge::Back => format!("  {}", paint(BACK_BADGE, " BACK ")),
         Badge::Pending => format!("  {}", paint(YELLOW, "pending")),
         Badge::None => String::new(),
     };

@@ -68,6 +68,25 @@ pub struct Known {
     /// Local only: reported, and not acknowledged yet.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pending: bool,
+    /// Local only: pending again, after it had been resolved.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub back: bool,
+    /// Local only: when it was acknowledged or expired. Logged again after
+    /// that, it is back. A signature neither pending nor resolved - muted, or
+    /// taken in with a baseline - is never reported again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<String>,
+}
+
+/// What recording a finding in a developer's own ledger made of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Seen {
+    /// Never seen before.
+    New,
+    /// Resolved, and logged again since.
+    Back,
+    /// Already pending, muted, or taken in with a baseline.
+    Known,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -186,9 +205,60 @@ impl Ledger {
                 count: finding.count,
                 first_deploy_sha: deploy.map(str::to_string),
                 pending,
+                back: false,
+                resolved_at: None,
             },
         );
         true
+    }
+
+    /// Count a finding in a developer's own ledger, where a resolved signature
+    /// logged again after it was resolved is back. With `baseline`, a new one
+    /// is taken in as known and never reported.
+    pub fn observe_local(&mut self, finding: &Finding, baseline: bool) -> Seen {
+        let Some(known) = self.known_signatures.get_mut(&finding.signature.id) else {
+            self.observe(finding, None, !baseline);
+            return match baseline {
+                true => Seen::Known,
+                false => Seen::New,
+            };
+        };
+
+        known.count += finding.count;
+        if finding.last > known.last_seen {
+            known.last_seen = finding.last.clone();
+        }
+        // Both moments are whole seconds, so the same second counts as after:
+        // a return missed is worse than one reported a second early.
+        let returned = !known.pending
+            && known
+                .resolved_at
+                .as_ref()
+                .is_some_and(|resolved| finding.last >= *resolved);
+        if !returned {
+            return Seen::Known;
+        }
+        known.pending = true;
+        known.back = true;
+        known.resolved_at = None;
+        Seen::Back
+    }
+
+    /// Resolve every pending signature last logged before `cutoff`, except
+    /// the ones in `spared`, just reported and not seen by anyone yet. Returns
+    /// how many. Only pending ones expire: what is resolved or muted stays so.
+    pub fn expire(&mut self, cutoff: &str, now: &str, spared: &[&str]) -> usize {
+        let mut expired = 0;
+        for (id, known) in self.known_signatures.iter_mut() {
+            if known.pending && known.last_seen.as_str() < cutoff && !spared.contains(&id.as_str())
+            {
+                known.pending = false;
+                known.back = false;
+                known.resolved_at = Some(now.to_string());
+                expired += 1;
+            }
+        }
+        expired
     }
 
     /// Record a deploy going live at `at`.
