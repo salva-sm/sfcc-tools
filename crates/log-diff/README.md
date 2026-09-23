@@ -166,14 +166,61 @@ commit through. `git commit --no-verify` skips it once.
 
 ## On CI
 
-The ledger lives in a repository of its own. Its workflow is
+The ledger lives in a repository of its own, `sfcc-log-ledger` say. Its workflow is
 [`templates/ledger-workflow.yml`](templates/ledger-workflow.yml): it downloads `log-diff`
-from the latest release, writes a `dw.json` from secrets outside the checkout, runs
-`log-diff run`, commits `ledger.json` and calls `log-diff notify`.
+from the latest release of this repository, writes a `dw.json` from secrets outside the
+checkout, runs `log-diff run`, commits `ledger.json` and calls `log-diff notify`.
 
 It runs on a `repository_dispatch` that Jenkins sends after the DEV deploy —
-[`templates/Jenkinsfile.snippet`](templates/Jenkinsfile.snippet) — and on a schedule in
-between.
+[`templates/Jenkinsfile.snippet`](templates/Jenkinsfile.snippet) — on a schedule in
+between, and by hand from the Actions tab.
+
+### Setting up the ledger repository
+
+1. **Create it private.** It holds scrubbed error messages from the instance, and nobody
+   outside the team needs to read it. It needs no `ledger.json` to start with: the first
+   run writes one.
+2. **Add the workflow** as `.github/workflows/log-diff.yml`, copied from the template.
+   `LOG_DIFF_COMPARE_URL` in it points at the repository the SFCC code lives in, with
+   `{from}` and `{to}` for the two shas; it only adds a link to the Teams card, so drop the
+   line if that repository has no compare page.
+3. **Add the secrets**, under *Settings → Secrets and variables → Actions*:
+
+   | Secret | |
+   | :-- | :-- |
+   | `SFCC_DEV_HOSTNAME` | The DEV instance host, without `https://` |
+   | `SFCC_DEV_USERNAME`, `SFCC_DEV_PASSWORD` | A Business Manager user and its WebDAV access key (*the user's profile → Access Keys*, scope *WebDAV File Access and UX Studio*) |
+   | `SFCC_DEV_CLIENT_ID`, `SFCC_DEV_CLIENT_SECRET` | Instead of the two above: an Account Manager API client, given read access to `/logs` in *Administration → Organization → WebDAV Client Permissions* |
+   | `TEAMS_WEBHOOK` | A Teams Workflows webhook (or a legacy incoming webhook). Without it, every step but the last one works |
+
+   Reading the log never writes to the instance, so a shared DEV host is fine here even
+   though `sfcc-upload` refuses to push to one.
+4. **Let the workflow push.** It asks for `contents: write`; an organisation that caps
+   Actions at read-only needs *Settings → Actions → Workflow permissions → Read and write*.
+5. **Tell Jenkins where to dispatch.** The snippet posts to
+   `https://api.github.com/repos/<owner>/sfcc-log-ledger/dispatches` — replace `<owner>` with
+   the account or organisation holding the repository. It needs a token stored in Jenkins as
+   a secret text credential: a fine-grained token scoped to that one repository with
+   *Contents: read and write*, which is what `repository_dispatch` asks for. Put the stage
+   right after the DEV deploy, not at the end of the pipeline that goes on to STG and PRD.
+6. **Give developers read access**, if they are to use the team's ledger locally.
+   `LOG_DIFF_SHARED` is the raw URL of the file,
+   `https://raw.githubusercontent.com/<owner>/sfcc-log-ledger/main/ledger.json`, and a private
+   repository needs a token in each developer's environment, `GITHUB_TOKEN` or
+   `LOG_DIFF_TOKEN` — a fine-grained one with *Contents: read-only* on that repository is
+   enough. Without access, `check` and `watch` still work; they just cannot leave out what
+   the team already knows.
+
+Nothing else needs to see the repository. `log-diff` itself is downloaded from this one,
+which is public, so the workflow needs no token for that.
+
+The first run — by hand from the Actions tab is fine — has nothing to compare against. It
+learns every signature in today's DEV log (since 00:00 UTC), commits them to `ledger.json`
+and reports nothing. From the second run on, only signatures missing from the ledger are
+reported. A run started by hand or by the schedule records no deploy; only the dispatch from
+Jenkins does.
+
+### Laying blame
 
 Several merges can land between two deploys, and a deploy's errors only show up once somebody
 uses what it shipped, often after the next deploy has been dispatched. So `run` does not blame
@@ -182,9 +229,6 @@ the deploy that triggered it. Each new signature goes to the deploy that was liv
 `--compare-url` (or `LOG_DIFF_COMPARE_URL`), with `{from}` and `{to}` for the two shas, turns
 that into a link on the Teams card. Pass `--at` when the deploy went live noticeably before
 the run.
-
-The first run has nothing to compare against, and learns what the instance already logs today
-instead of reporting all of it.
 
 `notify` posts an Adaptive Card, which both Teams Workflows webhooks and the older incoming
 webhooks accept. The webhook comes from `--webhook` or `LOG_DIFF_WEBHOOK`. A report with

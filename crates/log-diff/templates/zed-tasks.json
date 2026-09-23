@@ -7,7 +7,7 @@
     "command": "log-diff",
     "args": ["watch"],
     "env": {
-      "LOG_DIFF_SHARED": "https://raw.githubusercontent.com/<org>/sfcc-log-ledger/main/ledger.json"
+      "LOG_DIFF_SHARED": "https://raw.githubusercontent.com/<owner>/sfcc-log-ledger/main/ledger.json"
     },
     "use_new_terminal": false,
     "allow_concurrent_runs": false,

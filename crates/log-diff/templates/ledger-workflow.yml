@@ -5,6 +5,8 @@
 # uses what it shipped. Each run reads the DEV log since the last one, commits
 # ledger.json, and posts what is new to Teams.
 #
+# Setup, secrets included: crates/log-diff/README.md in salva-sm/sfcc-tools.
+#
 # Secrets:
 #   SFCC_DEV_HOSTNAME                     the DEV instance host
 #   SFCC_DEV_USERNAME, SFCC_DEV_PASSWORD  a Business Manager user and its WebDAV access key
@@ -64,8 +66,9 @@ jobs:
           SHA: ${{ github.event.client_payload.sha }}
           BUILD: ${{ github.event.client_payload.build_number }}
           DEPLOYED_AT: ${{ github.event.client_payload.deployed_at }}
-          # Where the suspects of a deploy can be read. Adjust to the SFCC repository.
-          LOG_DIFF_COMPARE_URL: https://github.com/<org>/<sfcc-repo>/compare/{from}...{to}
+          # Where the suspects of a deploy can be read: the repository holding the
+          # SFCC code. Optional - it only adds a link to the Teams card.
+          LOG_DIFF_COMPARE_URL: https://github.com/<owner>/<sfcc-repo>/compare/{from}...{to}
         run: |
           args=()
           [ -n "$SHA" ] && args+=(--sha "$SHA")
