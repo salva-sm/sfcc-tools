@@ -13,7 +13,7 @@
 //! one, or one taken in with a baseline, is never reported again.
 
 use crate::finding::{Finding, findings};
-use crate::ledger::{Known, Ledger, Seen, load_shared, local_dir};
+use crate::ledger::{Known, Ledger, Seen, Standing, by_importance, load_shared, local_dir};
 use crate::notify::{self, headline};
 use crate::output::{self, Badge, Card, Tone, status};
 use anyhow::{Result, bail};
@@ -205,9 +205,15 @@ impl Local {
                 ),
             }
 
-            // What turned up in this pass first, then what is still waiting.
+            // What turned up in this pass first, then what is still waiting;
+            // within each, the most important first.
             let mut shown: Vec<&(String, Known)> = outcome.pending.iter().collect();
-            shown.sort_by_key(|(id, _)| outcome.badge(id) == Badge::Pending);
+            shown.sort_by(|(left_id, left), (right_id, right)| {
+                let waiting = |id: &str| outcome.badge(id) == Badge::Pending;
+                waiting(left_id)
+                    .cmp(&waiting(right_id))
+                    .then(by_importance(left, right))
+            });
             for (id, known) in shown {
                 println!();
                 println!("{}", output::card(&card_of(id, known, outcome.badge(id))));
@@ -408,6 +414,7 @@ pub fn acknowledge(state: &Path, ids: &[String], all: bool, mute: bool) -> Resul
         {
             known.pending = false;
             known.back = false;
+            known.muted = mute;
             known.resolved_at = match mute {
                 true => None,
                 false => Some(resolved_at.clone()),
@@ -426,6 +433,109 @@ pub fn acknowledge(state: &Path, ids: &[String], all: bool, mute: bool) -> Resul
     Ok(())
 }
 
+/// List signatures by standing, the most important first: what shows as a
+/// 500, then what happened most. No standings lists them all.
+pub fn list(state: &Path, wanted: &[Standing], limit: usize) -> Result<()> {
+    let mine = Ledger::load(state)?;
+    let standings = match wanted.is_empty() {
+        true => vec![
+            Standing::Pending,
+            Standing::Resolved,
+            Standing::Muted,
+            Standing::Baseline,
+        ],
+        false => wanted.to_vec(),
+    };
+
+    let mut listed = 0;
+    for standing in standings {
+        let mut group: Vec<(&String, &Known)> = mine
+            .known_signatures
+            .iter()
+            .filter(|(_, known)| known.standing() == standing)
+            .collect();
+        if group.is_empty() {
+            continue;
+        }
+        group.sort_by(|(_, left), (_, right)| by_importance(left, right));
+
+        let (title, hint) = match standing {
+            Standing::Pending => ("pending", "`log-diff ack <id>` once fixed"),
+            Standing::Resolved => ("resolved", "reported again if logged again"),
+            Standing::Muted => ("muted", "`log-diff unmute <id>` to hear of one again"),
+            Standing::Baseline => (
+                "baseline",
+                "known from the start; `log-diff unmute <id>` to watch one",
+            ),
+        };
+        if listed > 0 {
+            println!();
+        }
+        status(Tone::Info, &format!("{} {title} · {hint}", group.len()));
+        let shown = match limit {
+            0 => group.len(),
+            limit => limit.min(group.len()),
+        };
+        for (id, known) in &group[..shown] {
+            let badge = match known.back {
+                true => Badge::Back,
+                false => Badge::None,
+            };
+            println!();
+            println!("{}", output::card(&card_of(id, known, badge)));
+        }
+        if shown < group.len() {
+            println!();
+            status(
+                Tone::Info,
+                &format!(
+                    "{} more {title} - `--limit 0` to see them all",
+                    group.len() - shown
+                ),
+            );
+        }
+        listed += group.len();
+    }
+    if listed == 0 {
+        status(Tone::Ok, "nothing to list");
+    }
+    Ok(())
+}
+
+/// Hear of muted signatures again: they become resolved, so the next time one
+/// is logged it comes back. A baseline one can be named too, to start
+/// watching it; `all` only takes the muted ones.
+pub fn unmute(state: &Path, ids: &[String], all: bool) -> Result<()> {
+    let mut mine = Ledger::load(state)?;
+    let resolved_at = now();
+    let mut unmuted = 0;
+    for (id, known) in mine.known_signatures.iter_mut() {
+        let named = ids.iter().any(|wanted| id.starts_with(wanted.as_str()));
+        let eligible = match known.standing() {
+            Standing::Muted => all || named,
+            Standing::Baseline => named,
+            Standing::Pending | Standing::Resolved => false,
+        };
+        if eligible {
+            known.muted = false;
+            known.resolved_at = Some(resolved_at.clone());
+            unmuted += 1;
+        }
+    }
+    mine.save(state)?;
+    match unmuted {
+        0 => status(
+            Tone::Warn,
+            "nothing unmuted - `log-diff list --muted --baseline` shows what can be",
+        ),
+        unmuted => status(
+            Tone::Ok,
+            &format!("{unmuted} unmuted - reported again the next time they are logged"),
+        ),
+    }
+    Ok(())
+}
+
 /// A known signature, as a card.
 fn card_of<'a>(id: &'a str, known: &'a Known, badge: Badge) -> Card<'a> {
     Card {
@@ -439,5 +549,6 @@ fn card_of<'a>(id: &'a str, known: &'a Known, badge: Badge) -> Card<'a> {
         last_seen: Some(&known.last_seen),
         badge,
         deploy: None,
+        serious: known.serious(),
     }
 }

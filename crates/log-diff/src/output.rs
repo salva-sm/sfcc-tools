@@ -146,6 +146,8 @@ pub struct Card<'a> {
     pub badge: Badge,
     /// The deploy it is laid at, already worded.
     pub deploy: Option<String>,
+    /// Whether it shows as an error page, a 500.
+    pub serious: bool,
 }
 
 /// A card: what failed, the message, where, and when.
@@ -165,9 +167,13 @@ pub fn card(card: &Card) -> String {
         other => other,
     });
     let head = card.example.lines().next().unwrap_or_default();
-    let mut meta: Vec<String> = controller(head).into_iter().map(str::to_string).collect();
-    meta.push(card.label.to_string());
-    meta.push(format!("x{}", card.count));
+    let mut meta: Vec<String> = Vec::new();
+    if card.serious {
+        meta.push(paint(RED, "500"));
+    }
+    meta.extend(controller(head).map(|name| paint(DIM, name)));
+    meta.push(paint(DIM, card.label));
+    meta.push(paint(DIM, &format!("x{}", card.count)));
     let badge = match card.badge {
         Badge::New => format!("  {}", paint(NEW_BADGE, " NEW ")),
         Badge::Back => format!("  {}", paint(BACK_BADGE, " BACK ")),
@@ -178,7 +184,7 @@ pub fn card(card: &Card) -> String {
         " {} {}{badge}  {}",
         paint(tone, mark),
         paint(BOLD, what),
-        paint(DIM, &meta.join(" · ")),
+        meta.join(&paint(DIM, " · ")),
     )];
 
     let mut example = card.example.lines();
@@ -325,6 +331,7 @@ mod tests {
             last_seen: None,
             badge,
             deploy: None,
+            serious: true,
         }
     }
 
@@ -335,7 +342,10 @@ mod tests {
             .map(str::to_string)
             .collect();
 
-        assert_eq!(lines[0], " ✖ TypeError   NEW   Checkout-Begin · error · x3");
+        assert_eq!(
+            lines[0],
+            " ✖ TypeError   NEW   500 · Checkout-Begin · error · x3"
+        );
         assert_eq!(lines[1], "   Cannot read property \"shipments\" from null");
         assert_eq!(
             lines[2],

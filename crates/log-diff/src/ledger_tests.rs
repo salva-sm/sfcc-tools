@@ -223,3 +223,50 @@ fn a_muted_or_baseline_signature_never_comes_back() {
         Seen::Known
     );
 }
+
+#[test]
+fn a_signature_stands_where_it_was_left() {
+    let mut mine = Ledger::default();
+    let pending = at("2026-09-22 10:00:00.000");
+    mine.observe_local(&pending, false);
+    let id = pending.signature.id.clone();
+    assert_eq!(mine.known_signatures[&id].standing(), Standing::Pending);
+
+    let known = mine.known_signatures.get_mut(&id).unwrap();
+    known.pending = false;
+    known.resolved_at = Some("2026-09-23T00:00:00Z".into());
+    assert_eq!(known.standing(), Standing::Resolved);
+    known.resolved_at = None;
+    assert_eq!(known.standing(), Standing::Baseline);
+    known.muted = true;
+    assert_eq!(known.standing(), Standing::Muted);
+}
+
+#[test]
+fn what_shows_as_a_500_comes_first_then_what_happened_most() {
+    let mut often = found(FAILURE).clone();
+    often.count = 50;
+    let mut mine = Ledger::default();
+    mine.observe(&often, None, true);
+    let handled = findings(&parse_entries(
+        "customerror-blade1-20260922.log",
+        "[2026-09-22 10:00:00.000 GMT] ERROR X|S|Cart-Show|P|x c [] Basket <n> is empty",
+    ))
+    .remove(0);
+    let mut handled_often = handled.clone();
+    handled_often.count = 500;
+    mine.observe(&handled_often, None, true);
+    let says_500 = findings(&parse_entries(
+        "customerror-blade1-20260922.log",
+        "[2026-09-22 10:00:00.000 GMT] ERROR X|S|Cart-Show|P|x c [] Service answered HTTP 500",
+    ))
+    .remove(0);
+    mine.observe(&says_500, None, true);
+
+    let mut ranked: Vec<&Known> = mine.known_signatures.values().collect();
+    ranked.sort_by(|left, right| by_importance(left, right));
+    let counts: Vec<u64> = ranked.iter().map(|known| known.count).collect();
+
+    // The uncaught error (50) and the one saying 500 (1) before the handled one (500).
+    assert_eq!(counts, vec![50, 1, 500]);
+}
