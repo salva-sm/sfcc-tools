@@ -27,6 +27,30 @@ curl -L https://github.com/salva-sm/sfcc-tools/releases/latest/download/sfcc-upl
 
 To build it yourself instead, see [Building](#building).
 
+### Tab completion
+
+`sfcc-upload completions <shell>` prints a completion script for bash, zsh, fish, PowerShell or
+elvish, generated from the command definitions themselves, so it covers every command and
+flag and never falls behind. Load it once from your shell's profile:
+
+```bash
+# ~/.bashrc (Git Bash included) or ~/.zshrc - use `zsh` in the latter
+eval "$(sfcc-upload completions bash)"
+```
+
+```powershell
+# $PROFILE
+sfcc-upload completions powershell | Out-String | Invoke-Expression
+```
+
+```fish
+# ~/.config/fish/config.fish
+sfcc-upload completions fish | source
+```
+
+Open a new terminal afterwards. In Git Bash the command name itself completes to
+`sfcc-upload.exe`; the script registers itself under that name too.
+
 ## Usage
 
 Run it anywhere inside the repository; `dw.json` is found by walking up.
@@ -51,6 +75,7 @@ sfcc-upload rm <PATH>           # delete something left behind up there
 sfcc-upload clean               # delete this project's cartridges from the code version
 sfcc-upload activate [NAME]     # make a code version the active one
 sfcc-upload install-hook        # push automatically after a branch switch
+sfcc-upload completions bash    # the tab completion script, see Install
 ```
 
 `sfcc-upload --help` lists the commands, `sfcc-upload help <command>` explains one.

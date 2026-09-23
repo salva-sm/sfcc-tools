@@ -1,3 +1,4 @@
+mod completions;
 mod daemon;
 mod errors;
 mod githook;
@@ -13,7 +14,7 @@ mod watch;
 mod webdav;
 
 use anyhow::{Context, Result, bail};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueHint};
 use push::{Ctx, PushOptions, human_bytes};
 use sfcc_core::config::{Config, Credentials};
 use std::io::Write;
@@ -45,7 +46,7 @@ cartridge list). Run `sfcc-upload doctor` when something does not add up.";
 )]
 struct Cli {
     /// Path to dw.json (default: the nearest one, searching upwards)
-    #[arg(long, short = 'c', global = true, value_name = "PATH")]
+    #[arg(long, short = 'c', global = true, value_name = "PATH", value_hint = ValueHint::FilePath)]
     config: Option<PathBuf>,
 
     /// Code version to target, overriding the one in dw.json
@@ -65,7 +66,13 @@ struct Cli {
     allow_shared_instance: bool,
 
     /// Colour the output: auto, always, never
-    #[arg(long, global = true, value_name = "WHEN", default_value = "auto")]
+    #[arg(
+        long,
+        global = true,
+        value_name = "WHEN",
+        default_value = "auto",
+        value_parser = ["auto", "always", "never"]
+    )]
     color: String,
 
     #[command(subcommand)]
@@ -146,6 +153,22 @@ enum Command {
         is still there."
     )]
     Rm(RmArgs),
+    /// Print the shell completion script: bash, zsh, fish, powershell or elvish
+    #[command(
+        long_about = "Print the shell completion script for SHELL on stdout.\n\n\
+        Load it from your shell's profile - in ~/.bashrc:\n\n\
+        \x20 eval \"$(sfcc-upload completions bash)\"\n\n\
+        or in the PowerShell $PROFILE:\n\n\
+        \x20 sfcc-upload completions powershell | Out-String | Invoke-Expression"
+    )]
+    Completions(CompletionsArgs),
+}
+
+#[derive(Args)]
+struct CompletionsArgs {
+    /// The shell to complete for
+    #[arg(value_name = "SHELL")]
+    shell: clap_complete::Shell,
 }
 
 #[derive(Args)]
@@ -270,6 +293,11 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<()> {
+    // Before dw.json: completion is set up once, from anywhere.
+    if let Command::Completions(args) = &cli.command {
+        completions::print::<Cli>(args.shell, "sfcc-upload");
+        return Ok(());
+    }
     logging::configure_color(&cli.color);
     let mut config = Config::load(cli.config.clone(), cli.code_version.clone())?;
     if !cli.cartridge.is_empty() {
@@ -339,6 +367,8 @@ async fn run(cli: Cli) -> Result<()> {
             };
             tail::follow(&ctx, options).await
         }
+        // Printed before dw.json was read, above.
+        Command::Completions(_) => Ok(()),
         Command::Errors(args) => {
             let ctx = Ctx::new(config, jobs)?;
             let levels = tail::parse_levels(&args.level);
