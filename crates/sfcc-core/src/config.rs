@@ -107,9 +107,14 @@ impl Config {
         code_version_override: Option<String>,
     ) -> Result<Config> {
         let dw_json = match explicit_path {
-            Some(path) => path
-                .canonicalize()
-                .with_context(|| format!("dw.json not found at {}", path.display()))?,
+            Some(path) => {
+                if !path.is_file() {
+                    bail!("dw.json not found at {}", path.display());
+                }
+                // Canonical, but without the `\\?\` prefix Windows adds, which
+                // editors and problem matchers do not take for a path.
+                normalize(&path)
+            }
             None => discover_dw_json()?,
         };
 

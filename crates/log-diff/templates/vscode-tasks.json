@@ -9,7 +9,7 @@
       "label": "log-diff: watch",
       "type": "process",
       "command": "log-diff",
-      "args": ["watch"],
+      "args": ["watch", "--problems"],
       "options": {
         "env": {
           // The team's ledger. A private repository also needs GITHUB_TOKEN

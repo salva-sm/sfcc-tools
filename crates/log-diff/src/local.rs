@@ -8,6 +8,7 @@
 use crate::finding::{Finding, findings};
 use crate::ledger::{Known, Ledger, load_shared, local_dir};
 use crate::notify::{self, headline};
+use crate::output::{self, Badge, Card, Tone, status};
 use anyhow::{Result, bail};
 use sfcc_core::config::Config;
 use sfcc_core::logs::{self, Mark};
@@ -60,7 +61,7 @@ impl Local {
         };
         let (ledger, warning) = load_shared(source, &local_dir().join("shared-cache.json")).await?;
         if let Some(warning) = warning {
-            say(&warning);
+            status(Tone::Warn, &warning);
         }
         Ok(ledger)
     }
@@ -101,14 +102,63 @@ impl Local {
 
     /// Tell whoever is looking: the terminal always, the desktop when asked.
     pub fn report(&self, outcome: &Outcome) {
-        say(&format!("checking {}", self.config.hostname));
-        for (id, known) in &outcome.pending {
-            println!("{}", self.problem(id, known));
-        }
-        match (outcome.new.len(), outcome.pending.len()) {
-            (0, 0) => say("up to date"),
-            (0, pending) => say(&format!("{pending} pending, nothing new")),
-            (new, pending) => say(&format!("{new} new, {pending} pending")),
+        let host = &self.config.hostname;
+        let (new, pending) = (outcome.new.len(), outcome.pending.len());
+
+        if output::problems() {
+            status(Tone::Info, &format!("checking {host}"));
+            for (id, known) in &outcome.pending {
+                println!("{}", self.problem(id, known));
+            }
+            status(
+                Tone::Info,
+                &match (new, pending) {
+                    (0, 0) => "up to date".to_string(),
+                    (0, pending) => format!("{pending} pending, nothing new"),
+                    (new, pending) => format!("{new} new, {pending} pending"),
+                },
+            );
+        } else {
+            match (new, pending) {
+                (0, 0) => status(Tone::Ok, &format!("{host} · nothing new")),
+                (0, pending) => status(
+                    Tone::Pending,
+                    &format!("{host} · nothing new, {pending} still pending"),
+                ),
+                (new, pending) => status(
+                    Tone::New,
+                    &format!(
+                        "{new} new error{} on {host}{}",
+                        if new == 1 { "" } else { "s" },
+                        match pending > new {
+                            true => format!(" · {pending} pending in all"),
+                            false => String::new(),
+                        }
+                    ),
+                ),
+            }
+            // What turned up in this pass first, then what is still waiting.
+            let is_new = |id: &str| outcome.new.iter().any(|finding| finding.signature.id == id);
+            let mut shown: Vec<&(String, Known)> = outcome.pending.iter().collect();
+            shown.sort_by_key(|(id, _)| !is_new(id));
+            for (id, known) in shown {
+                let badge = match is_new(id) {
+                    true => Badge::New,
+                    false => Badge::Pending,
+                };
+                println!(
+                    "
+{}",
+                    output::card(&card_of(id, known, badge))
+                );
+            }
+            if pending > 0 {
+                println!();
+                status(
+                    Tone::Info,
+                    "`log-diff ack <id>` or `log-diff ack --all` once dealt with",
+                );
+            }
         }
 
         if self.desktop {
@@ -166,11 +216,14 @@ impl Local {
     /// `pass` and `report` on a timer, until interrupted. Only prints when
     /// something changed, so the terminal stays quiet while nothing does.
     pub async fn watch(&self, dav: &Dav, interval: Duration) -> Result<()> {
-        say(&format!(
-            "watching {} every {}s",
-            self.config.hostname,
-            interval.as_secs()
-        ));
+        status(
+            Tone::Info,
+            &format!(
+                "watching {} every {}s",
+                self.config.hostname,
+                interval.as_secs()
+            ),
+        );
         let mut team: Option<(Instant, Ledger)> = None;
         let mut shown: Option<Vec<String>> = None;
         let mut offline = false;
@@ -179,13 +232,16 @@ impl Local {
             match reachable(dav).await? {
                 Some(reason) => {
                     if !offline {
-                        say(&format!("instance unreachable ({reason}) - waiting"));
+                        status(
+                            Tone::Warn,
+                            &format!("instance unreachable ({reason}) - waiting"),
+                        );
                         offline = true;
                     }
                 }
                 None => {
                     if offline {
-                        say("instance is back");
+                        status(Tone::Ok, "instance is back");
                         offline = false;
                     }
                     let stale = team
@@ -205,7 +261,7 @@ impl Local {
                                 shown = Some(ids);
                             }
                         }
-                        Err(error) => say(&format!("{error:#}")),
+                        Err(error) => output::error(&format!("{error:#}")),
                     }
                 }
             }
@@ -228,16 +284,18 @@ pub fn acknowledge(state: &Path, ids: &[String], all: bool) -> Result<()> {
         for id in &pending {
             let known = &mine.known_signatures[id];
             println!(
-                "{id}  x{:<5} {}",
-                known.count,
-                headline(
-                    &known.label,
-                    known.exception_class.as_deref(),
-                    known.location.as_deref()
-                )
+                "{}
+",
+                output::card(&card_of(id, known, Badge::None))
             );
         }
-        say(&format!("{} pending", pending.len()));
+        match pending.len() {
+            0 => status(Tone::Ok, "nothing pending"),
+            count => status(
+                Tone::Pending,
+                &format!("{count} pending - `log-diff ack <id>` or `log-diff ack --all`"),
+            ),
+        }
         return Ok(());
     }
 
@@ -251,11 +309,22 @@ pub fn acknowledge(state: &Path, ids: &[String], all: bool) -> Result<()> {
         }
     }
     mine.save(state)?;
-    say(&format!("{acknowledged} acknowledged"));
+    status(Tone::Ok, &format!("{acknowledged} acknowledged"));
     Ok(())
 }
 
-/// A status line, prefixed so a problem matcher can tell it from a problem.
-pub fn say(message: &str) {
-    println!("log-diff: {message}");
+/// A known signature, as a card.
+fn card_of<'a>(id: &'a str, known: &'a Known, badge: Badge) -> Card<'a> {
+    Card {
+        id,
+        label: &known.label,
+        exception: known.exception_class.as_deref(),
+        location: known.location.as_deref(),
+        example: &known.example,
+        count: known.count,
+        first_seen: &known.first_seen,
+        last_seen: Some(&known.last_seen),
+        badge,
+        deploy: None,
+    }
 }
