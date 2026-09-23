@@ -5,6 +5,7 @@ use crate::push::{Ctx, PushOptions, delete_paths, push, select_changed, upload_f
 use crate::reload::{Browser, worth_reloading};
 use crate::scan::{LocalFile, collect_files, describe};
 use crate::sync_status;
+use crate::webdav::Ready;
 use anyhow::{Context, Result};
 use notify::RecursiveMode;
 use notify_debouncer_full::new_debouncer;

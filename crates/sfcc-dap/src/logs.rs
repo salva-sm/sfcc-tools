@@ -4,7 +4,7 @@
 //! somewhere else lands in the instance's log, and having it in the same
 //! window is the difference between seeing it and going to look for it.
 //!
-//! `prost logger` already follows that log and rewrites stack frames into
+//! `sfcc-upload logger` already follows that log and rewrites stack frames into
 //! local paths, so this starts it rather than reimplementing it.
 
 use std::io::{BufRead, BufReader};
@@ -16,7 +16,7 @@ use serde_json::json;
 use crate::protocol::Writer;
 
 /// The uploader, which is where the log follower lives.
-const LOGGER: &str = "prost";
+const LOGGER: &str = "sfcc-upload";
 /// A debug session is no place for the whole firehose.
 const DEFAULT_LEVELS: &str = "error,customerror";
 

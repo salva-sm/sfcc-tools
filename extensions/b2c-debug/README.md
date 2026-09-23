@@ -172,11 +172,11 @@ from `<custom-cartridges>` or `dw.json`.
 
 ## The sandbox log in the session
 
-Attaching also follows the sandbox log: `prost logger` is started with the same `dw.json` and
+Attaching also follows the sandbox log: `sfcc-upload logger` is started with the same `dw.json` and
 every line it prints reaches the debug console, coloured, for as long as the session lasts. It
 is where the error that did *not* stop at a breakpoint shows up. Only `error` and
 `customerror` are followed — a debug session is no place for the whole firehose, and
-`log_level` widens it. `prost` has to be on the `PATH`; when it is not, the console says so
+`log_level` widens it. `sfcc-upload` has to be on the `PATH`; when it is not, the console says so
 once and the session carries on. `"logs": false` turns it off.
 
 ## Two things that will waste your afternoon

@@ -1,6 +1,13 @@
+//! WebDAV against the instance: the code version for the uploader, the log
+//! folder for whoever reads it.
+//!
+//! Authentication, retries and the multistatus parsing live here once. What
+//! to say while a sleeping sandbox wakes up is the caller's business, so there
+//! is no waiting loop in this module - only [`Dav::availability`] to build one.
+
+use crate::config::{Config, Credentials};
 use anyhow::{Context, Result, bail};
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
-use sfcc_core::config::{Config, Credentials};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
@@ -9,18 +16,28 @@ const OAUTH_URL: &str = "https://account.demandware.com/dwsso/oauth2/access_toke
 const PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>"#;
 
 #[derive(Debug, Clone, PartialEq)]
+/// What a probe of the code version found.
 pub enum Availability {
+    /// Reachable, and the code version is there.
     Ready,
+    /// Reachable, but the code version does not exist yet.
     MissingCodeVersion,
+    /// The credentials were rejected.
     Unauthorized,
+    /// Not reachable, for the reason given - usually a sandbox asleep.
     Unavailable(String),
 }
 
 #[derive(Debug, Clone)]
+/// One member of a listed collection.
 pub struct DavEntry {
+    /// Its name, decoded.
     pub name: String,
+    /// Whether it is a collection.
     pub is_dir: bool,
+    /// Its length in bytes; zero for a collection.
     pub size: u64,
+    /// `getlastmodified`, as the server wrote it.
     pub modified: String,
 }
 
@@ -29,15 +46,18 @@ struct Token {
     expires_at: Instant,
 }
 
+/// A WebDAV client for one instance and code version.
 pub struct Dav {
     client: Client,
     root: String,
     base: String,
+    logs: String,
     credentials: Credentials,
     token: RwLock<Option<Token>>,
 }
 
 impl Dav {
+    /// A client for the instance and code version in `config`.
     pub fn new(config: &Config) -> Result<Dav> {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
@@ -51,23 +71,33 @@ impl Dav {
             client,
             root: config.webdav_root(),
             base: config.code_version_url(),
+            logs: config.logs_url(),
             credentials: config.credentials.clone(),
             token: RwLock::new(None),
         })
     }
 
+    /// The URL of a path inside the code version.
     pub fn file_url(&self, relative_path: &str) -> String {
         format!("{}/{}", self.base, encode_path(relative_path))
     }
 
+    /// The folder holding every code version.
     pub fn root_url(&self) -> &str {
         &self.root
     }
 
+    /// The folder the instance writes its logs to.
+    pub fn logs_url(&self) -> &str {
+        &self.logs
+    }
+
+    /// The code version itself.
     pub fn base_url(&self) -> &str {
         &self.base
     }
 
+    /// Probe the code version once.
     pub async fn availability(&self) -> Availability {
         let response = self
             .send(|| {
@@ -101,40 +131,7 @@ impl Dav {
         }
     }
 
-    pub async fn wait_until_ready(&self, max_wait: Option<Duration>) -> Result<()> {
-        let started = Instant::now();
-        let mut announced = false;
-        loop {
-            match self.availability().await {
-                Availability::Ready => {
-                    if announced {
-                        crate::logging::ok("sandbox is back online");
-                    }
-                    return Ok(());
-                }
-                Availability::MissingCodeVersion => {
-                    self.mkcol(&self.base).await?;
-                    return Ok(());
-                }
-                Availability::Unauthorized => {
-                    bail!("the sandbox rejected the credentials from dw.json (HTTP 401/403)")
-                }
-                Availability::Unavailable(reason) => {
-                    if let Some(limit) = max_wait {
-                        if started.elapsed() >= limit {
-                            bail!("sandbox unreachable after {}s: {reason}", limit.as_secs());
-                        }
-                    }
-                    if !announced {
-                        crate::logging::warn(format!("sandbox unavailable ({reason}) - waiting"));
-                        announced = true;
-                    }
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                }
-            }
-        }
-    }
-
+    /// Create a collection; one that is already there is not an error.
     pub async fn mkcol(&self, url: &str) -> Result<()> {
         let response = self.send(|| self.client.request(mkcol(), url)).await?;
         let status = response.status();
@@ -147,6 +144,7 @@ impl Dav {
         bail!("MKCOL {url} failed with HTTP {status}")
     }
 
+    /// Create every collection along a path inside the code version.
     pub async fn ensure_directory(&self, relative_path: &str) -> Result<()> {
         let mut walked = String::new();
         for segment in relative_path
@@ -162,6 +160,7 @@ impl Dav {
         Ok(())
     }
 
+    /// Upload a file into the code version.
     pub async fn put(&self, relative_path: &str, body: Vec<u8>) -> Result<()> {
         let url = self.file_url(relative_path);
         let response = self
@@ -179,6 +178,7 @@ impl Dav {
         bail!("PUT {relative_path} failed with HTTP {status}")
     }
 
+    /// Delete a path inside the code version. `false` when it was not there.
     pub async fn delete(&self, relative_path: &str) -> Result<bool> {
         let url = self.file_url(relative_path);
         let response = self.send(|| self.client.delete(&url)).await?;
@@ -192,10 +192,12 @@ impl Dav {
         bail!("DELETE {relative_path} failed with HTTP {status}")
     }
 
+    /// Delete the whole code version.
     pub async fn delete_code_version(&self) -> Result<bool> {
         self.delete("").await
     }
 
+    /// Expand an uploaded archive in place, on the server.
     pub async fn unzip(&self, relative_path: &str) -> Result<()> {
         let url = self.file_url(relative_path);
         let response = self
@@ -213,6 +215,7 @@ impl Dav {
         bail!("remote unzip of {relative_path} failed with HTTP {status}")
     }
 
+    /// A file from `offset` to its end. Empty when there is nothing past it.
     pub async fn read_from(&self, url: &str, offset: u64) -> Result<String> {
         let response = self
             .send(|| {
@@ -237,6 +240,7 @@ impl Dav {
         Ok(body.get(offset as usize..).unwrap_or_default().to_string())
     }
 
+    /// The members of a collection, without the collection itself.
     pub async fn list(&self, url: &str) -> Result<Vec<DavEntry>> {
         let response = self
             .send(|| {
@@ -299,10 +303,10 @@ impl Dav {
     }
 
     async fn access_token(&self) -> Result<String> {
-        if let Some(token) = self.token.read().await.as_ref() {
-            if token.expires_at > Instant::now() {
-                return Ok(token.value.clone());
-            }
+        if let Some(token) = self.token.read().await.as_ref()
+            && token.expires_at > Instant::now()
+        {
+            return Ok(token.value.clone());
         }
 
         let Credentials::OAuth {
@@ -373,6 +377,7 @@ fn root_cause(error: &anyhow::Error) -> String {
         .unwrap_or_else(|| error.to_string())
 }
 
+/// Percent-encode a relative path, keeping its separators.
 pub fn encode_path(relative_path: &str) -> String {
     let mut encoded = String::with_capacity(relative_path.len());
     for byte in relative_path.replace('\\', "/").bytes() {

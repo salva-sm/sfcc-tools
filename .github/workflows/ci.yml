@@ -16,13 +16,17 @@ jobs:
       - run: cargo test -p isml-lsp
 
   uploader:
-    name: prost
+    name: sfcc-upload
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cargo fmt --check -p prost -p sfcc-core -p sfcc-dap
-      - run: cargo test -p prost -p sfcc-core -p sfcc-dap
-      - run: cargo clippy -p sfcc-dap -p sfcc-core -- -D warnings
+      - run: cargo fmt --check -p sfcc-upload -p sfcc-core -p sfcc-dap
+      - run: cargo test -p sfcc-upload -p sfcc-dap
+      # On its own, so the tests of the webdav feature run and the crate is
+      # also checked without it, the way the debug adapter builds it.
+      - run: cargo test -p sfcc-core --all-features
+      - run: cargo clippy -p sfcc-core
+      - run: cargo clippy -p sfcc-dap -p sfcc-core --all-features -- -D warnings
 
   grammar:
     name: tree-sitter-isml

@@ -20,25 +20,25 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 use watch::WatchOptions;
-use webdav::Availability;
+use webdav::{Availability, Ready};
 
 const DEFAULT_JOBS: usize = 4;
 
 const EXAMPLES: &str = "\
 Examples:
-  prost push                       upload what changed since the last sync
-  prost push --full                start over: replace every cartridge on the sandbox
-  prost start                      watch in the background, surviving the editor
-  prost activity                   what the background watcher has been doing
-  prost logger                     follow the sandbox log, where server errors land
-  prost push --cartridge int_analytics --code-version test1
+  sfcc-upload push                       upload what changed since the last sync
+  sfcc-upload push --full                start over: replace every cartridge on the sandbox
+  sfcc-upload start                      watch in the background, surviving the editor
+  sfcc-upload activity                   what the background watcher has been doing
+  sfcc-upload logger                     follow the sandbox log, where server errors land
+  sfcc-upload push --cartridge int_analytics --code-version test1
 
 Configuration comes from the nearest dw.json (hostname, credentials, code-version,
-cartridge list). Run `prost doctor` when something does not add up.";
+cartridge list). Run `sfcc-upload doctor` when something does not add up.";
 
 #[derive(Parser)]
 #[command(
-    name = "prost",
+    name = "sfcc-upload",
     version,
     about = "Upload SFCC cartridges to a sandbox over WebDAV, from any editor",
     after_help = EXAMPLES
@@ -124,7 +124,7 @@ enum Command {
         `--mark` records how long today's log files are; reproduce whatever you are testing, \
         then run it again with no arguments to see only what your change produced. Repeats of \
         one failure collapse into a single block with a count. Exits 1 when there is something \
-        new, so it chains: `prost errors --mark && npm test && prost errors`.")]
+        new, so it chains: `sfcc-upload errors --mark && npm test && sfcc-upload errors`.")]
     Errors(ErrorsArgs),
     /// Make the code version the active one, through the Data API
     #[command(long_about = "Make a code version the active one on the sandbox.\n\n\
@@ -133,7 +133,7 @@ enum Command {
     Activate(ActivateArgs),
     /// Install a git hook that pushes after a branch switch
     #[command(
-        long_about = "Install a post-checkout git hook that runs `prost push`.\n\n\
+        long_about = "Install a post-checkout git hook that runs `sfcc-upload push`.\n\n\
         A branch switch changes files behind the watcher's back if it is not running; the hook \
         makes the sandbox follow the branch. It costs nothing when nothing changed."
     )]
@@ -405,7 +405,7 @@ fn start_detached(config: &Config, spawn: daemon::SpawnArgs) -> Result<()> {
     let pid = daemon::start(config, spawn)?;
     logging::ok(format!("watcher running in the background (pid {pid})"));
     crate::out!("  log:  {}", daemon::log_path(config).display());
-    crate::out!("  stop: prost stop");
+    crate::out!("  stop: sfcc-upload stop");
     Ok(())
 }
 

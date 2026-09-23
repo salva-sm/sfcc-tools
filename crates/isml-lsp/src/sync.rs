@@ -138,7 +138,7 @@ fn status_dir() -> Option<PathBuf> {
         Ok(local) if cfg!(windows) => PathBuf::from(local),
         _ => PathBuf::from(std::env::var("XDG_STATE_HOME").ok()?),
     };
-    Some(root.join("prost").join("status"))
+    Some(root.join("sfcc-upload").join("status"))
 }
 
 fn describe(status: &Status) -> String {

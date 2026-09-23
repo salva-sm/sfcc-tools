@@ -1,7 +1,7 @@
 use crate::logging::{self, Change};
 use crate::manifest::{Entry, Manifest, hash_file, manifest_path};
 use crate::scan::{Ignore, LocalFile, cartridge_directories, scan};
-use crate::webdav::Dav;
+use crate::webdav::{Dav, Ready};
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -304,7 +304,7 @@ async fn upload_chunk(
         .await
         .context("the archive task panicked")??;
 
-    let name = format!("prost-{}-{index}.zip", std::process::id());
+    let name = format!("sfcc-upload-{}-{index}.zip", std::process::id());
     ctx.dav.put(&name, archive).await?;
     ctx.dav.unzip(&name).await?;
     if let Err(error) = ctx.dav.delete(&name).await {

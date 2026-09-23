@@ -1,9 +1,11 @@
-# prost
+# sfcc-upload
 
 Cartridge uploader for SFCC sandboxes, as a CLI. Same job as the Prophet VS Code extension —
 keep a code version in sync with the cartridges on disk — with no editor attached, so Zed,
-Neovim or VS Code are all equally fine and closing the editor never stops the upload. The name
-is Prophet plus Rust.
+Neovim or VS Code are all equally fine and closing the editor never stops the upload. It was
+called `prost` (Prophet plus Rust) until 0.5. Its state directory is moved over on the first run,
+so nothing is re-uploaded; a `post-checkout` hook installed under the old name calls a binary
+that is no longer there, and `sfcc-upload install-hook` replaces it without needing `--force`.
 
 Reads the same `dw.json` as Prophet, talks WebDAV, uploads only what changed.
 
@@ -15,12 +17,12 @@ Download the binary for your platform from the
 
 ```powershell
 # Windows
-curl -L -o prost.exe https://github.com/salva-sm/sfcc-tools/releases/latest/download/prost-x86_64-windows.exe
+curl -L -o sfcc-upload.exe https://github.com/salva-sm/sfcc-tools/releases/latest/download/sfcc-upload-x86_64-windows.exe
 ```
 
 ```bash
 # macOS (Apple silicon) / Linux — swap aarch64 for x86_64 as needed
-curl -L https://github.com/salva-sm/sfcc-tools/releases/latest/download/prost-aarch64-macos.tar.gz | tar -xz
+curl -L https://github.com/salva-sm/sfcc-tools/releases/latest/download/sfcc-upload-aarch64-macos.tar.gz | tar -xz
 ```
 
 To build it yourself instead, see [Building](#building).
@@ -30,28 +32,28 @@ To build it yourself instead, see [Building](#building).
 Run it anywhere inside the repository; `dw.json` is found by walking up.
 
 ```bash
-prost push                # upload what changed since the last sync
-prost push --full         # start over: replace every cartridge on the sandbox
-prost push --dry-run      # list what would go up, without touching the sandbox
-prost watch               # push, then upload on every save (foreground)
-prost start               # same, detached: survives closing the editor
-prost start --reload      # same, and reload the storefront tab after each upload
-prost stop                # stop the detached watcher
-prost status              # watcher, sandbox and local sync state
-prost activity -f         # what the watcher has been uploading
-prost logger              # follow the sandbox log, where server-side errors land
-prost errors --mark       # mark the log, then reproduce your bug
-prost errors              # only what got logged since the mark
-prost doctor              # check dw.json, connectivity, credentials, code version
-prost versions            # code versions on the sandbox
-prost ls [PATH]           # what the code version holds on the sandbox
-prost rm <PATH>           # delete something left behind up there
-prost clean               # delete this project's cartridges from the code version
-prost activate [NAME]     # make a code version the active one
-prost install-hook        # push automatically after a branch switch
+sfcc-upload push                # upload what changed since the last sync
+sfcc-upload push --full         # start over: replace every cartridge on the sandbox
+sfcc-upload push --dry-run      # list what would go up, without touching the sandbox
+sfcc-upload watch               # push, then upload on every save (foreground)
+sfcc-upload start               # same, detached: survives closing the editor
+sfcc-upload start --reload      # same, and reload the storefront tab after each upload
+sfcc-upload stop                # stop the detached watcher
+sfcc-upload status              # watcher, sandbox and local sync state
+sfcc-upload activity -f         # what the watcher has been uploading
+sfcc-upload logger              # follow the sandbox log, where server-side errors land
+sfcc-upload errors --mark       # mark the log, then reproduce your bug
+sfcc-upload errors              # only what got logged since the mark
+sfcc-upload doctor              # check dw.json, connectivity, credentials, code version
+sfcc-upload versions            # code versions on the sandbox
+sfcc-upload ls [PATH]           # what the code version holds on the sandbox
+sfcc-upload rm <PATH>           # delete something left behind up there
+sfcc-upload clean               # delete this project's cartridges from the code version
+sfcc-upload activate [NAME]     # make a code version the active one
+sfcc-upload install-hook        # push automatically after a branch switch
 ```
 
-`prost --help` lists the commands, `prost help <command>` explains one.
+`sfcc-upload --help` lists the commands, `sfcc-upload help <command>` explains one.
 
 | Option | Effect |
 | ------ | ------ |
@@ -95,13 +97,13 @@ Three different things report three different failures:
 | Failure | Who reports it |
 | ------- | -------------- |
 | SCSS or client-JS that does not compile | `npm run dev` (webpack), which produces `cartridge/static/` in the first place |
-| The upload itself failing | `prost` — HTTP status, retries, and the sandbox being asleep |
-| A controller, hook or ISML blowing up at runtime | the sandbox log: `prost logger` |
+| The upload itself failing | `sfcc-upload` — HTTP status, retries, and the sandbox being asleep |
+| A controller, hook or ISML blowing up at runtime | the sandbox log: `sfcc-upload logger` |
 
-`npm run dev` and `prost` are complements, not alternatives: webpack compiles, the watcher
+`npm run dev` and `sfcc-upload` are complements, not alternatives: webpack compiles, the watcher
 picks up what it wrote and sends it.
 
-`prost logger` follows today's log files over WebDAV from the end, `error`, `customerror` and
+`sfcc-upload logger` follows today's log files over WebDAV from the end, `error`, `customerror` and
 `custom` by default (`--level all` for everything, `--level warn,error` to pick, `-n 100` to
 open with some history). A file the sandbox opens mid-session — the first error of the day
 lands in a brand new one — is read whole, not from its end.
@@ -130,9 +132,9 @@ whose file actually exists locally are rewritten; anything else is left untouche
 whatever you changed, and ask what appeared in between:
 
 ```bash
-prost errors --mark       # remember how long today's log files are
+sfcc-upload errors --mark       # remember how long today's log files are
 # ...navigate the PDP, place an order, whatever the change touches...
-prost errors              # only the records written since the mark
+sfcc-upload errors              # only the records written since the mark
 ```
 
 Repeats collapse: the same failure twenty times is one block with a count and the first and
@@ -145,12 +147,17 @@ projects do not tread on each other. `errors` exits 1 when it found something an
 did not, which makes it chainable:
 
 ```bash
-prost errors --mark && npm run test:integration && prost errors
+sfcc-upload errors --mark && npm run test:integration && sfcc-upload errors
 ```
 
 That covers your own machine. It is deliberately not a CI check: nothing deploys a pull
 request branch, so a workflow would be reading the log of whatever happens to be on the
 sandbox, not of the change under review.
+
+`errors` shows everything logged since the mark, known or not. To hear only about failures
+nobody had seen before — against the team's record of what DEV already logs — use
+[`log-diff`](../log-diff), which reads the log the same way (the mark lives in `sfcc-core`) and
+is installed on its own.
 
 ## Reloading the browser
 
@@ -161,7 +168,7 @@ port open:
 chrome --remote-debugging-port=9222
 ```
 
-Then `prost start --reload`. After each successful upload that touched an `.isml`, `.css`
+Then `sfcc-upload start --reload`. After each successful upload that touched an `.isml`, `.css`
 or `.js`, every tab whose URL contains the sandbox hostname is reloaded — other tabs are left
 alone. Without the flag nothing connects to the browser at all.
 
@@ -170,8 +177,8 @@ alone. Without the flag nothing connects to the browser at all.
 WebDAV cannot switch the active code version, so `activate` goes through the OCAPI Data API:
 
 ```bash
-prost push --code-version release_42 --activate
-prost activate release_42
+sfcc-upload push --code-version release_42 --activate
+sfcc-upload activate release_42
 ```
 
 It needs an API client in `dw.json` — either `client-id`/`client-secret`, or the
@@ -182,10 +189,10 @@ list `/code_versions` in the sandbox's *Open Commerce API Settings* (type `Data`
 ## Pushing on a branch switch
 
 ```bash
-prost install-hook
+sfcc-upload install-hook
 ```
 
-Writes a `post-checkout` hook that runs `prost push` after a branch checkout, so the
+Writes a `post-checkout` hook that runs `sfcc-upload push` after a branch checkout, so the
 sandbox follows the branch even when the watcher is not running. It costs 0,4 s when nothing
 changed. An existing hook is never replaced unless `--force` is given.
 
@@ -232,7 +239,7 @@ upload — a status nobody can write is a status nobody reads, not a reason to s
 ## How it works
 
 **Delta.** Each successful upload writes a manifest (size, mtime, xxh3 per file) under
-`%LOCALAPPDATA%\prost\`. The next run skips whatever still matches, hashes only the
+`%LOCALAPPDATA%\sfcc-upload\`. The next run skips whatever still matches, hashes only the
 rest and uploads only real differences — scanning the ~9.500 files of a full checkout takes
 about four seconds.
 
@@ -271,7 +278,7 @@ production is refused outright, with no override; anything else that is not a sa
 A full storefront checkout, `--jobs 4`. The Prophet column was timed with the same
 instrument wherever an equivalent operation exists:
 
-| Scenario | prost | Prophet 1.4.81 |
+| Scenario | sfcc-upload | Prophet 1.4.81 |
 | -------- | --------- | -------------- |
 | Cold full deploy of everything | 23,7 s | ~60 s |
 | Redeploy with nothing changed | 0,4 s | ~60 s |
@@ -288,7 +295,7 @@ Rust 1.85+ (edition 2024):
 
 ```bash
 cargo test
-cargo install --path .        # puts prost on PATH
+cargo install --path .        # puts sfcc-upload on PATH
 ```
 
 On Windows with the GNU toolchain, MinGW binutils must be on `PATH` (`dlltool`, `as`) and no
