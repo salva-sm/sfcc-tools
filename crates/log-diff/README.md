@@ -27,6 +27,30 @@ curl -L https://github.com/salva-sm/sfcc-tools/releases/latest/download/log-diff
 [`tools/install-all.ps1`](../../tools/install-all.ps1) and
 [`tools/install-all.sh`](../../tools/install-all.sh) fetch every tool at once.
 
+### Tab completion
+
+`log-diff completions <shell>` prints a completion script for bash, zsh, fish, PowerShell or
+elvish, generated from the command definitions themselves, so it covers every command and
+flag and never falls behind. Load it once from your shell's profile:
+
+```bash
+# ~/.bashrc (Git Bash included) or ~/.zshrc - use `zsh` in the latter
+eval "$(log-diff completions bash)"
+```
+
+```powershell
+# $PROFILE
+log-diff completions powershell | Out-String | Invoke-Expression
+```
+
+```fish
+# ~/.config/fish/config.fish
+log-diff completions fish | source
+```
+
+Open a new terminal afterwards. In Git Bash the command name itself completes to
+`log-diff.exe`; the script registers itself under that name too.
+
 ## Usage
 
 ```
@@ -37,6 +61,7 @@ log-diff ack [ID... | --all]      list what is pending, or clear it
 log-diff run --state ledger.json [--sha SHA --build N]   CI: update the team's ledger
              [--baseline-days N]                         first run: learn N days of history
 log-diff notify --report new.json                        CI: post the report to Teams
+log-diff completions <shell>      the tab completion script, see above
 ```
 
 Every command takes `--config` for `dw.json` (the nearest one by default, as everywhere

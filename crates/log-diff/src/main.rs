@@ -1,4 +1,5 @@
 mod ci;
+mod completions;
 mod finding;
 mod ledger;
 mod local;
@@ -6,7 +7,7 @@ mod normalize;
 mod notify;
 
 use anyhow::{Context, Result, bail};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueHint};
 use local::{Local, reachable, say};
 use sfcc_core::config::Config;
 use sfcc_core::logs::parse_levels;
@@ -77,12 +78,28 @@ enum Command {
     Notify(NotifyArgs),
     /// List pending signatures, or mark them as dealt with
     Ack(AckArgs),
+    /// Print the shell completion script: bash, zsh, fish, powershell or elvish
+    #[command(
+        long_about = "Print the shell completion script for SHELL on stdout.\n\n\
+        Load it from your shell's profile - in ~/.bashrc:\n\n\
+        \x20 eval \"$(log-diff completions bash)\"\n\n\
+        or in the PowerShell $PROFILE:\n\n\
+        \x20 log-diff completions powershell | Out-String | Invoke-Expression"
+    )]
+    Completions(CompletionsArgs),
+}
+
+#[derive(Args)]
+struct CompletionsArgs {
+    /// The shell to complete for
+    #[arg(value_name = "SHELL")]
+    shell: clap_complete::Shell,
 }
 
 #[derive(Args)]
 struct InstanceArgs {
     /// Path to dw.json (default: the nearest one, searching upwards)
-    #[arg(long, short = 'c', value_name = "PATH")]
+    #[arg(long, short = 'c', value_name = "PATH", value_hint = ValueHint::FilePath)]
     config: Option<PathBuf>,
     /// Log levels to read, comma separated, or "all"
     #[arg(long, value_name = "LIST", default_value = DEFAULT_LEVELS)]
@@ -94,7 +111,7 @@ struct LocalArgs {
     #[command(flatten)]
     instance: InstanceArgs,
     /// Your own ledger (default: log-diff/local-ledger.json in the user config directory)
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     state: Option<PathBuf>,
     /// The team's ledger: a path, or a URL
     #[arg(long, value_name = "PATH|URL", env = "LOG_DIFF_SHARED")]
@@ -130,7 +147,7 @@ struct RunArgs {
     #[command(flatten)]
     instance: InstanceArgs,
     /// The team's ledger, in a checkout of its repository
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     state: PathBuf,
     /// The commit just deployed
     #[arg(long, value_name = "SHA")]
@@ -142,7 +159,7 @@ struct RunArgs {
     #[arg(long, value_name = "TIMESTAMP", requires = "sha")]
     at: Option<String>,
     /// Write what is new here, for `notify`
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     report: Option<PathBuf>,
     /// Link to the commits of a deploy, with {from} and {to} for the two shas
     #[arg(long, value_name = "URL", env = "LOG_DIFF_COMPARE_URL")]
@@ -166,7 +183,7 @@ struct NotifyArgs {
     )]
     webhook: String,
     /// The report `run --report` wrote
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     report: PathBuf,
 }
 
@@ -179,7 +196,7 @@ struct AckArgs {
     #[arg(long, conflicts_with = "ids")]
     all: bool,
     /// Your own ledger
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     state: Option<PathBuf>,
 }
 
@@ -211,6 +228,10 @@ async fn run(cli: Cli) -> Result<i32> {
             }
             notify::teams(&args.webhook, &report).await?;
             say(&format!("posted {} new signature(s)", report.new.len()));
+            Ok(0)
+        }
+        Command::Completions(args) => {
+            completions::print::<Cli>(args.shell, "log-diff");
             Ok(0)
         }
         Command::Ack(args) => {
