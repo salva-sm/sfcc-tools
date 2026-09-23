@@ -1,7 +1,9 @@
 use crate::daemon;
 use crate::logging::{self, Change};
 use crate::manifest::Manifest;
-use crate::push::{Ctx, PushOptions, delete_paths, push, select_changed, upload_files};
+use crate::push::{
+    Ctx, PushOptions, delete_paths, forget_files, push, select_changed, upload_files,
+};
 use crate::reload::{Browser, worth_reloading};
 use crate::scan::{LocalFile, collect_files, describe};
 use crate::sync_status;
@@ -164,17 +166,21 @@ async fn synchronize(
         return Ok(Vec::new());
     }
 
-    let sent = match transfer(ctx, manifest, work.clone()).await {
-        Ok(sent) => sent,
+    let outcome = match transfer(ctx, manifest, work.clone()).await {
+        Ok(sent) => Ok(sent),
         Err(error) => {
             logging::warn(format!("{error:#}"));
-            ctx.dav.wait_until_ready(None).await?;
-            transfer(ctx, manifest, work).await?
+            match ctx.dav.wait_until_ready(None).await {
+                Ok(()) => transfer(ctx, manifest, work).await,
+                Err(error) => Err(error),
+            }
         }
     };
 
+    // Saved on failure too, so the files the transfer forgot stay forgotten
+    // when the watcher is stopped before the next sync.
     manifest.save(&ctx.manifest_path)?;
-    Ok(sent)
+    outcome
 }
 
 async fn transfer(ctx: &Ctx, manifest: &mut Manifest, work: Work) -> Result<Vec<String>> {
@@ -193,12 +199,12 @@ async fn transfer(ctx: &Ctx, manifest: &mut Manifest, work: Work) -> Result<Vec<
         return Ok(sent);
     }
 
-    let names: Vec<String> = work
-        .upserts
-        .iter()
-        .map(|file| file.relative.clone())
-        .collect();
+    forget_files(manifest, &work.upserts);
     let recorded = upload_files(ctx, work.upserts, None).await?;
+    let names: Vec<String> = recorded
+        .iter()
+        .map(|(relative, _)| relative.clone())
+        .collect();
     for (relative, entry) in recorded {
         manifest.record(relative, entry);
     }

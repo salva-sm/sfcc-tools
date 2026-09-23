@@ -20,11 +20,12 @@ const DEFAULT_IGNORED_NAMES: [&str; 12] = [
     "desktop.ini",
 ];
 
-/// Editor leftovers, plus two things a cartridge never needs on an instance:
+/// Editor and script leftovers, which the sandbox refuses with a 403 anyway,
+/// plus two things a cartridge never needs on an instance:
 /// a source map, which only serves a browser that has the sources, and a unit
 /// test, which runs before the upload rather than on the sandbox.
-const DEFAULT_IGNORED_SUFFIXES: [&str; 8] = [
-    ".swp", ".swo", ".orig", ".rej", "~", ".map", ".test.js", ".spec.js",
+const DEFAULT_IGNORED_SUFFIXES: [&str; 9] = [
+    ".swp", ".swo", ".orig", ".rej", ".bak", "~", ".map", ".test.js", ".spec.js",
 ];
 
 #[derive(Debug, Clone)]
@@ -228,6 +229,7 @@ mod tests {
         let ignore = ignore_with("");
         assert!(ignore.skips("app_common_ui/node_modules/lit/index.js"));
         assert!(ignore.skips("app_common_ui/cartridge/.DS_Store"));
+        assert!(ignore.skips("app/cartridge/scripts/voucher.js.bak"));
         assert!(!ignore.skips("app_common_ui/cartridge/client/default/js/utils.js"));
     }
 
