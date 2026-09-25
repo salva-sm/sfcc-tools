@@ -20,6 +20,7 @@ const MAGENTA: &str = "\x1b[35m";
 const CYAN: &str = "\x1b[36m";
 const NEW_BADGE: &str = "\x1b[1;97;41m";
 const BACK_BADGE: &str = "\x1b[1;97;45m";
+const SPIKE_BADGE: &str = "\x1b[1;30;43m";
 /// Longest message on a card before it is cut.
 const MESSAGE_CHARS: usize = 160;
 
@@ -118,6 +119,8 @@ pub enum Badge {
     New,
     /// Resolved before, and logged again in this pass.
     Back,
+    /// Known, and logged far more today than usual.
+    Spike,
     /// Reported before, not acknowledged.
     Pending,
     /// Nothing to mark.
@@ -177,6 +180,7 @@ pub fn card(card: &Card) -> String {
     let badge = match card.badge {
         Badge::New => format!("  {}", paint(NEW_BADGE, " NEW ")),
         Badge::Back => format!("  {}", paint(BACK_BADGE, " BACK ")),
+        Badge::Spike => format!("  {}", paint(SPIKE_BADGE, " SPIKE ")),
         Badge::Pending => format!("  {}", paint(YELLOW, "pending")),
         Badge::None => String::new(),
     };
@@ -209,22 +213,25 @@ pub fn card(card: &Card) -> String {
         ));
     }
 
-    let mut when = format!("first {}", moment(card.first_seen));
+    let mut when = Vec::new();
+    if !card.first_seen.is_empty() {
+        when.push(format!("first {}", moment(card.first_seen)));
+    }
     if let Some(last) = card.last_seen.filter(|last| *last != card.first_seen) {
-        when.push_str(&format!(" · last {}", moment(last)));
+        when.push(format!("last {}", moment(last)));
     }
     if let Some(deploy) = &card.deploy {
-        when.push_str(&format!(" · {deploy}"));
+        when.push(deploy.clone());
     }
-    when.push_str(&format!(" · {}", card.id));
-    lines.push(format!("   {}", paint(DIM, &when)));
+    when.push(card.id.to_string());
+    lines.push(format!("   {}", paint(DIM, &when.join(" · "))));
     lines.join("\n")
 }
 
 /// The part of the record's first line worth reading: without the thread and
 /// category, without a leading `Exception:` already in the title, and without
 /// a trailing `(file.js#214)` the location line already shows.
-fn message(head: &str, exception: Option<&str>) -> String {
+pub fn message(head: &str, exception: Option<&str>) -> String {
     static POSITION: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"\s*\([^()\s]+#\d+\)\s*$").expect("the pattern is a valid regex")
     });
@@ -245,7 +252,7 @@ fn message(head: &str, exception: Option<&str>) -> String {
 
 /// The controller the record was logged under - `Cart-AddProduct` - read out
 /// of the thread `PipelineCallServlet|Sites-Acme-Site|Cart-AddProduct|PipelineCall`.
-fn controller(head: &str) -> Option<&str> {
+pub fn controller(head: &str) -> Option<&str> {
     let before = head.split_once("[] ").map_or(head, |(before, _)| before);
     let thread = before.split_whitespace().find(|word| word.contains('|'))?;
     thread.split('|').find(|segment| {

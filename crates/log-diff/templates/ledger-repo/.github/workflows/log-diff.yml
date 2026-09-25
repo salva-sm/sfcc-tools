@@ -1,0 +1,123 @@
+# Read DEV, STG and PRD, keep their ledgers, rebuild the dashboard, tell Teams.
+#
+# Every 30 minutes on working days, and by hand. Deploys are learned from each
+# instance's code versions, so nothing has to call this workflow; a
+# repository_dispatch from the pipeline (Jenkins now, GitHub Actions later)
+# is optional and only makes a deploy's commit exact. Setup: README.md.
+name: log-diff
+
+on:
+  schedule:
+    # Every 30 minutes through the working day, Monday to Friday (UTC).
+    - cron: "*/30 6-19 * * 1-5"
+  # Optional: the deploy pipeline announcing a deploy.
+  #   { "event_type": "sfcc-deploy",
+  #     "client_payload": { "environment": "dev", "sha": "...", "build_number": 4821,
+  #                         "deployed_at": "2026-09-25T10:00:00Z" } }
+  repository_dispatch:
+    types: [sfcc-deploy]
+  workflow_dispatch:
+    inputs:
+      baseline_days:
+        description: "First run of an environment only: days of log before today to learn from (ignored once its ledger has a cursor)"
+        required: false
+        default: "14"
+      environment:
+        description: "Take the baseline for: all, dev, stg or prd"
+        required: false
+        default: "all"
+
+# Two runs writing the ledgers at once would each lose the other's update.
+concurrency:
+  group: ledger
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    env:
+      SFCC_DEV_HOSTNAME: ${{ secrets.SFCC_DEV_HOSTNAME }}
+      SFCC_DEV_USERNAME: ${{ secrets.SFCC_DEV_USERNAME }}
+      SFCC_DEV_PASSWORD: ${{ secrets.SFCC_DEV_PASSWORD }}
+      SFCC_DEV_CLIENT_ID: ${{ secrets.SFCC_DEV_CLIENT_ID }}
+      SFCC_DEV_CLIENT_SECRET: ${{ secrets.SFCC_DEV_CLIENT_SECRET }}
+      SFCC_STG_HOSTNAME: ${{ secrets.SFCC_STG_HOSTNAME }}
+      SFCC_STG_USERNAME: ${{ secrets.SFCC_STG_USERNAME }}
+      SFCC_STG_PASSWORD: ${{ secrets.SFCC_STG_PASSWORD }}
+      SFCC_STG_CLIENT_ID: ${{ secrets.SFCC_STG_CLIENT_ID }}
+      SFCC_STG_CLIENT_SECRET: ${{ secrets.SFCC_STG_CLIENT_SECRET }}
+      SFCC_PRD_HOSTNAME: ${{ secrets.SFCC_PRD_HOSTNAME }}
+      SFCC_PRD_USERNAME: ${{ secrets.SFCC_PRD_USERNAME }}
+      SFCC_PRD_PASSWORD: ${{ secrets.SFCC_PRD_PASSWORD }}
+      SFCC_PRD_CLIENT_ID: ${{ secrets.SFCC_PRD_CLIENT_ID }}
+      SFCC_PRD_CLIENT_SECRET: ${{ secrets.SFCC_PRD_CLIENT_SECRET }}
+      TEAMS_WEBHOOK: ${{ secrets.TEAMS_WEBHOOK }}
+      TEAMS_WEBHOOK_DEV: ${{ secrets.TEAMS_WEBHOOK_DEV }}
+      TEAMS_WEBHOOK_STG: ${{ secrets.TEAMS_WEBHOOK_STG }}
+      TEAMS_WEBHOOK_PRD: ${{ secrets.TEAMS_WEBHOOK_PRD }}
+      GH_TOKEN: ${{ secrets.SOURCE_TOKEN }}
+      SOURCE_REPO: ${{ vars.SOURCE_REPO }}
+      SOURCE_BRANCH: ${{ vars.SOURCE_BRANCH }}
+      CODE_VERSION_PATTERN: ${{ vars.CODE_VERSION_PATTERN }}
+      DEV_CODE_VERSION_PATTERN: ${{ vars.DEV_CODE_VERSION_PATTERN }}
+      STG_CODE_VERSION_PATTERN: ${{ vars.STG_CODE_VERSION_PATTERN }}
+      PRD_CODE_VERSION_PATTERN: ${{ vars.PRD_CODE_VERSION_PATTERN }}
+      SPIKE_MIN: ${{ vars.SPIKE_MIN }}
+      SPIKE_FACTOR: ${{ vars.SPIKE_FACTOR }}
+      LOG_DIFF_COMPARE_URL: ${{ vars.COMPARE_URL }}
+      LOG_DIFF_CODE_URL: ${{ vars.CODE_URL }}
+      DISPATCH_ENVIRONMENT: ${{ github.event.client_payload.environment }}
+      DISPATCH_SHA: ${{ github.event.client_payload.sha }}
+      DISPATCH_BUILD: ${{ github.event.client_payload.build_number }}
+      DISPATCH_AT: ${{ github.event.client_payload.deployed_at }}
+      BASELINE_DAYS: ${{ inputs.baseline_days }}
+      BASELINE_ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install log-diff
+        run: |
+          curl -fsSL https://github.com/salva-sm/sfcc-tools/releases/latest/download/log-diff-x86_64-linux.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      # DEV first: STG and PRD name a build after the commit DEV recorded for it.
+      # One environment failing - asleep, credentials rotated - does not stop the others.
+      - name: DEV
+        continue-on-error: true
+        run: bash scripts/read-environment.sh dev
+      - name: STG
+        continue-on-error: true
+        run: bash scripts/read-environment.sh stg
+      - name: PRD
+        continue-on-error: true
+        run: bash scripts/read-environment.sh prd
+
+      - name: Dashboard
+        run: |
+          log-diff dashboard --ledger dev=ledgers/dev.json --ledger stg=ledgers/stg.json \
+            --ledger prd=ledgers/prd.json --team team.json --out dashboard/index.html --color never
+
+      - name: Commit
+        run: |
+          git config user.name "log-diff"
+          git config user.email "log-diff@users.noreply.github.com"
+          git add ledgers dashboard
+          message="ledgers: scheduled read"
+          if [ -n "$DISPATCH_SHA" ]; then
+            message="ledgers: deploy $DISPATCH_SHA on ${DISPATCH_ENVIRONMENT:-dev}"
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m "$message"
+            git push
+          fi
+
+      # The page, for whoever cannot or would rather not clone the repository.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard
+          path: dashboard/index.html
+          retention-days: 7

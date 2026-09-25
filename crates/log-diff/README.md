@@ -4,10 +4,11 @@ Tells the errors a change introduced on an SFCC instance from the ones that were
 there. Every record in the instance log is reduced to a signature, and a signature is only
 news when nobody has seen it before.
 
-It runs in two places. On CI, against the shared DEV instance after every deploy, it keeps
-the team's ledger and posts what is new to Teams. On a developer's machine, against their
-sandbox, it reads that ledger without writing to it and only speaks up about what the team
-does not already know.
+It runs in two places. On CI, against the shared DEV, STG and PRD instances, it keeps one
+ledger per environment, learns the deploys from the instances themselves, posts what is new
+and what spiked to Teams, sends a weekly digest, and builds a dashboard of it all. On a
+developer's machine, against their sandbox, it reads the DEV ledger without writing to it and
+only speaks up about what the team does not already know.
 
 ## Demo
 
@@ -102,11 +103,14 @@ log-diff watch [--interval 10s]   the same pass on a timer
 log-diff ack [ID... | --all]      list what is pending, or resolve it; --mute to never hear of it again
 log-diff list [--pending --resolved --muted --baseline]   everything, most important first
 log-diff unmute <ID... | --all>   hear of a muted signature again
-log-diff run [--state ledger.json] [--sha SHA --build N] read DEV, update the team's ledger
-             [--baseline-days N]                         first run: learn N days of history
+log-diff run [--state ledger.json] [--sha SHA --build N] read a shared instance, update its ledger
+             [--baseline-days N] [--team team.json]      first run: learn N days of history
 log-diff deploy --sha SHA --at TIMESTAMP                 CI: record a deploy learned elsewhere
 log-diff code-versions                                   the instance's code versions, oldest first
-log-diff notify --report new.json                        CI: post the report to Teams
+log-diff notify --report new.json                        CI: post new errors and spikes to Teams
+log-diff summary --ledger dev=... --ledger prd=...       the last days per environment, for Teams
+log-diff dashboard --ledger dev=... --ledger prd=...     an HTML dashboard of the ledgers
+log-diff ticket <ID> --ledger prd=... --project KEY      a Jira ticket for a signature
 log-diff completions <shell>      the tab completion script for zsh or PowerShell
 ```
 
@@ -301,106 +305,48 @@ commit through. `git commit --no-verify` skips it once.
 
 ## On CI
 
-The ledger lives in a repository of its own, `sfcc-log-ledger` say. Its workflow is
-[`templates/ledger-workflow.yml`](templates/ledger-workflow.yml): it downloads `log-diff`
-from the latest release of this repository, writes a `dw.json` from secrets outside the
-checkout, runs `log-diff run`, commits `ledger.json` and calls `log-diff notify`.
+The team's ledgers live in a repository of their own, one per environment - DEV, STG and PRD,
+or whichever of them the repository is given credentials for. The whole repository is a
+template: [`templates/ledger-repo`](templates/ledger-repo) - its workflows, the script that
+reads one environment, the team file and a README with every secret and variable. Copy it
+into a new private repository and replace `<owner>` and `<sfcc-repo>`.
 
-It runs on a `repository_dispatch` that Jenkins sends after the DEV deploy —
-[`templates/Jenkinsfile.snippet`](templates/Jenkinsfile.snippet) — on a schedule in
-between, and by hand from the Actions tab.
+Every 30 minutes on working days, for each environment in turn, the workflow:
 
-### Learning deploys without touching the pipeline
+1. records the deploys the instance itself lists (see below);
+2. reads the log since the last read - `log-diff run` - into `ledgers/<env>.json`;
+3. posts what is new, and what spiked, to Teams;
 
-When the deploy pipeline already tells some other repository after every deploy — an E2E
-suite triggered by a `repository_dispatch`, say — that workflow's runs are a list of deploys,
-and the ledger can read it instead of asking for a dispatch of its own. Nothing in the
-pipeline or the SFCC repository changes. Set three repository variables and one secret:
+then rebuilds `dashboard/index.html` from the three ledgers and commits. One environment
+failing does not stop the others, and one without credentials is skipped.
 
-| | |
-| :-- | :-- |
-| `DEPLOY_SIGNAL_REPO` (variable) | `owner/repo` whose workflow runs after each deploy |
-| `DEPLOY_SIGNAL_WORKFLOW` (variable) | That workflow's file, `e2e.yaml` |
-| `DEPLOY_SIGNAL_PATTERN` (variable) | A regex on the run's title whose first group is the sha: `development .* post-deploy ([0-9a-f]{7,40})` |
-| `DEPLOY_SIGNAL_TOKEN` (secret) | A fine-grained token with *Actions: read-only* on that repository |
+### Deploys, without touching the pipeline
 
-On every run the workflow's *Learn deploys* step lists the last thirty dispatched runs and
-records each one's sha, at the time the run started, with `log-diff deploy`. A sha already
-recorded is skipped, so feeding the same runs in again changes nothing. The schedule then
-does the reading, and the Jenkins snippet is not needed at all.
+When every build is deployed to a code version of its own - `b4378_20260925` and so on -
+the instance lists its own deploys. `log-diff code-versions` prints them with when each was
+written, which is when that build went up, and `log-diff deploy` records one per build and
+skips a build it already has. DEV names each build after the last commit on its branch
+before then (right unless something was merged while it was building); STG and PRD get
+builds DEV already had, so a build there takes the commit DEV recorded for the same number.
 
-Or straight from the instance, when the pipeline deploys every build to a code version of
-its own — `b4378_20260925` and so on. `log-diff code-versions` lists them with when each was
-written, which is when that build went up, and the *Learn deploys from the code versions*
-step records one deploy per build. With `SOURCE_REPO` set, each is named after the last
-commit on `SOURCE_BRANCH` before it, so the Teams card links to the commits between two
-builds; that is right unless something was merged while a build was running.
-
-| | |
-| :-- | :-- |
-| `CODE_VERSION_PATTERN` (variable) | A regex on the code version's name whose first group is the build number: `^b([0-9]+)_` |
-| `SOURCE_REPO` (variable) | `owner/repo` of the SFCC code |
-| `SOURCE_BRANCH` (variable) | The branch DEV is deployed from, `develop` unless set |
-| `DEPLOY_SIGNAL_TOKEN` (secret) | A fine-grained token with *Contents: read-only* on `SOURCE_REPO` |
+A `repository_dispatch` from the pipeline - Jenkins, or a GitHub Actions deploy workflow -
+naming the environment, the sha and the build makes a deploy's commit exact. It is optional:
+[`templates/Jenkinsfile.snippet`](templates/Jenkinsfile.snippet) is one. Moving deploys from
+one to the other changes nothing here: the code versions keep telling, whoever writes them.
 
 Listing code versions takes WebDAV read access to `/cartridges` as well as `/logs`: a
-Business Manager access key has it; an API client needs both in its WebDAV permissions. A
-build already recorded is skipped, whatever sha it was recorded under.
+Business Manager access key has it; an API client needs both in its WebDAV permissions.
+Reading never writes to the instance, so a shared DEV, STG or PRD host is fine here even
+though `sfcc-upload` refuses to push to one.
 
-### Setting up the ledger repository
+### The first run
 
-1. **Create it private.** It holds scrubbed error messages from the instance, and nobody
-   outside the team needs to read it. It needs no `ledger.json` to start with: the first
-   run writes one.
-2. **Add the workflow** as `.github/workflows/log-diff.yml`, copied from the template.
-   `LOG_DIFF_COMPARE_URL` in it points at the repository the SFCC code lives in, with
-   `{from}` and `{to}` for the two shas; it only adds a link to the Teams card, so drop the
-   line if that repository has no compare page.
-3. **Add the secrets**, under *Settings → Secrets and variables → Actions*:
-
-   | Secret | |
-   | :-- | :-- |
-   | `SFCC_DEV_HOSTNAME` | The DEV instance host, without `https://` |
-   | `SFCC_DEV_USERNAME`, `SFCC_DEV_PASSWORD` | A Business Manager user and its WebDAV access key (*the user's profile → Access Keys*, scope *WebDAV File Access and UX Studio*) |
-   | `SFCC_DEV_CLIENT_ID`, `SFCC_DEV_CLIENT_SECRET` | Instead of the two above: an Account Manager API client, given read access to `/logs` in *Administration → Organization → WebDAV Client Permissions* |
-   | `TEAMS_WEBHOOK` | A Teams Workflows webhook (or a legacy incoming webhook). Without it, every step but the last one works |
-
-   Reading the log never writes to the instance, so a shared DEV host is fine here even
-   though `sfcc-upload` refuses to push to one.
-4. **Let the workflow push.** It asks for `contents: write`; an organisation that caps
-   Actions at read-only needs *Settings → Actions → Workflow permissions → Read and write*.
-5. **Tell Jenkins where to dispatch.** The snippet posts to
-   `https://api.github.com/repos/<owner>/sfcc-log-ledger/dispatches` — replace `<owner>` with
-   the account or organisation holding the repository. It needs a token stored in Jenkins as
-   a secret text credential: a fine-grained token scoped to that one repository with
-   *Contents: read and write*, which is what `repository_dispatch` asks for. Put the stage
-   right after the DEV deploy, not at the end of the pipeline that goes on to STG and PRD.
-6. **Give developers read access**, if they are to use the team's ledger locally.
-   `LOG_DIFF_SHARED` is the raw URL of the file,
-   `https://raw.githubusercontent.com/<owner>/sfcc-log-ledger/main/ledger.json`, and a private
-   repository needs a token in each developer's environment, `GITHUB_TOKEN` or
-   `LOG_DIFF_TOKEN` — a fine-grained one with *Contents: read-only* on that repository is
-   enough. Without access, `check` and `watch` still work; they just cannot leave out what
-   the team already knows.
-
-Nothing else needs to see the repository. `log-diff` itself is downloaded from this one,
-which is public, so the workflow needs no token for that.
-
-The first run — by hand from the Actions tab is fine — has nothing to compare against. It
-learns every signature in the DEV log, commits them to `ledger.json` and reports nothing.
-From the second run on, only signatures missing from the ledger are reported.
-
-How far back the first run learns is `--baseline-days`, the *baseline_days* input when the
-workflow is run by hand (14 unless changed): the log of that many days before today, plus
-today's. Without it, today's log only, since 00:00 UTC. Days of history are worth having:
-a failure that only turns up with a weekly job or a payment method nobody tried today would
-otherwise be reported as new the first time it does, and laid at whatever deploy was live.
-Only the files still in the instance's `Logs` folder are read — the older ones SFCC moves to
-`log_archive`, compressed, are not — so asking for more days than the instance keeps is
-harmless, it just reads what there is. Those signatures have no deploy: none was recorded
-then. The option is ignored once the ledger has a cursor; delete `ledger.json` to take the
-baseline again. A run started by hand or by the schedule records no deploy; only the dispatch from
-Jenkins does.
+The first read of an environment has nothing to compare against. It learns instead of
+reporting: `--baseline-days` of log before today (the *baseline_days* input when the
+workflow is run by hand, 14 unless changed), plus today's. The days the instance has already
+compressed into `log_archive` are read too, so asking for two weeks gets two weeks.
+Those signatures have no deploy: none was recorded then. The option is ignored once the
+ledger has a cursor; delete the ledger to take the baseline again.
 
 ### Laying blame
 
@@ -409,12 +355,70 @@ uses what it shipped, often after the next deploy has been dispatched. So `run` 
 the deploy that triggered it. Each new signature goes to the deploy that was live when it was
 **first logged**, and the suspects are the commits between that deploy and the one before it:
 `--compare-url` (or `LOG_DIFF_COMPARE_URL`), with `{from}` and `{to}` for the two shas, turns
-that into a link on the Teams card. Pass `--at` when the deploy went live noticeably before
-the run.
+that into a link on the Teams card, and `--code-url` (`LOG_DIFF_CODE_URL`), with `{sha}`,
+`{path}` and `{line}`, links the line that failed, at that deploy.
 
-`notify` posts an Adaptive Card, which both Teams Workflows webhooks and the older incoming
-webhooks accept. The webhook comes from `--webhook` or `LOG_DIFF_WEBHOOK`; without one,
-nothing is posted and the run still succeeds. A report with nothing new posts nothing.
+### Spikes
+
+A known signature is news again when it is logged far more than usual - the way a regression
+of an old failure looks. The ledger counts every signature per day for the last 90 days;
+`run` reports one as a **spike** when today it has been logged at least `--spike-min` times
+(20) and `--spike-factor` times (5) its average day over the week before. Each is reported
+once a day, however many runs follow, and what first showed up today is new rather than a
+spike.
+
+### The team file
+
+`team.json`, next to the ledgers, is what people decided - edited by pull request, never by
+the workflow, so a person's edit and a run's commit never touch the same file:
+
+```json
+{
+  "muted": { "4cfc684705f583bc": { "reason": "Bot traffic on an old URL", "by": "salva" } },
+  "tickets": { "7d1e0c42a9b35f16": { "key": "SHOP-123", "url": "https://acme.atlassian.net/browse/SHOP-123" } }
+}
+```
+
+A muted signature is still counted, but never reported: not as new, not as a spike, not in
+the summary. `log-diff ticket <id> --ledger prd=ledgers/prd.json --project KEY` opens a Jira
+Cloud ticket carrying where it fails, how often, since which deploy and the scrubbed example
+(`JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`), and records its key here; `--dry-run` prints
+the issue instead.
+
+### Teams
+
+`notify` posts an Adaptive Card - new signatures with their deploy, commits and code link,
+then spikes - which both Teams Workflows webhooks and the older incoming webhooks accept. The
+webhook comes from `--webhook` or `LOG_DIFF_WEBHOOK`; without one nothing is posted and the
+run still succeeds, and a report with nothing in it posts nothing.
+
+`log-diff summary` is the weekly digest: for each environment, the records of the last
+`--days` (7) against the days before, the share that shows as an error page, the new
+signatures, the most logged and the fastest growing - printed, and posted when a webhook is
+given. The template's `summary.yml` sends it on Monday mornings.
+
+### The dashboard
+
+`log-diff dashboard --ledger dev=ledgers/dev.json --ledger stg=... --ledger prd=...` writes
+one self-contained HTML page - data embedded, nothing fetched, so it opens from a clone, a
+workflow artifact or Pages. For the last 7, 30 or 90 days, one environment or all of them:
+
+- records per day per environment, with the deploys marked, and new signatures per day;
+- the most important signatures - error pages first, then the most logged - with their
+  trend against the period before and their last 14 days;
+- spikes, what reached PRD after DEV or STG had it first, and the deploys with the new
+  signatures each brought;
+- a signature's history, scrubbed example, and a link to its line of code.
+
+Each chart has a table view, colour follows the environment (the three validated for colour
+blindness together), light and dark are both designed, and `?env=`, `?range=`,
+`?signature=` and `?theme=` link into it. `--open` opens it once written.
+
+## In the editor
+
+`check` and `watch` also write how many signatures are pending for the checkout, and the
+ISML language server shows it in Zed's status bar - `2 SFCC errors pending (1 new)` - for as
+long as something is, the same way it shows the uploader's state.
 
 ## Building
 

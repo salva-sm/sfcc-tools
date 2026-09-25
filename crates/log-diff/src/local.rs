@@ -83,6 +83,14 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// Where the status of a sandbox's checks is written: `status/<identity>.json`
+/// in log-diff's own folder, the one layout the language server has to share.
+fn status_path(config: &Config) -> PathBuf {
+    local_dir()
+        .join("status")
+        .join(format!("{}.json", config.identity()))
+}
+
 impl Local {
     /// The team's ledger, and a warning when it had to make do.
     pub async fn team(&self) -> Result<Ledger> {
@@ -143,16 +151,35 @@ impl Local {
         mine.advance(host, read.next);
         mine.save(&self.state)?;
 
-        let pending = mine
+        let pending: Vec<(String, Known)> = mine
             .pending(team)
             .map(|(id, known)| (id.clone(), known.clone()))
             .collect();
+        self.write_status(pending.len(), new.len() + back.len());
         Ok(Outcome {
             new,
             back,
             pending,
             expired,
         })
+    }
+
+    /// What an editor shows: how many signatures are pending for this
+    /// checkout, in a file next to the ledger, one per sandbox. The ISML
+    /// language server reads it for Zed's status bar. Never fails a pass.
+    fn write_status(&self, pending: usize, fresh: usize) {
+        let path = status_path(&self.config);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let status = serde_json::json!({
+            "cartridges": self.config.cartridges_dir.to_string_lossy(),
+            "hostname": self.config.hostname,
+            "pending": pending,
+            "new": fresh,
+            "at": Utc::now().timestamp(),
+        });
+        let _ = std::fs::write(path, status.to_string());
     }
 
     /// Tell whoever is looking: the terminal always, the desktop when asked.

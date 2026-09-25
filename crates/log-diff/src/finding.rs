@@ -4,7 +4,7 @@
 use crate::normalize::{Signature, signature};
 use chrono::{SecondsFormat, Utc};
 use sfcc_core::logs::Entry;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// One signature, and how often and when it was logged in one read.
 #[derive(Debug, Clone)]
@@ -17,6 +17,8 @@ pub struct Finding {
     pub first: String,
     /// The last of them.
     pub last: String,
+    /// How many on each day, `YYYY-MM-DD` in UTC - what a history is built of.
+    pub per_day: BTreeMap<String, u64>,
 }
 
 /// Group records by signature, in the order each first appeared.
@@ -32,11 +34,13 @@ pub fn findings(entries: &[Entry]) -> Vec<Finding> {
             .moment_utc()
             .map(|moment| moment.to_rfc3339_opts(SecondsFormat::Secs, true))
             .unwrap_or_else(|| now.clone());
+        let day = moment[..10].to_string();
 
         match index.get(&signature.id) {
             Some(&at) => {
                 let finding = &mut found[at];
                 finding.count += 1;
+                *finding.per_day.entry(day).or_default() += 1;
                 if moment < finding.first {
                     finding.first = moment.clone();
                 }
@@ -51,6 +55,7 @@ pub fn findings(entries: &[Entry]) -> Vec<Finding> {
                     count: 1,
                     first: moment.clone(),
                     last: moment,
+                    per_day: BTreeMap::from([(day, 1)]),
                 });
             }
         }

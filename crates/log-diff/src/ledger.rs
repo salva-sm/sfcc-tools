@@ -41,7 +41,17 @@ pub struct Ledger {
     /// Deploys seen, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deploy_log: Vec<Deploy>,
+    /// Team only: records per day (`YYYY-MM-DD`, UTC) per signature, for the
+    /// last [`DAYS_KEPT`] days - what spikes are measured against and the
+    /// dashboard charts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub daily: BTreeMap<String, BTreeMap<String, u64>>,
 }
+
+/// Days of per-day counts kept.
+pub const DAYS_KEPT: usize = 90;
+/// Days before today a spike is measured against.
+const SPIKE_WINDOW: i64 = 7;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 /// One signature, as far as the ledger knows it.
@@ -79,6 +89,21 @@ pub struct Known {
     /// Local only: muted on purpose, as opposed to taken in with a baseline.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub muted: bool,
+    /// Team only: the last day it was reported as a spike, so that a day's
+    /// spike is reported once, not on every run of the day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spiked_on: Option<String>,
+}
+
+/// A known signature logged far more today than it used to be.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Spike {
+    /// The signature.
+    pub id: String,
+    /// Records today, so far.
+    pub today: u64,
+    /// Records per day over the week before.
+    pub usual: f64,
 }
 
 /// Where a signature stands in a developer's own ledger.
@@ -170,6 +195,7 @@ impl Default for Ledger {
             cursor: None,
             known_signatures: BTreeMap::new(),
             deploy_log: Vec::new(),
+            daily: BTreeMap::new(),
         }
     }
 }
@@ -262,9 +288,77 @@ impl Ledger {
                 back: false,
                 resolved_at: None,
                 muted: false,
+                spiked_on: None,
             },
         );
         true
+    }
+
+    /// Add a finding's records to the per-day counts, dropping days older
+    /// than [`DAYS_KEPT`].
+    pub fn record_daily(&mut self, finding: &Finding) {
+        for (day, count) in &finding.per_day {
+            *self
+                .daily
+                .entry(day.clone())
+                .or_default()
+                .entry(finding.signature.id.clone())
+                .or_default() += count;
+        }
+        let excess = self.daily.len().saturating_sub(DAYS_KEPT);
+        let old: Vec<String> = self.daily.keys().take(excess).cloned().collect();
+        for day in old {
+            self.daily.remove(&day);
+        }
+    }
+
+    /// Known signatures logged at least `min` times on `today` and `factor`
+    /// times more than on an average day of the week before, each reported
+    /// once a day. What first showed up today is new, not a spike, and what
+    /// is in `quiet` is never one.
+    pub fn spikes(&mut self, today: &str, min: u64, factor: f64, quiet: &[&str]) -> Vec<Spike> {
+        let Some(counts) = self.daily.get(today).cloned() else {
+            return Vec::new();
+        };
+        let Ok(date) = chrono::NaiveDate::parse_from_str(today, "%Y-%m-%d") else {
+            return Vec::new();
+        };
+        let before: Vec<String> = (1..=SPIKE_WINDOW)
+            .map(|back| {
+                (date - chrono::Duration::days(back))
+                    .format("%Y-%m-%d")
+                    .to_string()
+            })
+            .collect();
+
+        let mut spikes = Vec::new();
+        for (id, today_count) in counts {
+            let Some(known) = self.known_signatures.get_mut(&id) else {
+                continue;
+            };
+            if today_count < min
+                || known.first_seen.starts_with(today)
+                || known.spiked_on.as_deref() == Some(today)
+                || quiet.contains(&id.as_str())
+            {
+                continue;
+            }
+            let total: u64 = before
+                .iter()
+                .filter_map(|day| self.daily.get(day)?.get(&id))
+                .sum();
+            let usual = total as f64 / SPIKE_WINDOW as f64;
+            if today_count as f64 >= factor * usual.max(1.0) {
+                known.spiked_on = Some(today.to_string());
+                spikes.push(Spike {
+                    id,
+                    today: today_count,
+                    usual,
+                });
+            }
+        }
+        spikes.sort_by_key(|spike| std::cmp::Reverse(spike.today));
+        spikes
     }
 
     /// Count a finding in a developer's own ledger, where a resolved signature
@@ -396,7 +490,7 @@ pub async fn load_shared(source: &str, cache: &Path) -> Result<(Ledger, Option<S
     }
 }
 
-async fn fetch(url: &str) -> Result<String> {
+pub async fn fetch(url: &str) -> Result<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()?;

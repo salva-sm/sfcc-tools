@@ -154,6 +154,64 @@ pub async fn since(dav: &Dav, mark: &Mark, levels: &[String]) -> Result<Since> {
     })
 }
 
+/// The records of the wanted levels in `log_archive`, from `first_day` on -
+/// the days the instance has already compressed and moved out of the log
+/// folder. A day still in the log folder is left to [`since`], so nothing is
+/// read twice. The archive is read whole, which is only worth it once: for a
+/// baseline, not on every run.
+pub async fn archived(dav: &Dav, first_day: &str, levels: &[String]) -> Result<Vec<Entry>> {
+    let live: std::collections::HashSet<String> = listing(dav)
+        .await?
+        .into_iter()
+        .map(|file| file.name)
+        .collect();
+
+    let archive = format!("{}/log_archive", dav.logs_url());
+    let mut files = Vec::new();
+    for entry in dav.list(&archive).await.unwrap_or_default() {
+        match entry.is_dir {
+            // Some instances keep a folder per day or per month inside.
+            true => {
+                let folder = format!("{archive}/{}", encode_path(&entry.name));
+                for file in dav.list(&folder).await.unwrap_or_default() {
+                    if !file.is_dir {
+                        files.push((format!("{folder}/{}", encode_path(&file.name)), file.name));
+                    }
+                }
+            }
+            false => files.push((
+                format!("{archive}/{}", encode_path(&entry.name)),
+                entry.name,
+            )),
+        }
+    }
+
+    let mut entries = Vec::new();
+    for (url, name) in files {
+        let Some(plain) = name.strip_suffix(".gz") else {
+            continue;
+        };
+        let Some(day) = file_day(plain) else {
+            continue;
+        };
+        if day < first_day || live.contains(plain) || !is_wanted(plain, levels, day) {
+            continue;
+        }
+        let compressed = dav
+            .read_bytes(&url)
+            .await
+            .with_context(|| format!("cannot read {name}"))?;
+        let mut text = String::new();
+        use std::io::Read;
+        flate2::read::MultiGzDecoder::new(compressed.as_slice())
+            .read_to_string(&mut text)
+            .with_context(|| format!("{name} is not a readable gzip file"))?;
+        entries.extend(parse_entries(plain, &text));
+    }
+    order(&mut entries);
+    Ok(entries)
+}
+
 async fn listing(dav: &Dav) -> Result<Vec<crate::webdav::DavEntry>> {
     let files = dav
         .list(dav.logs_url())
