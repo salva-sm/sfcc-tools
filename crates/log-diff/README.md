@@ -105,6 +105,7 @@ log-diff unmute <ID... | --all>   hear of a muted signature again
 log-diff run [--state ledger.json] [--sha SHA --build N] read DEV, update the team's ledger
              [--baseline-days N]                         first run: learn N days of history
 log-diff deploy --sha SHA --at TIMESTAMP                 CI: record a deploy learned elsewhere
+log-diff code-versions                                   the instance's code versions, oldest first
 log-diff notify --report new.json                        CI: post the report to Teams
 log-diff completions <shell>      the tab completion script for zsh or PowerShell
 ```
@@ -327,6 +328,24 @@ On every run the workflow's *Learn deploys* step lists the last thirty dispatche
 records each one's sha, at the time the run started, with `log-diff deploy`. A sha already
 recorded is skipped, so feeding the same runs in again changes nothing. The schedule then
 does the reading, and the Jenkins snippet is not needed at all.
+
+Or straight from the instance, when the pipeline deploys every build to a code version of
+its own — `b4378_20260925` and so on. `log-diff code-versions` lists them with when each was
+written, which is when that build went up, and the *Learn deploys from the code versions*
+step records one deploy per build. With `SOURCE_REPO` set, each is named after the last
+commit on `SOURCE_BRANCH` before it, so the Teams card links to the commits between two
+builds; that is right unless something was merged while a build was running.
+
+| | |
+| :-- | :-- |
+| `CODE_VERSION_PATTERN` (variable) | A regex on the code version's name whose first group is the build number: `^b([0-9]+)_` |
+| `SOURCE_REPO` (variable) | `owner/repo` of the SFCC code |
+| `SOURCE_BRANCH` (variable) | The branch DEV is deployed from, `develop` unless set |
+| `DEPLOY_SIGNAL_TOKEN` (secret) | A fine-grained token with *Contents: read-only* on `SOURCE_REPO` |
+
+Listing code versions takes WebDAV read access to `/cartridges` as well as `/logs`: a
+Business Manager access key has it; an API client needs both in its WebDAV permissions. A
+build already recorded is skipped, whatever sha it was recorded under.
 
 ### Setting up the ledger repository
 

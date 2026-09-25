@@ -99,6 +99,14 @@ enum Command {
         is left alone, so the same list can be fed in on every run."
     )]
     Deploy(DeployArgs),
+    /// List the instance's code versions and when each was last written, oldest first
+    #[command(
+        long_about = "List the code versions on the instance in dw.json, one per line - \
+        name, a tab, and when it was last written (RFC 3339) - oldest first. Read-only.\n\n\
+        A pipeline that deploys each build to a code version of its own leaves a list of its \
+        deploys there, which a workflow can feed to `log-diff deploy`."
+    )]
+    CodeVersions(InstanceArgs),
     /// CI: post a report written by `run --report` to a Teams channel
     Notify(NotifyArgs),
     /// List pending signatures, or mark them as dealt with
@@ -332,11 +340,33 @@ async fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Command::Run(args) => ci_run(args).await,
+        Command::CodeVersions(args) => {
+            let config = Config::load(args.config, None)?;
+            let dav = Dav::new(&config)?;
+            let mut versions: Vec<(String, String)> = dav
+                .list(dav.root_url())
+                .await?
+                .into_iter()
+                .filter(|entry| entry.is_dir)
+                .filter_map(|entry| {
+                    let at = chrono::DateTime::parse_from_rfc2822(&entry.modified).ok()?;
+                    let at = at
+                        .with_timezone(&chrono::Utc)
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+                    Some((at, entry.name))
+                })
+                .collect();
+            versions.sort();
+            for (at, name) in versions {
+                println!("{name}\t{at}");
+            }
+            Ok(0)
+        }
         Command::Deploy(args) => {
             let state = args.state.unwrap_or_else(team_on_this_machine);
             let mut ledger = ledger::Ledger::load(&state)?;
             let sha = args.sha.trim();
-            if ledger.has_deploy(sha) {
+            if ledger.has_deploy(sha) || args.build.is_some_and(|build| ledger.has_build(build)) {
                 status(
                     Tone::Info,
                     &format!("deploy {} already recorded", short(sha)),
