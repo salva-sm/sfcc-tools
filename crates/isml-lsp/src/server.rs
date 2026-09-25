@@ -21,7 +21,7 @@ use lsp_types::{
 use crate::complete::{self, Completer};
 use crate::metadata::Metadata;
 use crate::workspace::Workspace;
-use crate::{diagnose, hover, reference, resolve, sync, validate};
+use crate::{diagnose, errors, hover, reference, resolve, sync, validate};
 
 /// Serve one editor session over stdio, until it disconnects.
 pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
@@ -43,6 +43,7 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
     let initialize_params = connection.initialize(capabilities)?;
     let params: InitializeParams = serde_json::from_value(initialize_params)?;
     sync::report(workspace_roots(&params), connection.sender.clone());
+    errors::report(workspace_roots(&params), connection.sender.clone());
 
     let server = Server::new(params);
     server.run(&connection)?;
