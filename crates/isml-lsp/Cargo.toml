@@ -1,6 +1,6 @@
 [package]
 name = "isml-lsp"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 description = "ISML completion, SFCC custom-attribute completion and diagnostics, and go-to-definition for SFCC paths"
 license = "MIT"
