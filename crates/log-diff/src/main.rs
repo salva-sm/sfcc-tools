@@ -91,6 +91,14 @@ enum Command {
         in its log folder is read; log_archive is not."
     )]
     Run(RunArgs),
+    /// CI: record a deploy in the team's ledger without reading the log
+    #[command(
+        long_about = "Record a deploy in the team's ledger, without reading the log.\n\n\
+        For deploys learned about after the fact - from another workflow's runs, say - so \
+        that the next `run` lays each new signature at the right one. A sha already recorded \
+        is left alone, so the same list can be fed in on every run."
+    )]
+    Deploy(DeployArgs),
     /// CI: post a report written by `run --report` to a Teams channel
     Notify(NotifyArgs),
     /// List pending signatures, or mark them as dealt with
@@ -246,6 +254,22 @@ struct AckArgs {
 }
 
 #[derive(Args)]
+struct DeployArgs {
+    /// The team's ledger (default: the one `run` keeps on this machine)
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    state: Option<PathBuf>,
+    /// The commit deployed
+    #[arg(long, value_name = "SHA")]
+    sha: String,
+    /// When it went live, RFC 3339
+    #[arg(long, value_name = "TIMESTAMP")]
+    at: String,
+    /// The CI build that deployed it
+    #[arg(long, value_name = "N")]
+    build: Option<u64>,
+}
+
+#[derive(Args)]
 struct ListArgs {
     /// Reported and not dealt with
     #[arg(long)]
@@ -308,6 +332,28 @@ async fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Command::Run(args) => ci_run(args).await,
+        Command::Deploy(args) => {
+            let state = args.state.unwrap_or_else(team_on_this_machine);
+            let mut ledger = ledger::Ledger::load(&state)?;
+            let sha = args.sha.trim();
+            if ledger.has_deploy(sha) {
+                status(
+                    Tone::Info,
+                    &format!("deploy {} already recorded", short(sha)),
+                );
+                return Ok(0);
+            }
+            let at = chrono::DateTime::parse_from_rfc3339(&args.at)
+                .with_context(|| format!("--at {:?} is not an RFC 3339 timestamp", args.at))?
+                .with_timezone(&chrono::Utc);
+            ledger.record_deploy(sha, args.build, at);
+            ledger.save(&state)?;
+            status(
+                Tone::Ok,
+                &format!("deploy {} recorded at {}", short(sha), args.at),
+            );
+            Ok(0)
+        }
         Command::Notify(args) => {
             let report = notify::Report::load(&args.report)?;
             if report.new.is_empty() {

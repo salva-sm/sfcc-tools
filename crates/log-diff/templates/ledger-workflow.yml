@@ -13,6 +13,14 @@
 #     - or -
 #   SFCC_DEV_CLIENT_ID, SFCC_DEV_CLIENT_SECRET  an API client with WebDAV read on /logs
 #   TEAMS_WEBHOOK                         a Teams Workflows (or incoming) webhook URL
+#   DEPLOY_SIGNAL_TOKEN                   optional, see "Learn deploys" below
+#
+# Variables (Settings -> Secrets and variables -> Actions -> Variables), all
+# optional, for learning deploys from another workflow instead of a dispatch:
+#   DEPLOY_SIGNAL_REPO       owner/repo whose workflow runs after every DEV deploy
+#   DEPLOY_SIGNAL_WORKFLOW   that workflow's file name, e.g. e2e.yaml
+#   DEPLOY_SIGNAL_PATTERN    an extended regex on the run's title whose first
+#                            group is the deployed sha, e.g. `development .* post-deploy ([0-9a-f]{7,40})`
 name: log-diff
 
 on:
@@ -65,6 +73,27 @@ jobs:
              + (if $username != "" then {username: $username, password: $password} else {} end)
              + (if $id != "" then {"client-id": $id, "client-secret": $secret} else {} end)' \
             > "$RUNNER_TEMP/sfcc/dw.json"
+
+      # When the deploy pipeline already tells another repository - an E2E suite,
+      # say - that workflow's runs are the list of deploys: each one's title names
+      # the sha and its start is when the deploy finished. Nothing in the deploy
+      # pipeline or the SFCC repository has to change. `log-diff deploy` skips a
+      # sha it already has, so the last runs are fed in every time.
+      - name: Learn deploys
+        if: vars.DEPLOY_SIGNAL_REPO != ''
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_SIGNAL_TOKEN }}
+          REPO: ${{ vars.DEPLOY_SIGNAL_REPO }}
+          WORKFLOW: ${{ vars.DEPLOY_SIGNAL_WORKFLOW }}
+          PATTERN: ${{ vars.DEPLOY_SIGNAL_PATTERN }}
+        run: |
+          gh api "repos/$REPO/actions/workflows/$WORKFLOW/runs?event=repository_dispatch&per_page=30" \
+            --jq '.workflow_runs | sort_by(.created_at) | .[] | [.created_at, .display_title] | @tsv' |
+          while IFS=$'\t' read -r at title; do
+            if [[ "$title" =~ $PATTERN ]]; then
+              log-diff deploy --state ledger.json --sha "${BASH_REMATCH[1]}" --at "$at" --color never
+            fi
+          done
 
       - name: Read the DEV log
         env:

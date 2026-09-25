@@ -330,6 +330,14 @@ impl Ledger {
         self.deploy_log.drain(..excess);
     }
 
+    /// Whether a deploy of `sha` is already recorded. Short and full shas of
+    /// the same commit are the same deploy.
+    pub fn has_deploy(&self, sha: &str) -> bool {
+        self.deploy_log
+            .iter()
+            .any(|deploy| deploy.sha.starts_with(sha) || sha.starts_with(&deploy.sha))
+    }
+
     /// The deploy that was live at `moment`: the last one to go live before it.
     pub fn deploy_at(&self, moment: &str) -> Option<usize> {
         self.deploy_log
