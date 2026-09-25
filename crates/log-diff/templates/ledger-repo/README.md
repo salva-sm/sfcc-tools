@@ -24,21 +24,31 @@ change for it.
 | :-- | :-- |
 | [`ledgers/dev.json`](ledgers) · `stg.json` · `prd.json` | One per environment. Written by the workflow only |
 | [`team.json`](team.json) | What the team decided: signatures muted for everyone, and their tickets. Edited by people, by pull request |
-| [`dashboard/index.html`](dashboard) | Rebuilt on every run from the three ledgers |
 | [`.github/workflows/log-diff.yml`](.github/workflows/log-diff.yml) | Reads the three environments, commits, tells Teams |
 | [`.github/workflows/summary.yml`](.github/workflows/summary.yml) | Monday's digest, 07:00 UTC |
-| [`scripts/`](scripts) | What the workflow runs per environment, and a local dashboard |
+| [`scripts/read-environment.sh`](scripts/read-environment.sh) | What the workflow runs per environment |
+
+Data and the code that keeps it, nothing else: no binaries (`log-diff` is downloaded by
+each run) and nothing generated from the ledgers.
 
 ## The dashboard
 
-One self-contained HTML page — nothing is fetched, so it works from a clone:
+Built on your machine from this repository, when you want it — one self-contained HTML
+page in your temp folder, nothing kept here:
 
 ```bash
-git pull && start dashboard/index.html          # Windows; `open` on macOS
-scripts/dashboard.sh                            # or rebuild it, with links to the code
+log-diff dashboard --from <owner>/sfcc-log-ledger --open \
+  --code-url 'https://github.com/<owner>/<sfcc-repo>/blob/{sha}/source/cartridges/{path}#L{line}' \
+  --compare-url 'https://github.com/<owner>/<sfcc-repo>/compare/{from}...{to}'
 ```
 
-Every run also attaches it to the workflow run as the **dashboard** artifact.
+It reads the ledgers and `team.json` through the GitHub API with your `gh` login (or
+`GITHUB_TOKEN`), so it needs no clone. `log-diff summary --from <owner>/sfcc-log-ledger`
+prints the digest the same way. Every run also attaches the page to itself as the
+**dashboard** artifact, for anyone without `log-diff`.
+
+Not published to GitHub Pages on purpose: on a plan without private Pages, that would
+make PRD's errors public.
 
 It shows, for the last 7, 30 or 90 days and for one environment or all three: records per
 day with the deploys marked, new signatures per day, the most important signatures (error

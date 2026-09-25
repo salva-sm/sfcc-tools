@@ -108,8 +108,8 @@ log-diff run [--state ledger.json] [--sha SHA --build N] read a shared instance,
 log-diff deploy --sha SHA --at TIMESTAMP                 CI: record a deploy learned elsewhere
 log-diff code-versions                                   the instance's code versions, oldest first
 log-diff notify --report new.json                        CI: post new errors and spikes to Teams
-log-diff summary --ledger dev=... --ledger prd=...       the last days per environment, for Teams
-log-diff dashboard --ledger dev=... --ledger prd=...     an HTML dashboard of the ledgers
+log-diff summary --from owner/repo                       the last days per environment, for Teams
+log-diff dashboard --from owner/repo --open              an HTML dashboard of the ledgers
 log-diff ticket <ID> --ledger prd=... --project KEY      a Jira ticket for a signature
 log-diff completions <shell>      the tab completion script for zsh or PowerShell
 ```
@@ -119,8 +119,9 @@ else here) and `--level` for the log files to read, `error,customerror,fatal` by
 
 The team's ledger comes from `--shared` or `LOG_DIFF_SHARED`: a path to a clone of the
 ledger repository, or a raw URL. A URL to a private repository is fetched with
-`LOG_DIFF_TOKEN` or `GITHUB_TOKEN`; when it cannot be fetched the last copy is used, so an
-outage does not turn everything the team knows into news.
+`LOG_DIFF_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` or the token of your `gh` login - sent to GitHub
+only, whatever the URL; when it cannot be fetched the last copy is used, so an outage does
+not turn everything the team knows into news.
 
 ### Nothing is required
 
@@ -131,8 +132,8 @@ The ledger repository and Teams are both optional, and nothing fails without the
   on your own machine. With no `--state` it keeps the team's ledger in
   `log-diff/dev-ledger.json`, next to your own, and `check` and `watch` use it by themselves
   when `LOG_DIFF_SHARED` is not set. Run it again whenever you want it brought up to date.
-  When the repository exists, copy that file in as `ledger.json` and CI carries on from
-  where it stopped.
+  When the repository exists, copy that file in as `ledgers/dev.json` and CI carries on
+  from where it stopped.
 - **No Teams webhook.** `notify` says what it would have sent and exits 0.
 
 ### Exit status
@@ -317,8 +318,9 @@ Every 30 minutes on working days, for each environment in turn, the workflow:
 2. reads the log since the last read - `log-diff run` - into `ledgers/<env>.json`;
 3. posts what is new, and what spiked, to Teams;
 
-then rebuilds `dashboard/index.html` from the three ledgers and commits. One environment
-failing does not stop the others, and one without credentials is skipped.
+then commits the ledgers - and only them: the repository keeps data, never binaries or
+anything generated from it. One environment failing does not stop the others, and one
+without credentials is skipped.
 
 ### Deploys, without touching the pipeline
 
@@ -399,9 +401,13 @@ given. The template's `summary.yml` sends it on Monday mornings.
 
 ### The dashboard
 
-`log-diff dashboard --ledger dev=ledgers/dev.json --ledger stg=... --ledger prd=...` writes
-one self-contained HTML page - data embedded, nothing fetched, so it opens from a clone, a
-workflow artifact or Pages. For the last 7, 30 or 90 days, one environment or all of them:
+`log-diff dashboard --from <owner>/sfcc-log-ledger --open` builds one self-contained HTML
+page on your machine - in the temp folder unless `--out` says otherwise - from the ledgers
+and the team file, read through the GitHub API with your `gh` login or `GITHUB_TOKEN`. No
+clone is needed, and nothing generated is kept in the ledger repository; each run of its
+workflow attaches the same page as an artifact instead. `--ledger dev=path --ledger prd=url`
+builds it from files one by one. For the last 7, 30 or 90 days, one environment or all of
+them:
 
 - records per day per environment, with the deploys marked, and new signatures per day;
 - the most important signatures - error pages first, then the most logged - with their

@@ -1,4 +1,4 @@
-# Read DEV, STG and PRD, keep their ledgers, rebuild the dashboard, tell Teams.
+# Read DEV, STG and PRD, keep their ledgers, tell Teams.
 #
 # Every 30 minutes on working days, and by hand. Deploys are learned from each
 # instance's code versions, so nothing has to call this workflow; a
@@ -96,22 +96,20 @@ jobs:
         continue-on-error: true
         run: bash scripts/read-environment.sh prd
 
+      # Built for the run's artifacts only: this repository keeps data, never
+      # what is generated from it. `log-diff dashboard --from <this repository>`
+      # builds the same page on anyone's machine.
       - name: Dashboard
         run: |
           log-diff dashboard --ledger dev=ledgers/dev.json --ledger stg=ledgers/stg.json \
-            --ledger prd=ledgers/prd.json --team team.json --out dashboard/index.html --color never
+            --ledger prd=ledgers/prd.json --team team.json \
+            --out "$RUNNER_TEMP/dashboard/index.html" --color never
 
       - name: Commit
         run: |
           git config user.name "log-diff"
           git config user.email "log-diff@users.noreply.github.com"
-          # The dashboard carries the time it was built, so it alone is no reason to commit.
           git add ledgers
-          if git diff --cached --quiet; then
-            echo "nothing new in the ledgers"
-            exit 0
-          fi
-          git add dashboard
           message="ledgers: scheduled read"
           if [ -n "$DISPATCH_SHA" ]; then
             message="ledgers: deploy $DISPATCH_SHA on ${DISPATCH_ENVIRONMENT:-dev}"
@@ -121,9 +119,8 @@ jobs:
             git push
           fi
 
-      # The page, for whoever cannot or would rather not clone the repository.
       - uses: actions/upload-artifact@v4
         with:
           name: dashboard
-          path: dashboard/index.html
+          path: ${{ runner.temp }}/dashboard/index.html
           retention-days: 7
