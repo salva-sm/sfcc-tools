@@ -428,7 +428,7 @@ function tableView(target, days, series) {
 function niceMax(value) {
   if (value <= 0) return 1;
   const power = Math.pow(10, Math.floor(Math.log10(value)));
-  for (const step of [1, 2, 2.5, 5, 10]) if (step * power >= value) return step * power;
+  for (const step of [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (step * power >= value) return step * power;
   return 10 * power;
 }
 
@@ -588,6 +588,8 @@ function envChips(row) {
 }
 function trendText(row) {
   if (!row.previous) return row.count ? "new" : "–";
+  // Past tripling, a percentage stops reading as anything; a multiple does.
+  if (row.count >= row.previous * 3) return `▲×${Math.round(row.count / row.previous)}`;
   const change = Math.round(((row.count - row.previous) / row.previous) * 100);
   return `${change > 0 ? "▲" : change < 0 ? "▼" : ""}${Math.abs(change)}%`;
 }
@@ -654,7 +656,10 @@ function renderJourney() {
     const before = earlier.map(env => ({ env, sig: env.signatures[id] })).filter(one => one.sig && one.sig.first < sig.first);
     if (!before.length) continue;
     before.sort((a, b) => a.sig.first.localeCompare(b.sig.first));
-    list.push({ id, sig, from: before[0], days: Math.round((new Date(sig.first) - new Date(before[0].sig.first)) / 86400000) });
+    const days = Math.floor((new Date(sig.first) - new Date(before[0].sig.first)) / 86400000);
+    // Seen on the same day everywhere is a failure that was already there, not one that travelled.
+    if (days < 1) continue;
+    list.push({ id, sig, from: before[0], days });
   }
   list.sort((a, b) => b.sig.first.localeCompare(a.sig.first));
   if (!list.length) { box.replaceChildren(el("div", { class: "empty" }, "Nothing on PRD was seen on DEV or STG first.")); return; }
