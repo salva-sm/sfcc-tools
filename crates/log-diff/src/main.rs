@@ -276,8 +276,15 @@ struct RunArgs {
 #[derive(Args)]
 struct SummaryArgs {
     /// An environment's ledger, `name=path` or `name=url`; repeat for each
-    #[arg(long = "ledger", value_name = "NAME=PATH", required = true)]
+    #[arg(
+        long = "ledger",
+        value_name = "NAME=PATH",
+        required_unless_present = "from"
+    )]
     ledgers: Vec<String>,
+    /// Read every ledger and the team file from a ledger repository on GitHub instead
+    #[arg(long, value_name = "OWNER/REPO[@BRANCH]", conflicts_with_all = ["ledgers", "team"])]
+    from: Option<String>,
     /// The team file, to leave muted signatures out and name tickets
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     team: Option<PathBuf>,
@@ -300,14 +307,21 @@ struct SummaryArgs {
 #[derive(Args)]
 struct DashboardArgs {
     /// An environment's ledger, `name=path` or `name=url`; repeat for each
-    #[arg(long = "ledger", value_name = "NAME=PATH", required = true)]
+    #[arg(
+        long = "ledger",
+        value_name = "NAME=PATH",
+        required_unless_present = "from"
+    )]
     ledgers: Vec<String>,
+    /// Read every ledger and the team file from a ledger repository on GitHub instead
+    #[arg(long, value_name = "OWNER/REPO[@BRANCH]", conflicts_with_all = ["ledgers", "team"])]
+    from: Option<String>,
     /// The team file: muted signatures and tickets
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     team: Option<PathBuf>,
-    /// Where to write the page
-    #[arg(long, value_name = "PATH", default_value = "dashboard/index.html", value_hint = ValueHint::FilePath)]
-    out: PathBuf,
+    /// Where to write the page (default: log-diff-dashboard.html in the temp folder)
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    out: Option<PathBuf>,
     /// Link to a line of code, with {sha}, {path} and {line}
     #[arg(long, value_name = "URL", env = "LOG_DIFF_CODE_URL")]
     code_url: Option<String>,
@@ -500,8 +514,8 @@ async fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Command::Summary(args) => {
-            let environments = envs::load(&args.ledgers).await?;
-            let team = team::Team::load_optional(args.team.as_deref())?;
+            let (environments, team) =
+                ledgers(&args.from, &args.ledgers, args.team.as_deref()).await?;
             let weeks = summary::weeks(&environments, &team, args.days);
             for week in &weeks {
                 status(
@@ -540,19 +554,20 @@ async fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Command::Dashboard(args) => {
-            let environments = envs::load(&args.ledgers).await?;
-            let team = team::Team::load_optional(args.team.as_deref())?;
+            let (environments, team) =
+                ledgers(&args.from, &args.ledgers, args.team.as_deref()).await?;
             let links = dashboard::Links {
                 code: args.code_url,
                 compare: args.compare_url,
             };
-            dashboard::write(&args.out, &dashboard::data(&environments, &team, &links))?;
-            status(
-                Tone::Ok,
-                &format!("dashboard written to {}", args.out.display()),
-            );
+            // Generated, so never next to the data it is built from.
+            let out = args
+                .out
+                .unwrap_or_else(|| std::env::temp_dir().join("log-diff-dashboard.html"));
+            dashboard::write(&out, &dashboard::data(&environments, &team, &links))?;
+            status(Tone::Ok, &format!("dashboard written to {}", out.display()));
             if args.open {
-                open_in_browser(&args.out);
+                open_in_browser(&out);
             }
             Ok(0)
         }
@@ -793,6 +808,19 @@ fn local(args: LocalArgs) -> Result<(Local, Dav)> {
         expire: Some(args.expire).filter(|expire| !expire.is_zero()),
     };
     Ok((local, dav))
+}
+
+/// The ledgers and team file a command was pointed at: a repository on
+/// GitHub, or paths and URLs one by one.
+async fn ledgers(
+    from: &Option<String>,
+    specs: &[String],
+    team: Option<&std::path::Path>,
+) -> Result<(Vec<envs::Environment>, team::Team)> {
+    match from {
+        Some(repository) => envs::from_repository(repository).await,
+        None => Ok((envs::load(specs).await?, team::Team::load_optional(team)?)),
+    }
 }
 
 async fn ticket(args: TicketArgs) -> Result<i32> {

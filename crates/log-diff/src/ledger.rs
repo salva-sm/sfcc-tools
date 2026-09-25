@@ -495,10 +495,17 @@ pub async fn fetch(url: &str) -> Result<String> {
         .timeout(Duration::from_secs(10))
         .build()?;
     let mut request = client.get(url).header("User-Agent", "log-diff");
-    let token = std::env::var("LOG_DIFF_TOKEN").or_else(|_| std::env::var("GITHUB_TOKEN"));
-    if let Ok(token) = token.as_deref().map(str::trim)
-        && !token.is_empty()
-    {
+    // A GitHub token only ever goes to GitHub, whatever URL is configured.
+    let host = url
+        .split("://")
+        .nth(1)
+        .and_then(|rest| rest.split(['/', ':']).next())
+        .unwrap_or_default();
+    let github = matches!(
+        host,
+        "github.com" | "api.github.com" | "raw.githubusercontent.com"
+    );
+    if let Some(token) = github.then(crate::envs::github_token).flatten() {
         request = request
             .bearer_auth(token)
             .header("Accept", "application/vnd.github.raw");

@@ -1,3 +1,6 @@
 .dev/
 *.tmp*
 report-*.json
+# Generated from the ledgers, never kept with them.
+dashboard/
+*.html
