@@ -338,6 +338,14 @@ impl Ledger {
             .any(|deploy| deploy.sha.starts_with(sha) || sha.starts_with(&deploy.sha))
     }
 
+    /// Whether a deploy by CI build `build` is already recorded, whatever sha
+    /// it was recorded under.
+    pub fn has_build(&self, build: u64) -> bool {
+        self.deploy_log
+            .iter()
+            .any(|deploy| deploy.build == Some(build))
+    }
+
     /// The deploy that was live at `moment`: the last one to go live before it.
     pub fn deploy_at(&self, moment: &str) -> Option<usize> {
         self.deploy_log

@@ -21,6 +21,12 @@
 #   DEPLOY_SIGNAL_WORKFLOW   that workflow's file name, e.g. e2e.yaml
 #   DEPLOY_SIGNAL_PATTERN    an extended regex on the run's title whose first
 #                            group is the deployed sha, e.g. `development .* post-deploy ([0-9a-f]{7,40})`
+# or, when every build is deployed to a code version of its own:
+#   CODE_VERSION_PATTERN     an extended regex on the code version's name whose first
+#                            group is the build number, e.g. `^b([0-9]+)_`
+#   SOURCE_REPO              owner/repo of the SFCC code, to name each build's commit
+#   SOURCE_BRANCH            the branch DEV is deployed from (default: develop)
+# DEPLOY_SIGNAL_TOKEN then needs Contents: read-only on SOURCE_REPO.
 name: log-diff
 
 on:
@@ -93,6 +99,31 @@ jobs:
             if [[ "$title" =~ $PATTERN ]]; then
               log-diff deploy --state ledger.json --sha "${BASH_REMATCH[1]}" --at "$at" --color never
             fi
+          done
+
+      # When every build is deployed to a code version of its own - `b4378_...` -
+      # the instance itself lists the deploys: one code version each, written
+      # when it went up. Its commit is the last one on the branch before then,
+      # which is right unless something was merged while the build ran.
+      - name: Learn deploys from the code versions
+        if: vars.CODE_VERSION_PATTERN != ''
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_SIGNAL_TOKEN }}
+          PATTERN: ${{ vars.CODE_VERSION_PATTERN }}
+          SOURCE_REPO: ${{ vars.SOURCE_REPO }}
+          SOURCE_BRANCH: ${{ vars.SOURCE_BRANCH || 'develop' }}
+        run: |
+          log-diff code-versions --config "$RUNNER_TEMP/sfcc/dw.json" |
+          while IFS=$'\t' read -r name at; do
+            [[ "$name" =~ $PATTERN ]] || continue
+            build="${BASH_REMATCH[1]}"
+            sha="$name"
+            if [ -n "$SOURCE_REPO" ]; then
+              commit=$(gh api "repos/$SOURCE_REPO/commits?sha=$SOURCE_BRANCH&until=$at&per_page=1" \
+                --jq '.[0].sha' 2>/dev/null || true)
+              [ -n "$commit" ] && sha="$commit"
+            fi
+            log-diff deploy --state ledger.json --sha "$sha" --build "$build" --at "$at" --color never
           done
 
       - name: Read the DEV log

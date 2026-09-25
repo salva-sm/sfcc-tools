@@ -284,3 +284,16 @@ fn a_deploy_is_recognised_by_its_short_or_full_sha() {
     assert!(ledger.has_deploy("9451cff0123456789abcdef0123456789abcdef0"));
     assert!(!ledger.has_deploy("1234567"));
 }
+
+#[test]
+fn a_build_already_recorded_is_the_same_deploy_whatever_its_sha() {
+    let mut ledger = Ledger::default();
+    ledger.record_deploy(
+        "b4378_20260925_lcg",
+        Some(4378),
+        Utc.with_ymd_and_hms(2026, 9, 25, 11, 42, 49).unwrap(),
+    );
+
+    assert!(ledger.has_build(4378));
+    assert!(!ledger.has_build(4379));
+}
