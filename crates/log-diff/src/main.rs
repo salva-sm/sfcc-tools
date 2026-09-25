@@ -1,10 +1,15 @@
 mod ci;
+mod dashboard;
+mod envs;
 mod finding;
+mod jira;
 mod ledger;
 mod local;
 mod normalize;
 mod notify;
 mod output;
+mod summary;
+mod team;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueHint};
@@ -109,6 +114,30 @@ enum Command {
     CodeVersions(InstanceArgs),
     /// CI: post a report written by `run --report` to a Teams channel
     Notify(NotifyArgs),
+    /// The last days in errors, per environment: new, most logged, growing
+    #[command(
+        long_about = "Summarise the last --days days of each environment's ledger: records \
+        against the days before, the share that shows as an error page, the new signatures, the \
+        most logged and the fastest growing. Printed, and posted to Teams when a webhook is \
+        given - a weekly schedule makes it Monday's digest."
+    )]
+    Summary(SummaryArgs),
+    /// Write an HTML dashboard of the ledgers: charts, rankings, spikes, deploys
+    #[command(
+        long_about = "Write one self-contained HTML page from the ledgers: records and new \
+        signatures per day and per environment, the most important signatures, spikes, what \
+        reached production after DEV or STG had it, and the deploys with what each brought. \
+        Nothing in it is fetched, so it opens from a checkout, a workflow artifact or Pages."
+    )]
+    Dashboard(DashboardArgs),
+    /// Open a Jira ticket for a signature, and remember it in the team file
+    #[command(
+        long_about = "Open a Jira ticket for a signature, carrying what the ledger knows - \
+        where it fails, how often, since which deploy, and the scrubbed example - and record \
+        its key in the team file, so the dashboard and the digest link to it. Jira Cloud, \
+        with JIRA_URL, JIRA_EMAIL and JIRA_API_TOKEN from the environment."
+    )]
+    Ticket(TicketArgs),
     /// List pending signatures, or mark them as dealt with
     Ack(AckArgs),
     /// List signatures by standing - pending, resolved, muted, baseline - most important first
@@ -227,6 +256,92 @@ struct RunArgs {
     /// On the first run, learn from this many days of log before today, not only today's
     #[arg(long, value_name = "DAYS", default_value_t = 0)]
     baseline_days: u32,
+    /// Link to a line of code, with {sha}, {path} (cartridge-relative) and {line}
+    #[arg(long, value_name = "URL", env = "LOG_DIFF_CODE_URL")]
+    code_url: Option<String>,
+    /// The team file: signatures muted for everyone are never reported
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    team: Option<PathBuf>,
+    /// Fewest records in a day that can make a spike
+    #[arg(long, value_name = "N", default_value_t = 20)]
+    spike_min: u64,
+    /// Times its usual day a known signature must be logged to spike
+    #[arg(long, value_name = "X", default_value_t = 5.0)]
+    spike_factor: f64,
+    /// Call the instance this in reports - dev, stg, prd - rather than by its host
+    #[arg(long, value_name = "NAME")]
+    environment: Option<String>,
+}
+
+#[derive(Args)]
+struct SummaryArgs {
+    /// An environment's ledger, `name=path` or `name=url`; repeat for each
+    #[arg(long = "ledger", value_name = "NAME=PATH", required = true)]
+    ledgers: Vec<String>,
+    /// The team file, to leave muted signatures out and name tickets
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    team: Option<PathBuf>,
+    /// Days summarised, compared with as many days before them
+    #[arg(long, value_name = "N", default_value_t = 7)]
+    days: i64,
+    /// Teams webhook to post it to; without one it is only printed
+    #[arg(
+        long,
+        value_name = "URL",
+        env = "LOG_DIFF_WEBHOOK",
+        hide_env_values = true
+    )]
+    webhook: Option<String>,
+    /// Where the dashboard can be opened, for a button on the card
+    #[arg(long, value_name = "URL", env = "LOG_DIFF_DASHBOARD_URL")]
+    dashboard_url: Option<String>,
+}
+
+#[derive(Args)]
+struct DashboardArgs {
+    /// An environment's ledger, `name=path` or `name=url`; repeat for each
+    #[arg(long = "ledger", value_name = "NAME=PATH", required = true)]
+    ledgers: Vec<String>,
+    /// The team file: muted signatures and tickets
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    team: Option<PathBuf>,
+    /// Where to write the page
+    #[arg(long, value_name = "PATH", default_value = "dashboard/index.html", value_hint = ValueHint::FilePath)]
+    out: PathBuf,
+    /// Link to a line of code, with {sha}, {path} and {line}
+    #[arg(long, value_name = "URL", env = "LOG_DIFF_CODE_URL")]
+    code_url: Option<String>,
+    /// Link comparing two deploys, with {from} and {to}
+    #[arg(long, value_name = "URL", env = "LOG_DIFF_COMPARE_URL")]
+    compare_url: Option<String>,
+    /// Open it in the browser once written
+    #[arg(long)]
+    open: bool,
+}
+
+#[derive(Args)]
+struct TicketArgs {
+    /// The signature id, or the start of it
+    #[arg(value_name = "ID")]
+    id: String,
+    /// The ledger the signature is in, `name=path`
+    #[arg(long, value_name = "NAME=PATH")]
+    ledger: String,
+    /// The team file the ticket is recorded in
+    #[arg(long, value_name = "PATH", default_value = "team.json", value_hint = ValueHint::FilePath)]
+    team: PathBuf,
+    /// The Jira project key
+    #[arg(long, value_name = "KEY", env = "JIRA_PROJECT")]
+    project: String,
+    /// The issue type
+    #[arg(long = "type", value_name = "NAME", default_value = "Bug")]
+    kind: String,
+    /// Link to a line of code, with {sha}, {path} and {line}
+    #[arg(long, value_name = "URL", env = "LOG_DIFF_CODE_URL")]
+    code_url: Option<String>,
+    /// Print the issue that would be created, and create nothing
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Args)]
@@ -384,27 +499,84 @@ async fn run(cli: Cli) -> Result<i32> {
             );
             Ok(0)
         }
-        Command::Notify(args) => {
-            let report = notify::Report::load(&args.report)?;
-            if report.new.is_empty() {
-                status(Tone::Ok, "nothing new to notify");
-                return Ok(0);
-            }
-            let Some(webhook) = args.webhook.filter(|webhook| !webhook.trim().is_empty()) else {
+        Command::Summary(args) => {
+            let environments = envs::load(&args.ledgers).await?;
+            let team = team::Team::load_optional(args.team.as_deref())?;
+            let weeks = summary::weeks(&environments, &team, args.days);
+            for week in &weeks {
                 status(
                     Tone::Info,
                     &format!(
-                        "{} new signature(s), but no Teams webhook (LOG_DIFF_WEBHOOK) - nothing sent",
-                        report.new.len()
+                        "{} · {} records ({}) · {:.0}% error pages · {} new · {} spikes",
+                        week.name.to_uppercase(),
+                        week.total,
+                        summary::trend(week.total, week.before),
+                        week.serious_share * 100.0,
+                        week.new.len(),
+                        week.spikes
                     ),
+                );
+                for (title, lines) in [
+                    ("new", &week.new),
+                    ("most logged", &week.top),
+                    ("growing", &week.growing),
+                ] {
+                    for line in lines {
+                        println!(
+                            "   {title:<12} {}{} x{} ({})",
+                            if line.serious { "500 · " } else { "" },
+                            line.headline,
+                            line.count,
+                            summary::trend(line.count, line.before)
+                        );
+                    }
+                }
+            }
+            if let Some(webhook) = args.webhook.filter(|webhook| !webhook.trim().is_empty()) {
+                let card = summary::card(&weeks, args.days, args.dashboard_url.as_deref());
+                notify::post(&webhook, &card).await?;
+                status(Tone::Ok, "summary posted to Teams");
+            }
+            Ok(0)
+        }
+        Command::Dashboard(args) => {
+            let environments = envs::load(&args.ledgers).await?;
+            let team = team::Team::load_optional(args.team.as_deref())?;
+            let links = dashboard::Links {
+                code: args.code_url,
+                compare: args.compare_url,
+            };
+            dashboard::write(&args.out, &dashboard::data(&environments, &team, &links))?;
+            status(
+                Tone::Ok,
+                &format!("dashboard written to {}", args.out.display()),
+            );
+            if args.open {
+                open_in_browser(&args.out);
+            }
+            Ok(0)
+        }
+        Command::Ticket(args) => ticket(args).await,
+        Command::Notify(args) => {
+            let report = notify::Report::load(&args.report)?;
+            if report.is_empty() {
+                status(Tone::Ok, "nothing new to notify");
+                return Ok(0);
+            }
+            let what = format!(
+                "{} new signature(s), {} spike(s)",
+                report.new.len(),
+                report.spikes.len()
+            );
+            let Some(webhook) = args.webhook.filter(|webhook| !webhook.trim().is_empty()) else {
+                status(
+                    Tone::Info,
+                    &format!("{what}, but no Teams webhook (LOG_DIFF_WEBHOOK) - nothing sent"),
                 );
                 return Ok(0);
             };
             notify::teams(&webhook, &report).await?;
-            status(
-                Tone::Ok,
-                &format!("posted {} new signature(s) to Teams", report.new.len()),
-            );
+            status(Tone::Ok, &format!("posted {what} to Teams"));
             Ok(0)
         }
         Command::Completions(args) => {
@@ -494,7 +666,12 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
         at: args.at,
         report: args.report,
         compare_url: args.compare_url,
+        code_url: args.code_url,
         baseline_days: args.baseline_days,
+        team: args.team,
+        spike_min: args.spike_min,
+        spike_factor: args.spike_factor,
+        environment: args.environment,
     };
     let had_cursor = ledger::Ledger::load(&options.state)?
         .cursor_for(&config.hostname)
@@ -554,11 +731,40 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
             serious: ledger::serious(&item.label, &item.example),
             deploy,
         };
-        println!(
-            "
-{}",
-            output::card(&card)
+        println!();
+        println!("{}", output::card(&card));
+    }
+    if !outcome.report.spikes.is_empty() {
+        println!();
+        status(
+            Tone::New,
+            &format!(
+                "{} spike{} - known errors logged far more than usual",
+                outcome.report.spikes.len(),
+                if outcome.report.spikes.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ),
         );
+    }
+    for spike in &outcome.report.spikes {
+        let card = Card {
+            id: &spike.id,
+            label: &spike.label,
+            exception: spike.exception_class.as_deref(),
+            location: spike.location.as_deref(),
+            example: &spike.example,
+            count: spike.today,
+            first_seen: "",
+            last_seen: None,
+            badge: Badge::Spike,
+            serious: spike.serious,
+            deploy: Some(format!("usually ~{:.0} a day", spike.usual)),
+        };
+        println!();
+        println!("{}", output::card(&card));
     }
 
     match args.fail_on_new && !outcome.report.new.is_empty() {
@@ -589,8 +795,103 @@ fn local(args: LocalArgs) -> Result<(Local, Dav)> {
     Ok((local, dav))
 }
 
+async fn ticket(args: TicketArgs) -> Result<i32> {
+    let environment = envs::load(std::slice::from_ref(&args.ledger))
+        .await?
+        .pop()
+        .context("no ledger given")?;
+    let matches: Vec<(&String, &ledger::Known)> = environment
+        .ledger
+        .known_signatures
+        .iter()
+        .filter(|(id, _)| id.starts_with(args.id.as_str()))
+        .collect();
+    let (id, known) = match matches.as_slice() {
+        [one] => *one,
+        [] => bail!(
+            "no signature {} in the {} ledger",
+            args.id,
+            environment.name
+        ),
+        _ => bail!(
+            "{} matches {} signatures - give more of the id",
+            args.id,
+            matches.len()
+        ),
+    };
+
+    let mut team = team::Team::load(&args.team)?;
+    if let Some(ticket) = team.tickets.get(id) {
+        status(
+            Tone::Info,
+            &format!("{id} already has {} - {}", ticket.key, ticket.url),
+        );
+        return Ok(0);
+    }
+
+    let link = ci::code_url(
+        args.code_url.as_deref(),
+        known.first_deploy_sha.as_deref(),
+        known.location.as_deref(),
+    );
+    if args.dry_run {
+        let target = jira::Target {
+            url: String::new(),
+            email: String::new(),
+            token: String::new(),
+            project: args.project,
+            kind: args.kind,
+        };
+        let issue = jira::issue(&target, id, &environment.name, known, link.as_deref());
+        println!("{}", serde_json::to_string_pretty(&issue)?);
+        return Ok(0);
+    }
+    let target = jira::Target::from_env(args.project, args.kind)?;
+    let issue = jira::issue(&target, id, &environment.name, known, link.as_deref());
+    let ticket = jira::create(&target, &issue).await?;
+    status(
+        Tone::Ok,
+        &format!("{} created - {}", ticket.key, ticket.url),
+    );
+    team.tickets.insert(id.clone(), ticket);
+    team.save(&args.team)?;
+    status(
+        Tone::Info,
+        &format!(
+            "recorded in {} - commit it so everyone sees it",
+            args.team.display()
+        ),
+    );
+    Ok(0)
+}
+
+/// Open a file in the default browser, and never fail over it.
+fn open_in_browser(path: &std::path::Path) {
+    let target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let result = if cfg!(windows) {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(&target)
+            .spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(&target).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(&target).spawn()
+    };
+    if result.is_err() {
+        status(
+            Tone::Info,
+            &format!("open {} in a browser", target.display()),
+        );
+    }
+}
+
+/// A commit, shortened; a code version name, when that is all there is, whole.
 fn short(sha: &str) -> &str {
-    sha.get(..9).unwrap_or(sha)
+    match sha.len() >= 12 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        true => &sha[..9],
+        false => sha,
+    }
 }
 
 fn default_state() -> PathBuf {

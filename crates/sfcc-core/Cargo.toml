@@ -1,6 +1,6 @@
 [package]
 name = "sfcc-core"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 license.workspace = true
 repository.workspace = true
@@ -10,7 +10,7 @@ description = "What every SFCC tool here needs: the sandbox credentials in dw.js
 [features]
 # WebDAV and the log reader built on it. Off by default: the debug adapter
 # only needs dw.json, and has no reason to carry an async HTTP stack.
-webdav = ["dep:chrono", "dep:reqwest", "dep:tokio"]
+webdav = ["dep:chrono", "dep:flate2", "dep:reqwest", "dep:tokio"]
 # Tab completion for the command-line tools, installed by the tools themselves.
 completions = ["dep:clap", "dep:clap_complete"]
 
@@ -21,5 +21,6 @@ serde_json = "1"
 clap = { version = "4.6.6", optional = true }
 clap_complete = { version = "4.6.11", optional = true }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"], optional = true }
+flate2 = { version = "1.1.10", optional = true }
 reqwest = { version = "0.13.4", default-features = false, features = ["native-tls"], optional = true }
 tokio = { version = "1.53.1", features = ["sync", "time"], optional = true }

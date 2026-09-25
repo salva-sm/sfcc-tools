@@ -215,6 +215,20 @@ impl Dav {
         bail!("remote unzip of {relative_path} failed with HTTP {status}")
     }
 
+    /// A whole file, as bytes: for what is not text, an archived log.
+    pub async fn read_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        let response = self.send(|| self.client.get(url)).await?;
+        let status = response.status();
+        if !status.is_success() {
+            bail!("GET {url} failed with HTTP {status}");
+        }
+        Ok(response
+            .bytes()
+            .await
+            .context("cannot read the response")?
+            .to_vec())
+    }
+
     /// A file from `offset` to its end. Empty when there is nothing past it.
     pub async fn read_from(&self, url: &str, offset: u64) -> Result<String> {
         let response = self

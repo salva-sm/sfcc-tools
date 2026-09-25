@@ -289,11 +289,113 @@ fn a_deploy_is_recognised_by_its_short_or_full_sha() {
 fn a_build_already_recorded_is_the_same_deploy_whatever_its_sha() {
     let mut ledger = Ledger::default();
     ledger.record_deploy(
-        "b4378_20260925_lcg",
+        "b4378_20260925",
         Some(4378),
         Utc.with_ymd_and_hms(2026, 9, 25, 11, 42, 49).unwrap(),
     );
 
     assert!(ledger.has_build(4378));
     assert!(!ledger.has_build(4379));
+}
+
+fn counted(id_source: &Finding, per_day: &[(&str, u64)]) -> Finding {
+    let mut finding = id_source.clone();
+    finding.per_day = per_day
+        .iter()
+        .map(|(day, count)| (day.to_string(), *count))
+        .collect();
+    finding.count = per_day.iter().map(|(_, count)| count).sum();
+    finding
+}
+
+#[test]
+fn records_are_counted_per_day_and_old_days_dropped() {
+    let mut team = Ledger::default();
+    let base = found(FAILURE);
+    team.record_daily(&counted(&base, &[("2026-09-20", 3), ("2026-09-21", 1)]));
+    team.record_daily(&counted(&base, &[("2026-09-21", 2)]));
+
+    assert_eq!(team.daily["2026-09-20"][&base.signature.id], 3);
+    assert_eq!(team.daily["2026-09-21"][&base.signature.id], 3);
+
+    let many: Vec<String> = (0..DAYS_KEPT + 5)
+        .map(|back| {
+            (chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()
+                + chrono::Duration::days(back as i64))
+            .format("%Y-%m-%d")
+            .to_string()
+        })
+        .collect();
+    let refs: Vec<(&str, u64)> = many.iter().map(|day| (day.as_str(), 1)).collect();
+    team.record_daily(&counted(&base, &refs));
+    assert_eq!(team.daily.len(), DAYS_KEPT);
+}
+
+#[test]
+fn a_known_signature_far_above_its_usual_day_spikes_once_a_day() {
+    let mut team = Ledger::default();
+    let base = at("2026-09-10 10:00:00.000");
+    team.observe(&base, None, false);
+    team.record_daily(&counted(
+        &base,
+        &[
+            ("2026-09-15", 4),
+            ("2026-09-16", 6),
+            ("2026-09-17", 5),
+            ("2026-09-18", 5),
+            ("2026-09-19", 4),
+            ("2026-09-20", 6),
+            ("2026-09-21", 5),
+            ("2026-09-22", 90),
+        ],
+    ));
+
+    let spikes = team.spikes("2026-09-22", 20, 5.0, &[]);
+    assert_eq!(spikes.len(), 1);
+    assert_eq!(spikes[0].today, 90);
+    assert!((spikes[0].usual - 5.0).abs() < 0.01);
+    // Reported once for the day, however many runs follow.
+    assert!(team.spikes("2026-09-22", 20, 5.0, &[]).is_empty());
+}
+
+#[test]
+fn a_steady_or_small_or_muted_or_brand_new_signature_does_not_spike() {
+    let week: Vec<(&str, u64)> = vec![
+        ("2026-09-15", 60),
+        ("2026-09-16", 60),
+        ("2026-09-17", 60),
+        ("2026-09-18", 60),
+        ("2026-09-19", 60),
+        ("2026-09-20", 60),
+        ("2026-09-21", 60),
+    ];
+
+    // Steady: 70 against 60 a day.
+    let mut team = Ledger::default();
+    let steady = at("2026-09-10 10:00:00.000");
+    team.observe(&steady, None, false);
+    let mut days = week.clone();
+    days.push(("2026-09-22", 70));
+    team.record_daily(&counted(&steady, &days));
+    assert!(team.spikes("2026-09-22", 20, 5.0, &[]).is_empty());
+
+    // Small: from nothing to 15 is under the floor of 20.
+    let mut team = Ledger::default();
+    team.observe(&steady, None, false);
+    team.record_daily(&counted(&steady, &[("2026-09-22", 15)]));
+    assert!(team.spikes("2026-09-22", 20, 5.0, &[]).is_empty());
+
+    // Muted: from nothing to 500, but the team said it does not matter.
+    let mut team = Ledger::default();
+    team.observe(&steady, None, false);
+    team.record_daily(&counted(&steady, &[("2026-09-22", 500)]));
+    let quiet = [steady.signature.id.as_str()];
+    assert!(team.spikes("2026-09-22", 20, 5.0, &quiet).is_empty());
+
+    // Brand new: first seen today, which makes it new, not a spike.
+    let mut team = Ledger::default();
+    let fresh = at("2026-09-22 08:00:00.000");
+    team.observe(&fresh, None, false);
+    team.record_daily(&counted(&fresh, &[("2026-09-22", 500)]));
+    assert!(team.spikes("2026-09-22", 20, 5.0, &[]).is_empty());
 }

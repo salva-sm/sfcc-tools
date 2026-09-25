@@ -1,0 +1,34 @@
+# Monday's digest: the last seven days of every environment, in Teams.
+name: summary
+
+on:
+  schedule:
+    # Mondays at 07:00 UTC.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Days to summarise"
+        required: false
+        default: "7"
+
+permissions:
+  contents: read
+
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install log-diff
+        run: |
+          curl -fsSL https://github.com/salva-sm/sfcc-tools/releases/latest/download/log-diff-x86_64-linux.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Summarise
+        env:
+          LOG_DIFF_WEBHOOK: ${{ secrets.TEAMS_WEBHOOK }}
+          LOG_DIFF_DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+        run: |
+          log-diff summary --ledger dev=ledgers/dev.json --ledger stg=ledgers/stg.json \
+            --ledger prd=ledgers/prd.json --team team.json --days "${{ inputs.days || '7' }}" --color never
