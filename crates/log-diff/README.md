@@ -104,6 +104,7 @@ log-diff list [--pending --resolved --muted --baseline]   everything, most impor
 log-diff unmute <ID... | --all>   hear of a muted signature again
 log-diff run [--state ledger.json] [--sha SHA --build N] read DEV, update the team's ledger
              [--baseline-days N]                         first run: learn N days of history
+log-diff deploy --sha SHA --at TIMESTAMP                 CI: record a deploy learned elsewhere
 log-diff notify --report new.json                        CI: post the report to Teams
 log-diff completions <shell>      the tab completion script for zsh or PowerShell
 ```
@@ -307,6 +308,25 @@ checkout, runs `log-diff run`, commits `ledger.json` and calls `log-diff notify`
 It runs on a `repository_dispatch` that Jenkins sends after the DEV deploy —
 [`templates/Jenkinsfile.snippet`](templates/Jenkinsfile.snippet) — on a schedule in
 between, and by hand from the Actions tab.
+
+### Learning deploys without touching the pipeline
+
+When the deploy pipeline already tells some other repository after every deploy — an E2E
+suite triggered by a `repository_dispatch`, say — that workflow's runs are a list of deploys,
+and the ledger can read it instead of asking for a dispatch of its own. Nothing in the
+pipeline or the SFCC repository changes. Set three repository variables and one secret:
+
+| | |
+| :-- | :-- |
+| `DEPLOY_SIGNAL_REPO` (variable) | `owner/repo` whose workflow runs after each deploy |
+| `DEPLOY_SIGNAL_WORKFLOW` (variable) | That workflow's file, `e2e.yaml` |
+| `DEPLOY_SIGNAL_PATTERN` (variable) | A regex on the run's title whose first group is the sha: `development .* post-deploy ([0-9a-f]{7,40})` |
+| `DEPLOY_SIGNAL_TOKEN` (secret) | A fine-grained token with *Actions: read-only* on that repository |
+
+On every run the workflow's *Learn deploys* step lists the last thirty dispatched runs and
+records each one's sha, at the time the run started, with `log-diff deploy`. A sha already
+recorded is skipped, so feeding the same runs in again changes nothing. The schedule then
+does the reading, and the Jenkins snippet is not needed at all.
 
 ### Setting up the ledger repository
 

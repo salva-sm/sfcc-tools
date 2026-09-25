@@ -63,8 +63,9 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
                 .with_timezone(&Utc),
             None => Utc::now(),
         };
-        // A dispatch retried is the same deploy, not a second one.
-        if ledger.deploy_log.last().map(|last| &last.sha) != Some(sha) {
+        // A dispatch retried, or a deploy already recorded by `log-diff
+        // deploy`, is the same deploy, not a second one.
+        if !ledger.has_deploy(sha) {
             ledger.record_deploy(sha, options.build, at);
         }
     }

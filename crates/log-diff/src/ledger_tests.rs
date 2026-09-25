@@ -270,3 +270,17 @@ fn what_shows_as_a_500_comes_first_then_what_happened_most() {
     // The uncaught error (50) and the one saying 500 (1) before the handled one (500).
     assert_eq!(counts, vec![50, 1, 500]);
 }
+
+#[test]
+fn a_deploy_is_recognised_by_its_short_or_full_sha() {
+    let mut ledger = Ledger::default();
+    ledger.record_deploy(
+        "9451cff0123456789abcdef0123456789abcdef0",
+        None,
+        Utc.with_ymd_and_hms(2026, 9, 22, 10, 0, 0).unwrap(),
+    );
+
+    assert!(ledger.has_deploy("9451cff"));
+    assert!(ledger.has_deploy("9451cff0123456789abcdef0123456789abcdef0"));
+    assert!(!ledger.has_deploy("1234567"));
+}
