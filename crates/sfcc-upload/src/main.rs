@@ -4,6 +4,7 @@ mod githook;
 mod logging;
 mod manifest;
 mod ocapi;
+mod problems;
 mod push;
 mod reload;
 mod scan;
@@ -264,6 +265,9 @@ struct WatchArgs {
     /// DevTools port to reload through
     #[arg(long, value_name = "PORT", default_value_t = 9222)]
     reload_port: u16,
+    /// Print each upload's outcome as problem-matcher lines, for an editor task
+    #[arg(long)]
+    problems: bool,
 }
 
 impl WatchArgs {
@@ -272,6 +276,7 @@ impl WatchArgs {
             initial_push: !self.no_initial_push,
             full: self.full,
             reload_port: self.reload.then_some(self.reload_port),
+            problems: self.problems,
         }
     }
 }
@@ -351,6 +356,14 @@ async fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Command::Watch(args) => {
+            // A detached watcher runs `watch` too, under the pid it is recorded with.
+            if let Some(pid) = daemon::running_pid(&config).filter(|pid| *pid != std::process::id())
+            {
+                bail!(
+                    "a background watcher is already running for {} (pid {pid}) - `sfcc-upload stop` first",
+                    config.code_version
+                );
+            }
             let options = args.options();
             watch::watch(Ctx::new(config, jobs)?, options).await
         }

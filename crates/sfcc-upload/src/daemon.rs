@@ -133,6 +133,8 @@ pub fn stop(config: &Config) -> Result<Option<u32>> {
     terminate(pid)?;
     let _ = std::fs::remove_file(&pid_file);
     let _ = std::fs::remove_file(heartbeat_path(config));
+    // Killed, it cannot clear its own status: an editor would show it uploading until it went stale.
+    crate::sync_status::clear(config);
     Ok(Some(pid))
 }
 
@@ -193,6 +195,9 @@ pub fn stop_running(watcher: &Running) -> Result<()> {
     let daemons = state_dir().join("daemons");
     let _ = std::fs::remove_file(daemons.join(format!("{}.pid", watcher.identity)));
     let _ = std::fs::remove_file(daemons.join(format!("{}.beat", watcher.identity)));
+    let _ = std::fs::remove_file(
+        crate::sync_status::status_dir().join(format!("{}.json", watcher.identity)),
+    );
     Ok(())
 }
 

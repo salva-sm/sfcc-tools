@@ -39,7 +39,11 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     let initialize_params = connection.initialize(capabilities)?;
     let params: InitializeParams = serde_json::from_value(initialize_params)?;
-    sync::report(workspace_roots(&params), connection.sender.clone());
+    sync::report(
+        workspace_roots(&params),
+        sync::Options::from_settings(params.initialization_options.as_ref()),
+        connection.sender.clone(),
+    );
     errors::report(workspace_roots(&params), connection.sender.clone());
 
     let server = Server::new(params);

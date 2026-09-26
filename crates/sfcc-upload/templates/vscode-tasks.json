@@ -4,23 +4,16 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "log-diff: watch",
+      "label": "sfcc-upload: watch",
       "type": "process",
-      "command": "log-diff",
+      "command": "sfcc-upload",
       "args": ["watch", "--problems"],
-      "options": {
-        "env": {
-          // A private repository also needs GITHUB_TOKEN (or LOG_DIFF_TOKEN)
-          // in your own environment - never in this file.
-          "LOG_DIFF_SHARED": "https://raw.githubusercontent.com/<owner>/sfcc-log-ledger/main/ledgers/dev.json"
-        }
-      },
       "isBackground": true,
       "runOptions": { "runOn": "folderOpen" },
       "presentation": { "reveal": "never", "panel": "dedicated", "echo": false },
       "problemMatcher": {
-        "owner": "log-diff",
-        "source": "sfcc log",
+        "owner": "sfcc-upload",
+        "source": "sfcc-upload",
         "fileLocation": "absolute",
         "severity": "error",
         "pattern": {
@@ -29,11 +22,11 @@
           "line": 2,
           "message": 3
         },
-        // Every pending signature is listed between these lines, so Problems shows the whole set.
+        // Each batch clears the last one's problems: a failure stays until an upload works.
         "background": {
           "activeBegin": true,
-          "beginsPattern": "^log-diff: checking ",
-          "endsPattern": "^log-diff: (up to date|\\d+ pending|\\d+ new)"
+          "beginsPattern": "^sfcc-upload: (uploading|retrying)",
+          "endsPattern": "^sfcc-upload: (synced|failed)$"
         }
       }
     }

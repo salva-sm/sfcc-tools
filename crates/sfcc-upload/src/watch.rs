@@ -1,6 +1,7 @@
 use crate::daemon;
 use crate::logging::{self, Change};
 use crate::manifest::Manifest;
+use crate::problems;
 use crate::push::{
     Ctx, PushOptions, delete_paths, forget_files, push, select_changed, upload_files,
 };
@@ -32,25 +33,23 @@ pub struct WatchOptions {
     pub initial_push: bool,
     pub full: bool,
     pub reload_port: Option<u16>,
+    pub problems: bool,
 }
 
 pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
     let heartbeat = daemon::heartbeat_path(&ctx.config);
     daemon::write_heartbeat(&heartbeat);
     sync_status::publish(&ctx.config, sync_status::State::Uploading);
-
-    ctx.dav.wait_until_ready(None).await?;
-    if options.initial_push {
-        push(
-            &ctx,
-            PushOptions {
-                full: options.full,
-                dry_run: false,
-                show_progress: true,
-            },
-        )
-        .await?;
+    if options.problems {
+        problems::enable();
     }
+    problems::begin("uploading");
+
+    if let Err(error) = initial_sync(&ctx, options).await {
+        problems::failed([], &ctx.config.dw_json, &format!("{error:#}"));
+        return Err(error);
+    }
+    problems::synced();
     sync_status::publish(&ctx.config, sync_status::State::Synced);
 
     let (sender, mut receiver) = unbounded_channel::<Vec<PathBuf>>();
@@ -127,6 +126,22 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
     }
 }
 
+async fn initial_sync(ctx: &Ctx, options: WatchOptions) -> Result<()> {
+    ctx.dav.wait_until_ready(None).await?;
+    if options.initial_push {
+        push(
+            ctx,
+            PushOptions {
+                full: options.full,
+                dry_run: false,
+                show_progress: !options.problems,
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 struct Retry {
     at: tokio::time::Instant,
@@ -159,17 +174,19 @@ async fn attempt(
 ) {
     let touched = std::mem::take(pending);
     sync_status::publish_uploading(&ctx.config, touched.len());
+    problems::begin(&format!("uploading {} change(s)", touched.len()));
     match synchronize(ctx, manifest, &touched).await {
         Ok(sent) => {
             if retry.take().is_some() {
                 logging::ok("sandbox is back - the queued changes are uploaded");
             }
+            problems::synced();
             sync_status::publish(&ctx.config, sync_status::State::Synced);
             refresh_browser(browser, &sent).await;
         }
         Err(error) => {
             pending.extend(touched);
-            fail(ctx, pending.len(), format!("{error:#}"), retry);
+            fail(ctx, pending, format!("{error:#}"), retry);
         }
     }
 }
@@ -183,17 +200,22 @@ async fn retry_queued(
 ) {
     match probe(ctx).await {
         Ok(()) => attempt(ctx, manifest, pending, browser, retry).await,
-        Err(reason) => fail(ctx, pending.len(), reason, retry),
+        Err(reason) => {
+            problems::begin("retrying");
+            fail(ctx, pending, reason, retry)
+        }
     }
 }
 
-fn fail(ctx: &Ctx, queued: usize, reason: String, retry: &mut Option<Retry>) {
+fn fail(ctx: &Ctx, pending: &BTreeSet<PathBuf>, reason: String, retry: &mut Option<Retry>) {
     let next = Retry::after(*retry);
     let detail = format!(
-        "{reason} - {queued} change(s) queued, retrying in {}s",
+        "{reason} - {} change(s) queued, retrying in {}s",
+        pending.len(),
         next.delay.as_secs()
     );
     logging::error(&detail);
+    problems::failed(pending, &ctx.config.dw_json, &detail);
     sync_status::publish_failure(&ctx.config, detail);
     *retry = Some(next);
 }

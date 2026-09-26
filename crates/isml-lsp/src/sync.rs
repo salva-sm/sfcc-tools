@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use lsp_server::Message;
-use lsp_types::notification::{Notification, Progress};
+use lsp_types::notification::{Notification, Progress, ShowMessage};
 use lsp_types::request::{Request as RequestTrait, WorkDoneProgressCreate};
 use lsp_types::{
-    NumberOrString, ProgressParams, ProgressParamsValue, WorkDoneProgress, WorkDoneProgressBegin,
-    WorkDoneProgressCreateParams, WorkDoneProgressEnd, WorkDoneProgressReport,
+    MessageType, NumberOrString, ProgressParams, ProgressParamsValue, ShowMessageParams,
+    WorkDoneProgress, WorkDoneProgressBegin, WorkDoneProgressCreateParams, WorkDoneProgressEnd,
+    WorkDoneProgressReport,
 };
 
 const TOKEN: &str = "sfcc/sync";
@@ -45,25 +46,155 @@ pub struct Status {
     pub at: i64,
 }
 
-pub fn report(roots: Vec<PathBuf>, sender: Sender<Message>) {
+/// `upload` in the initialization options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Options {
+    /// Start `sfcc-upload` for a workspace with a dw.json and no watcher. Off by default.
+    pub autostart: bool,
+    /// A notification when an upload fails, and when it recovers. Never for one that works.
+    pub notify: bool,
+}
+
+impl Options {
+    pub fn from_settings(settings: Option<&serde_json::Value>) -> Options {
+        let upload = settings.and_then(|settings| settings.get("upload"));
+        let flag = |name: &str, default: bool| {
+            upload
+                .and_then(|upload| upload.get(name))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(default)
+        };
+        Options {
+            autostart: flag("autostart", false),
+            notify: flag("notify", true),
+        }
+    }
+}
+
+pub fn report(roots: Vec<PathBuf>, options: Options, sender: Sender<Message>) {
     std::thread::spawn(move || {
         if create_token(&sender).is_err() {
             return;
         }
-        let mut shown: Option<State> = None;
+        if options.autostart && current(&roots).is_none() {
+            for (level, text) in autostart(&roots) {
+                if show(&sender, level, text).is_err() {
+                    return;
+                }
+            }
+        }
+        let mut shown: (Option<State>, String) = (None, String::new());
+        let mut failing = false;
         loop {
-            let state = current(&roots).map(|status| (status.state, describe(&status)));
-            let (state, message) = match state {
-                Some((state, message)) => (Some(state), message),
-                None => (None, String::new()),
-            };
-            if state != shown && announce(&sender, shown, state, message).is_err() {
+            let status = current(&roots);
+            let now = (
+                status.as_ref().map(|status| status.state),
+                status.as_ref().map(describe).unwrap_or_default(),
+            );
+            if now != shown && announce(&sender, shown.0, now.0, now.1.clone()).is_err() {
                 return;
             }
-            shown = state;
+            if let Some((level, text)) = toast(status.as_ref(), &mut failing) {
+                if options.notify && show(&sender, level, text).is_err() {
+                    return;
+                }
+            }
+            shown = now;
             std::thread::sleep(POLL);
         }
     });
+}
+
+/// Only the edges: into a failure, and out of it. Retries in between stay in the status bar.
+fn toast(status: Option<&Status>, failing: &mut bool) -> Option<(MessageType, String)> {
+    let status = match status {
+        Some(status) if status.state != State::Stopped => status,
+        _ => {
+            *failing = false;
+            return None;
+        }
+    };
+    match (status.state, *failing) {
+        (State::Failed, false) => {
+            *failing = true;
+            Some((MessageType::ERROR, format!("SFCC {}", describe(status))))
+        }
+        (State::Synced, true) => {
+            *failing = false;
+            Some((
+                MessageType::INFO,
+                format!("SFCC upload back in sync with {}", status.hostname),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// `sfcc-upload start` in every root with a dw.json where the uploader looks for one.
+/// Says nothing when it started, or was already running.
+fn autostart(roots: &[PathBuf]) -> Vec<(MessageType, String)> {
+    let mut said = Vec::new();
+    for root in roots {
+        if !root.join("dw.json").is_file() && !root.join("source").join("dw.json").is_file() {
+            continue;
+        }
+        let mut command = std::process::Command::new("sfcc-upload");
+        command
+            .arg("start")
+            .current_dir(root)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW: no console flashing up from an editor.
+            command.creation_flags(0x0800_0000);
+        }
+        match command.output() {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                said.push((
+                    MessageType::WARNING,
+                    "SFCC: upload.autostart is on, but sfcc-upload is not installed".to_string(),
+                ));
+                break;
+            }
+            Err(error) => said.push((
+                MessageType::WARNING,
+                format!("SFCC: could not start sfcc-upload: {error}"),
+            )),
+            Ok(output) if !output.status.success() => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stderr.contains("already running") {
+                    let reason = stderr
+                        .lines()
+                        .rev()
+                        .find(|line| !line.trim().is_empty())
+                        .unwrap_or("it exited with an error");
+                    said.push((
+                        MessageType::WARNING,
+                        format!("SFCC: sfcc-upload did not start: {}", reason.trim()),
+                    ));
+                }
+            }
+            Ok(_) => {}
+        }
+    }
+    said
+}
+
+fn show(
+    sender: &Sender<Message>,
+    level: MessageType,
+    text: String,
+) -> Result<(), SendError<Message>> {
+    sender.send(Message::Notification(lsp_server::Notification::new(
+        ShowMessage::METHOD.to_string(),
+        ShowMessageParams {
+            typ: level,
+            message: text,
+        },
+    )))
 }
 
 pub fn current(roots: &[PathBuf]) -> Option<Status> {
@@ -224,6 +355,64 @@ mod tests {
         one.files = 1;
         assert!(describe(&one).starts_with("uploading 1 file to"));
         assert!(describe(&status(State::Synced, 0)).is_empty());
+    }
+
+    #[test]
+    fn notifies_only_on_the_way_into_a_failure_and_out_of_it() {
+        let mut failing = false;
+        let mut failed = status(State::Failed, 0);
+        failed.detail = Some("HTTP 503".into());
+
+        assert!(toast(Some(&status(State::Uploading, 0)), &mut failing).is_none());
+        assert!(toast(Some(&status(State::Synced, 0)), &mut failing).is_none());
+
+        let (level, text) = toast(Some(&failed), &mut failing).unwrap();
+        assert_eq!(level, MessageType::ERROR);
+        assert_eq!(text, "SFCC upload failed — HTTP 503");
+        // Every retry after it is the same failure.
+        assert!(toast(Some(&failed), &mut failing).is_none());
+        assert!(toast(Some(&status(State::Uploading, 0)), &mut failing).is_none());
+        assert!(toast(Some(&failed), &mut failing).is_none());
+
+        let (level, text) = toast(Some(&status(State::Synced, 0)), &mut failing).unwrap();
+        assert_eq!(level, MessageType::INFO);
+        assert!(text.contains("back in sync with sbx-001.example.com"));
+        assert!(toast(Some(&status(State::Synced, 0)), &mut failing).is_none());
+    }
+
+    #[test]
+    fn a_watcher_that_went_away_is_not_a_recovery() {
+        let mut failing = false;
+        toast(Some(&status(State::Failed, 0)), &mut failing);
+        assert!(toast(None, &mut failing).is_none());
+        assert!(toast(Some(&status(State::Synced, 0)), &mut failing).is_none());
+    }
+
+    #[test]
+    fn reads_the_upload_options() {
+        let on = serde_json::json!({ "upload": { "autostart": true } });
+        assert_eq!(
+            Options::from_settings(Some(&on)),
+            Options {
+                autostart: true,
+                notify: true
+            }
+        );
+        let quiet = serde_json::json!({ "upload": { "notify": false } });
+        assert_eq!(
+            Options::from_settings(Some(&quiet)),
+            Options {
+                autostart: false,
+                notify: false
+            }
+        );
+        assert_eq!(
+            Options::from_settings(None),
+            Options {
+                autostart: false,
+                notify: true
+            }
+        );
     }
 
     #[test]

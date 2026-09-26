@@ -298,6 +298,28 @@ that never ends reads as a stuck spinner, so the two states worth interrupting f
 shown — uploading, and failed until an upload succeeds — and nothing at all when
 everything is in sync. No news is good news.
 
+A failure also raises a notification, once — the retries after it only update the status
+bar — and so does the recovery: `SFCC upload back in sync with sbx-001.example.com`. An
+upload that works raises none.
+
+The server can also start the uploader: with `upload.autostart`, a workspace with a
+`dw.json` (at its root, or in `source/`) and no watcher running gets `sfcc-upload start`
+when Zed opens it. Not installed, or unable to start, it says so in a notification.
+
+```json
+{
+    "lsp": {
+        "isml-lsp": {
+            "initialization_options": {
+                "upload": { "autostart": true, "notify": true }
+            }
+        }
+    }
+}
+```
+
+`autostart` is off by default; `notify` is on.
+
 The file is keyed by the cartridges directory, so a workspace finds its own watcher
 without having to reproduce how the sandbox identity is derived. A watcher that stops
 writing for ninety seconds is treated as gone rather than quiet.
