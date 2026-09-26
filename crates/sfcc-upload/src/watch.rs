@@ -7,8 +7,8 @@ use crate::push::{
 use crate::reload::{Browser, worth_reloading};
 use crate::scan::{LocalFile, collect_files, describe};
 use crate::sync_status;
-use crate::webdav::Ready;
-use anyhow::{Context, Result};
+use crate::webdav::{Availability, Ready};
+use anyhow::{Context, Result, bail};
 use notify::RecursiveMode;
 use notify_debouncer_full::new_debouncer;
 use std::collections::BTreeSet;
@@ -23,6 +23,10 @@ const DRAIN_BURST: Duration = Duration::from_millis(500);
 const DRAIN_CAP: Duration = Duration::from_secs(3);
 const BURST_PATHS: usize = 25;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
+// After a failed upload the sandbox is probed again after this, doubling up
+// to RETRY_MAX while it stays away; a save probes it at once.
+const RETRY_FIRST: Duration = Duration::from_secs(10);
+const RETRY_MAX: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy)]
 pub struct WatchOptions {
@@ -92,8 +96,10 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
 
     let mut manifest = Manifest::load(&ctx.manifest_path);
     let mut pending: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut retry: Option<Retry> = None;
 
     loop {
+        let due = retry.map(|retry| retry.at);
         tokio::select! {
             _ = ticker.tick() => daemon::write_heartbeat(&heartbeat),
             _ = tokio::signal::ctrl_c() => {
@@ -101,6 +107,9 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
                 manifest.save(&ctx.manifest_path)?;
                 sync_status::clear(&ctx.config);
                 return Ok(());
+            }
+            _ = sleep_until(due), if due.is_some() => {
+                retry_queued(&ctx, &mut manifest, &mut pending, browser.as_ref(), &mut retry).await;
             }
             batch = receiver.recv() => {
                 let Some(paths) = batch else {
@@ -110,21 +119,103 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
                 };
                 pending.extend(paths);
                 drain_into(&mut receiver, &mut pending).await;
-                let touched = std::mem::take(&mut pending);
-                sync_status::publish_uploading(&ctx.config, touched.len());
-                match synchronize(&ctx, &mut manifest, &touched).await {
-                    Ok(sent) => {
-                        sync_status::publish(&ctx.config, sync_status::State::Synced);
-                        refresh_browser(browser.as_ref(), &sent).await;
-                    }
-                    Err(error) => {
-                        logging::error(format!("{error:#}"));
-                        sync_status::publish_failure(&ctx.config, format!("{error:#}"));
-                        pending.extend(touched);
-                    }
+                match retry {
+                    None => attempt(&ctx, &mut manifest, &mut pending, browser.as_ref(), &mut retry).await,
+                    Some(_) => retry_queued(&ctx, &mut manifest, &mut pending, browser.as_ref(), &mut retry).await,
                 }
             }
         }
+    }
+}
+
+/// When the queued changes are tried again, and how long the wait was.
+#[derive(Clone, Copy)]
+struct Retry {
+    at: tokio::time::Instant,
+    delay: Duration,
+}
+
+impl Retry {
+    fn after(previous: Option<Retry>) -> Retry {
+        let delay = previous.map_or(RETRY_FIRST, |previous| (previous.delay * 2).min(RETRY_MAX));
+        Retry {
+            at: tokio::time::Instant::now() + delay,
+            delay,
+        }
+    }
+}
+
+async fn sleep_until(due: Option<tokio::time::Instant>) {
+    match due {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Upload what is pending. On failure it stays pending, the editor and the
+/// console say so, and a retry is scheduled.
+async fn attempt(
+    ctx: &Ctx,
+    manifest: &mut Manifest,
+    pending: &mut BTreeSet<PathBuf>,
+    browser: Option<&Browser>,
+    retry: &mut Option<Retry>,
+) {
+    let touched = std::mem::take(pending);
+    sync_status::publish_uploading(&ctx.config, touched.len());
+    match synchronize(ctx, manifest, &touched).await {
+        Ok(sent) => {
+            if retry.take().is_some() {
+                logging::ok("sandbox is back - the queued changes are uploaded");
+            }
+            sync_status::publish(&ctx.config, sync_status::State::Synced);
+            refresh_browser(browser, &sent).await;
+        }
+        Err(error) => {
+            pending.extend(touched);
+            fail(ctx, pending.len(), format!("{error:#}"), retry);
+        }
+    }
+}
+
+/// With changes queued behind a failure: probe the sandbox, and upload them
+/// only once it answers.
+async fn retry_queued(
+    ctx: &Ctx,
+    manifest: &mut Manifest,
+    pending: &mut BTreeSet<PathBuf>,
+    browser: Option<&Browser>,
+    retry: &mut Option<Retry>,
+) {
+    match probe(ctx).await {
+        Ok(()) => attempt(ctx, manifest, pending, browser, retry).await,
+        Err(reason) => fail(ctx, pending.len(), reason, retry),
+    }
+}
+
+fn fail(ctx: &Ctx, queued: usize, reason: String, retry: &mut Option<Retry>) {
+    let next = Retry::after(*retry);
+    let detail = format!(
+        "{reason} - {queued} change(s) queued, retrying in {}s",
+        next.delay.as_secs()
+    );
+    logging::error(&detail);
+    sync_status::publish_failure(&ctx.config, detail);
+    *retry = Some(next);
+}
+
+async fn probe(ctx: &Ctx) -> std::result::Result<(), String> {
+    match ctx.dav.availability().await {
+        Availability::Ready => Ok(()),
+        Availability::MissingCodeVersion => ctx
+            .dav
+            .mkcol(ctx.dav.base_url())
+            .await
+            .map_err(|error| format!("{error:#}")),
+        Availability::Unauthorized => {
+            Err("the sandbox rejected the credentials from dw.json (HTTP 401/403)".to_string())
+        }
+        Availability::Unavailable(reason) => Err(format!("sandbox unavailable ({reason})")),
     }
 }
 
@@ -146,7 +237,6 @@ async fn drain_into(
     }
 }
 
-#[derive(Clone)]
 struct Work {
     upserts: Vec<LocalFile>,
     removals: Vec<String>,
@@ -166,51 +256,51 @@ async fn synchronize(
         return Ok(Vec::new());
     }
 
-    let outcome = match transfer(ctx, manifest, work.clone()).await {
-        Ok(sent) => Ok(sent),
-        Err(error) => {
-            logging::warn(format!("{error:#}"));
-            match ctx.dav.wait_until_ready(None).await {
-                Ok(()) => transfer(ctx, manifest, work).await,
-                Err(error) => Err(error),
-            }
-        }
-    };
-
+    let outcome = transfer(ctx, manifest, work).await;
     // Saved on failure too, so the files the transfer forgot stay forgotten
     // when the watcher is stopped before the next sync.
     manifest.save(&ctx.manifest_path)?;
     outcome
 }
 
+/// Send the work; an error when any of it did not reach the sandbox. What
+/// did is recorded either way, so sending the batch again sends only the rest.
 async fn transfer(ctx: &Ctx, manifest: &mut Manifest, work: Work) -> Result<Vec<String>> {
-    let mut sent = work.removals.clone();
+    let mut sent = Vec::new();
+    let mut failed = 0;
 
     if !work.removals.is_empty() {
-        let gone = delete_paths(ctx, &work.removals).await?;
-        logging::changes(Change::Deleted, &gone);
+        let deleted = delete_paths(ctx, &work.removals).await?;
+        logging::changes(Change::Deleted, &deleted.gone);
         for path in &work.removals {
-            manifest.forget(path);
-            manifest.forget_prefix(path);
+            if !deleted.failed.contains(path) {
+                manifest.forget(path);
+                manifest.forget_prefix(path);
+                sent.push(path.clone());
+            }
         }
+        failed += deleted.failed.len();
     }
 
-    if work.upserts.is_empty() {
-        return Ok(sent);
+    if !work.upserts.is_empty() {
+        let wanted = work.upserts.len();
+        forget_files(manifest, &work.upserts);
+        let recorded = upload_files(ctx, work.upserts, None).await?;
+        failed += wanted - recorded.len();
+        let names: Vec<String> = recorded
+            .iter()
+            .map(|(relative, _)| relative.clone())
+            .collect();
+        for (relative, entry) in recorded {
+            manifest.record(relative, entry);
+        }
+        logging::changes(Change::Uploaded, &names);
+        sent.extend(names);
     }
 
-    forget_files(manifest, &work.upserts);
-    let recorded = upload_files(ctx, work.upserts, None).await?;
-    let names: Vec<String> = recorded
-        .iter()
-        .map(|(relative, _)| relative.clone())
-        .collect();
-    for (relative, entry) in recorded {
-        manifest.record(relative, entry);
+    if failed > 0 {
+        bail!("{failed} change(s) did not reach the sandbox");
     }
-    logging::changes(Change::Uploaded, &names);
-
-    sent.extend(names);
     Ok(sent)
 }
 
@@ -277,3 +367,7 @@ fn removal_root(path: &Path, base: &Path) -> Option<String> {
     }
     crate::scan::remote_path(highest, base)
 }
+
+#[cfg(test)]
+#[path = "watch_tests.rs"]
+mod tests;

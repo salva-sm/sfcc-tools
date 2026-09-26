@@ -1,6 +1,6 @@
 [package]
 name = "sfcc-upload"
-version = "0.7.3"
+version = "0.8.0"
 edition = "2024"
 license.workspace = true
 repository.workspace = true
@@ -31,3 +31,6 @@ windows-sys = { version = "0.61.2", features = ["Win32_System_Threading", "Win32
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.189"
+
+[dev-dependencies]
+sfcc-core = { path = "../sfcc-core", features = ["webdav", "completions", "testing"] }
