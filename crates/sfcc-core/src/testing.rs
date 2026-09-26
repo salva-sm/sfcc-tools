@@ -1,0 +1,271 @@
+//! A WebDAV server in memory that answers the way an instance does, for the
+//! tests of what reads one: PROPFIND a folder, GET a file whole or from an
+//! offset. Plain HTTP on the loopback interface, one request per connection.
+//!
+//! Paths are the ones under `Sites/`: `Logs/error-blade1-20260922.log`,
+//! `Logs/log_archive/error-blade1-20260920.log.gz`, `Cartridges/b12_x`.
+
+use crate::config::{Config, Credentials};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+
+const SITES: &str = "/on/demandware.servlet/webdav/Sites/";
+/// What a folder or a file says it was last changed, when nobody set it.
+const MODIFIED: &str = "Tue, 22 Sep 2026 08:00:00 GMT";
+
+#[derive(Default)]
+struct Tree {
+    files: BTreeMap<String, Vec<u8>>,
+    /// Last-modified dates set on purpose, of files and folders.
+    modified: BTreeMap<String, String>,
+    /// Every request, `METHOD path`, for a test to look at.
+    requests: Vec<String>,
+}
+
+/// The server. It stops when the test's runtime does.
+#[derive(Clone)]
+pub struct MockDav {
+    address: String,
+    tree: Arc<Mutex<Tree>>,
+}
+
+impl MockDav {
+    /// A server with nothing in it, listening on a free port.
+    pub async fn start() -> MockDav {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port on the loopback interface");
+        let address = listener.local_addr().expect("a bound address").to_string();
+        let tree = Arc::new(Mutex::new(Tree::default()));
+        let served = tree.clone();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let tree = served.clone();
+                tokio::spawn(async move {
+                    let _ = answer(stream, &tree).await;
+                });
+            }
+        });
+        MockDav { address, tree }
+    }
+
+    /// A config for this server, as `dw.json` would give it.
+    pub fn config(&self) -> Config {
+        Config {
+            dw_json: PathBuf::from("dw.json"),
+            hostname: self.address.clone(),
+            credentials: Credentials::Basic {
+                username: "tester".to_string(),
+                password: "secret".to_string(),
+            },
+            code_version: "version1".to_string(),
+            cartridges_dir: PathBuf::from("cartridges"),
+            cartridge_filter: None,
+            accept_invalid_certs: false,
+            api_client: None,
+            plain_http: true,
+        }
+    }
+
+    /// Write a file, whole.
+    pub fn put(&self, path: &str, contents: impl Into<Vec<u8>>) {
+        let mut tree = self.tree.lock().unwrap();
+        tree.files.insert(path.to_string(), contents.into());
+    }
+
+    /// Add to the end of a file, the way the instance writes its log.
+    pub fn append(&self, path: &str, contents: &str) {
+        let mut tree = self.tree.lock().unwrap();
+        tree.files
+            .entry(path.to_string())
+            .or_default()
+            .extend_from_slice(contents.as_bytes());
+    }
+
+    /// Make a folder, and say when it was last written: a code version.
+    pub fn folder(&self, path: &str, modified: &str) {
+        let mut tree = self.tree.lock().unwrap();
+        let path = path.trim_end_matches('/');
+        tree.files.insert(format!("{path}/.keep"), Vec::new());
+        tree.modified.insert(path.to_string(), modified.to_string());
+    }
+
+    /// Every request so far, `GET Logs/error-...log`.
+    pub fn requests(&self) -> Vec<String> {
+        self.tree.lock().unwrap().requests.clone()
+    }
+}
+
+async fn answer(mut stream: TcpStream, tree: &Mutex<Tree>) -> std::io::Result<()> {
+    let mut request = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let head_end = loop {
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok(());
+        }
+        request.extend_from_slice(&chunk[..read]);
+        if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+            break end + 4;
+        }
+    };
+    let head = String::from_utf8_lossy(&request[..head_end]).into_owned();
+    let mut lines = head.lines();
+    let mut first = lines.next().unwrap_or_default().split(' ');
+    let method = first.next().unwrap_or_default().to_string();
+    let target = first.next().unwrap_or_default().to_string();
+    let headers: Vec<(String, String)> = lines
+        .filter_map(|line| line.split_once(':'))
+        .map(|(name, value)| (name.trim().to_lowercase(), value.trim().to_string()))
+        .collect();
+    let header = |name: &str| {
+        headers
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.clone())
+    };
+
+    // What is left of the body is read and dropped: PROPFIND sends one.
+    let length: usize = header("content-length")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let mut body = request.len() - head_end;
+    while body < length {
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            break;
+        }
+        body += read;
+    }
+
+    let path = decode(target.strip_prefix(SITES).unwrap_or(&target));
+    let path = path.trim_end_matches('/').to_string();
+    let (status, extra, payload) = {
+        let mut tree = tree.lock().unwrap();
+        tree.requests.push(format!("{method} {path}"));
+        match (header("authorization").is_some(), method.as_str()) {
+            (false, _) => ("401 Unauthorized", String::new(), Vec::new()),
+            (true, "PROPFIND") => match listing(&tree, &path) {
+                Some(xml) => ("207 Multi-Status", String::new(), xml.into_bytes()),
+                None => ("404 Not Found", String::new(), Vec::new()),
+            },
+            (true, "GET") => match tree.files.get(&path) {
+                None => ("404 Not Found", String::new(), Vec::new()),
+                Some(contents) => {
+                    let from = header("range")
+                        .and_then(|range| {
+                            range
+                                .strip_prefix("bytes=")?
+                                .trim_end_matches('-')
+                                .parse::<usize>()
+                                .ok()
+                        })
+                        .unwrap_or(0);
+                    match (from, contents.len()) {
+                        (0, _) => ("200 OK", String::new(), contents.clone()),
+                        (from, size) if from >= size => (
+                            "416 Range Not Satisfiable",
+                            format!("Content-Range: bytes */{size}\r\n"),
+                            Vec::new(),
+                        ),
+                        (from, size) => (
+                            "206 Partial Content",
+                            format!("Content-Range: bytes {from}-{}/{size}\r\n", size - 1),
+                            contents[from..].to_vec(),
+                        ),
+                    }
+                }
+            },
+            _ => ("405 Method Not Allowed", String::new(), Vec::new()),
+        }
+    };
+
+    let head = format!(
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n",
+        payload.len()
+    );
+    stream.write_all(head.as_bytes()).await?;
+    stream.write_all(&payload).await?;
+    stream.shutdown().await
+}
+
+/// The multistatus for a folder: itself, then every file and folder right
+/// inside it. `None` when there is no such folder.
+fn listing(tree: &Tree, folder: &str) -> Option<String> {
+    let prefix = format!("{folder}/");
+    let mut members: BTreeMap<String, Option<usize>> = BTreeMap::new();
+    for (path, contents) in &tree.files {
+        let Some(rest) = path.strip_prefix(&prefix) else {
+            continue;
+        };
+        match rest.split_once('/') {
+            Some((child, _)) => {
+                members.insert(child.to_string(), None);
+            }
+            None if rest != ".keep" => {
+                members.insert(rest.to_string(), Some(contents.len()));
+            }
+            None => {}
+        }
+    }
+    if members.is_empty() && !tree.files.keys().any(|path| path.starts_with(&prefix)) {
+        return None;
+    }
+
+    let modified = |path: &str| {
+        tree.modified
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| MODIFIED.to_string())
+    };
+    let mut xml =
+        String::from(r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:">"#);
+    xml.push_str(&response(
+        &format!("{SITES}{folder}/"),
+        None,
+        &modified(folder),
+    ));
+    for (name, size) in members {
+        let path = format!("{folder}/{name}");
+        let href = match size {
+            Some(_) => format!("{SITES}{}", crate::webdav::encode_path(&path)),
+            None => format!("{SITES}{}/", crate::webdav::encode_path(&path)),
+        };
+        xml.push_str(&response(&href, size, &modified(&path)));
+    }
+    xml.push_str("</D:multistatus>");
+    Some(xml)
+}
+
+fn response(href: &str, size: Option<usize>, modified: &str) -> String {
+    let kind = match size {
+        Some(size) => format!("<D:resourcetype/><D:getcontentlength>{size}</D:getcontentlength>"),
+        None => "<D:resourcetype><D:collection/></D:resourcetype>".to_string(),
+    };
+    format!(
+        "<D:response><D:href>{href}</D:href><D:propstat><D:prop>{kind}<D:getlastmodified>{modified}</D:getlastmodified></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>"
+    )
+}
+
+fn decode(encoded: &str) -> String {
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && let Some(value) = encoded
+                .get(index + 1..index + 3)
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+        {
+            decoded.push(value);
+            index += 3;
+            continue;
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
