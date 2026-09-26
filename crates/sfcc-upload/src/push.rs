@@ -344,7 +344,10 @@ async fn upload_chunk(
     Ok(recorded)
 }
 
-fn build_archive(files: Vec<LocalFile>) -> Result<(Vec<u8>, Vec<(String, Entry)>)> {
+/// A zip archive, and the manifest entry of every file in it.
+type Archive = (Vec<u8>, Vec<(String, Entry)>);
+
+fn build_archive(files: Vec<LocalFile>) -> Result<Archive> {
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
         .compression_level(Some(COMPRESSION_LEVEL))
