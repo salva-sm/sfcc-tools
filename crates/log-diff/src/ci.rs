@@ -62,6 +62,9 @@ pub struct Outcome {
     pub baseline: bool,
     /// The day the first run started learning from, `YYYYMMDD`.
     pub baseline_from: String,
+    /// Whether the ledger was signed another way, and this run learned the
+    /// new signatures instead of reporting them.
+    pub resigned: bool,
     /// Signatures in the ledger after the run.
     pub known: usize,
 }
@@ -95,6 +98,9 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
         None => (Mark::days_back(options.baseline_days), true),
     };
     let baseline_from = from.day.clone();
+    // Signatures computed another way are the same failures under new ids:
+    // learned, like a baseline, but from where the cursor is.
+    let resigned = !baseline && ledger.resigned();
     let mut entries = Vec::new();
     if baseline && options.baseline_days > 0 {
         // The days the instance has already archived are only in log_archive.
@@ -118,7 +124,7 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
         };
         let sha = live.map(|index| ledger.deploy_log[index].sha.clone());
         let new = ledger.observe(&finding, sha.as_deref(), false);
-        if !new || baseline || team.mutes(&finding.signature.id) {
+        if !new || baseline || resigned || team.mutes(&finding.signature.id) {
             continue;
         }
 
@@ -159,7 +165,7 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
         });
     }
 
-    if !baseline {
+    if !baseline && !resigned {
         let today = Utc::now().format("%Y-%m-%d").to_string();
         let quiet = team.muted_ids();
         for spike in ledger.spikes(&today, options.spike_min, options.spike_factor, &quiet) {
@@ -187,8 +193,29 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
         report,
         baseline,
         baseline_from,
+        resigned,
         known: ledger.known_signatures.len(),
     })
+}
+
+/// The code versions on the instance, as `(written, name)`, oldest first:
+/// each build is deployed to one of its own, so this is the deploy history.
+pub async fn code_versions(dav: &Dav) -> Result<Vec<(String, String)>> {
+    let mut versions: Vec<(String, String)> = dav
+        .list(dav.root_url())
+        .await?
+        .into_iter()
+        .filter(|entry| entry.is_dir)
+        .filter_map(|entry| {
+            let at = DateTime::parse_from_rfc2822(&entry.modified).ok()?;
+            let at = at
+                .with_timezone(&Utc)
+                .to_rfc3339_opts(SecondsFormat::Secs, true);
+            Some((at, entry.name))
+        })
+        .collect();
+    versions.sort();
+    Ok(versions)
 }
 
 fn compare_url(template: Option<&str>, from: Option<&str>, to: &str) -> Option<String> {
@@ -245,3 +272,7 @@ mod tests {
         assert_eq!(code_url(Some(template), None, None), None);
     }
 }
+
+#[cfg(test)]
+#[path = "ci_tests.rs"]
+mod run_tests;

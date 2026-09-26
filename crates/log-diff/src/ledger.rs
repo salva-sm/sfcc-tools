@@ -28,6 +28,10 @@ pub struct Ledger {
     /// The format version.
     #[serde(default = "version")]
     pub version: u32,
+    /// How its signatures were computed: [`crate::normalize::SIGNATURES`]
+    /// when it was written. A ledger older than the field is the first.
+    #[serde(default = "first_signatures")]
+    pub signatures: u32,
     /// The instance the cursor belongs to. A cursor from another instance
     /// means nothing here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -187,10 +191,15 @@ fn version() -> u32 {
     VERSION
 }
 
+fn first_signatures() -> u32 {
+    1
+}
+
 impl Default for Ledger {
     fn default() -> Ledger {
         Ledger {
             version: VERSION,
+            signatures: crate::normalize::SIGNATURES,
             instance: None,
             cursor: None,
             known_signatures: BTreeMap::new(),
@@ -251,10 +260,18 @@ impl Ledger {
         }
     }
 
-    /// Move the cursor, and claim it for `instance`.
+    /// Move the cursor, and claim it for `instance`. What it knows from now
+    /// on is signed the way this log-diff signs.
     pub fn advance(&mut self, instance: &str, cursor: Mark) {
         self.instance = Some(instance.to_string());
         self.cursor = Some(cursor);
+        self.signatures = crate::normalize::SIGNATURES;
+    }
+
+    /// Whether its signatures were computed another way than this log-diff
+    /// computes them, so that what it knows would all look new.
+    pub fn resigned(&self) -> bool {
+        self.signatures != crate::normalize::SIGNATURES && !self.known_signatures.is_empty()
     }
 
     /// Whether the signature is known.

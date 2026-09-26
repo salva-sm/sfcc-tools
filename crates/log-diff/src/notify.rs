@@ -9,6 +9,17 @@ use std::time::Duration;
 
 /// Findings listed in one Teams card. The rest are a count and a link.
 const CARD_ITEMS: usize = 10;
+/// New signatures in one run past which they are not a list of failures but
+/// one event - a deploy that broke something everywhere, or logs signed a new
+/// way - and the card says so instead of listing them.
+pub const FLOOD: usize = 30;
+/// Headlines on the card of a flood.
+const FLOOD_LINES: usize = 15;
+/// Longest example on a card, in characters.
+const CARD_EXAMPLE_CHARS: usize = 300;
+/// The most a card may weigh. Teams refuses a message past about 28 KB, and
+/// says so only with an error; this leaves room for the envelope's escaping.
+pub const CARD_BYTES: usize = 24_000;
 /// Desktop notifications shown one by one before they become one summary.
 const DESKTOP_ITEMS: usize = 3;
 
@@ -183,7 +194,54 @@ fn title(report: &Report) -> String {
     format!("{} on {}", parts.join(", "), report.instance)
 }
 
+/// How much of a report a card carries.
+#[derive(Clone, Copy)]
+struct Shape {
+    /// Findings, and spikes, listed.
+    items: usize,
+    /// Whether each carries its example.
+    examples: bool,
+}
+
+/// The card for a report: as much of it as fits, a flood as one event.
 fn card(report: &Report) -> Value {
+    if report.new.len() > FLOOD {
+        return flood(report);
+    }
+    let shapes = [
+        Shape {
+            items: CARD_ITEMS,
+            examples: true,
+        },
+        Shape {
+            items: CARD_ITEMS,
+            examples: false,
+        },
+        Shape {
+            items: 3,
+            examples: false,
+        },
+        Shape {
+            items: 0,
+            examples: false,
+        },
+    ];
+    let mut card = Value::Null;
+    for shape in shapes {
+        card = shaped(report, shape);
+        if weight(&card) <= CARD_BYTES {
+            break;
+        }
+    }
+    card
+}
+
+/// What a message weighs, sent.
+fn weight(message: &Value) -> usize {
+    message.to_string().len()
+}
+
+fn shaped(report: &Report, shape: Shape) -> Value {
     let mut body = vec![json!({
         "type": "TextBlock",
         "size": "Medium",
@@ -198,7 +256,7 @@ fn card(report: &Report) -> Value {
         }
     };
 
-    for item in report.new.iter().take(CARD_ITEMS) {
+    for item in report.new.iter().take(shape.items) {
         let mut facts = vec![
             json!({ "title": "Signature", "value": item.id }),
             json!({ "title": "Seen", "value": format!("x{} since {}", item.count, item.first_seen) }),
@@ -228,19 +286,24 @@ fn card(report: &Report) -> Value {
             "text": headline(&item.label, item.exception_class.as_deref(), item.location.as_deref()),
         }));
         body.push(json!({ "type": "FactSet", "facts": facts }));
-        body.push(json!({
-            "type": "TextBlock",
-            "wrap": true,
-            "isSubtle": true,
-            "fontType": "Monospace",
-            "text": item.example,
-        }));
+        if shape.examples {
+            body.push(json!({
+                "type": "TextBlock",
+                "wrap": true,
+                "isSubtle": true,
+                "fontType": "Monospace",
+                "text": clip(&item.example, CARD_EXAMPLE_CHARS),
+            }));
+        }
     }
-    if report.new.len() > CARD_ITEMS {
+    if report.new.len() > shape.items {
         body.push(json!({
             "type": "TextBlock",
             "wrap": true,
-            "text": format!("...and {} more in the ledger.", report.new.len() - CARD_ITEMS),
+            "text": match shape.items {
+                0 => format!("{} new, listed in the ledger.", report.new.len()),
+                shown => format!("...and {} more in the ledger.", report.new.len() - shown),
+            },
         }));
     }
 
@@ -254,7 +317,7 @@ fn card(report: &Report) -> Value {
             "text": "Spikes: known errors logged far more than usual",
         }));
     }
-    for spike in report.spikes.iter().take(CARD_ITEMS) {
+    for spike in report.spikes.iter().take(shape.items) {
         let what = headline(
             &spike.label,
             spike.exception_class.as_deref(),
@@ -278,8 +341,82 @@ fn card(report: &Report) -> Value {
         }));
         body.push(json!({ "type": "FactSet", "facts": facts }));
     }
+    if !report.spikes.is_empty() && report.spikes.len() > shape.items {
+        body.push(json!({
+            "type": "TextBlock",
+            "wrap": true,
+            "text": format!("...and {} more spiking.", report.spikes.len() - shape.items),
+        }));
+    }
 
     envelope(body, actions)
+}
+
+/// So many new signatures at once are one event, not that many failures: a
+/// card saying so, with the most logged of them, one line each.
+fn flood(report: &Report) -> Value {
+    let mut body = vec![
+        json!({
+            "type": "TextBlock",
+            "size": "Medium",
+            "weight": "Bolder",
+            "wrap": true,
+            "text": title(report),
+        }),
+        json!({
+            "type": "TextBlock",
+            "wrap": true,
+            "text": format!(
+                "More than {FLOOD} at once: something broke broadly - a deploy, a service it depends on - rather than {} separate failures. The most logged:",
+                report.new.len()
+            ),
+        }),
+    ];
+    let mut items: Vec<&ReportItem> = report.new.iter().collect();
+    items.sort_by_key(|item| std::cmp::Reverse(item.count));
+    let lines: Vec<String> = items
+        .iter()
+        .take(FLOOD_LINES)
+        .map(|item| {
+            format!(
+                "- x{} {}",
+                item.count,
+                clip(
+                    &headline(
+                        &item.label,
+                        item.exception_class.as_deref(),
+                        item.location.as_deref()
+                    ),
+                    160
+                )
+            )
+        })
+        .collect();
+    body.push(json!({ "type": "TextBlock", "wrap": true, "text": lines.join("\n") }));
+
+    let mut actions = Vec::new();
+    // The deploy the most of them came with is the one to look at.
+    if let Some(deploy) = items.iter().find_map(|item| item.deploy.as_ref())
+        && let Some(url) = &deploy.compare_url
+    {
+        actions.push(json!({ "type": "Action.OpenUrl", "title": format!("Commits of {}", short(&deploy.sha)), "url": url }));
+    }
+    if !report.spikes.is_empty() {
+        body.push(json!({
+            "type": "TextBlock",
+            "wrap": true,
+            "text": format!("Also {} known errors spiking.", report.spikes.len()),
+        }));
+    }
+    envelope(body, actions)
+}
+
+/// `text`, cut to `chars` characters with an ellipsis.
+fn clip(text: &str, chars: usize) -> String {
+    match text.char_indices().nth(chars) {
+        Some((end, _)) => format!("{}...", &text[..end]),
+        None => text.to_string(),
+    }
 }
 
 /// A commit, shortened; a code version name, when that is all there is, whole.
@@ -385,6 +522,57 @@ mod tests {
             body.as_array().unwrap().last().unwrap()["text"],
             "...and 2 more in the ledger."
         );
+    }
+
+    #[test]
+    fn a_flood_is_one_event_with_its_most_logged() {
+        let new: Vec<ReportItem> = (0..FLOOD as u64 + 5)
+            .map(|n| ReportItem {
+                count: n,
+                ..item(&n.to_string(), Some("https://git/compare/1..9"))
+            })
+            .collect();
+        let card = card(&report(new, Vec::new()));
+        let content = &card["attachments"][0]["content"];
+        let body = content["body"].as_array().unwrap();
+
+        assert_eq!(body[0]["text"], "35 new errors on dev01");
+        let lines = body[2]["text"].as_str().unwrap();
+        assert_eq!(lines.lines().count(), FLOOD_LINES);
+        assert!(lines.starts_with("- x34 TypeError"));
+        assert_eq!(content["actions"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_card_too_heavy_for_teams_drops_what_it_can_do_without() {
+        let bulky = "x".repeat(4000);
+        let new: Vec<ReportItem> = (0..CARD_ITEMS)
+            .map(|n| ReportItem {
+                example: bulky.clone(),
+                location: Some(format!("{bulky}/{n}.js:1")),
+                ..item(&n.to_string(), None)
+            })
+            .collect();
+        let card = card(&report(new, Vec::new()));
+
+        assert!(weight(&card) <= CARD_BYTES, "{} bytes", weight(&card));
+        assert_eq!(
+            card["attachments"][0]["content"]["body"][0]["text"],
+            "10 new errors on dev01"
+        );
+    }
+
+    #[test]
+    fn an_example_is_cut_on_the_card() {
+        let new = vec![ReportItem {
+            example: "é".repeat(CARD_EXAMPLE_CHARS * 2),
+            ..item("a", None)
+        }];
+        let card = card(&report(new, Vec::new()));
+        let example = card["attachments"][0]["content"]["body"][3]["text"]
+            .as_str()
+            .unwrap();
+        assert_eq!(example.chars().count(), CARD_EXAMPLE_CHARS + 3);
     }
 
     #[test]

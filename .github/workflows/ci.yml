@@ -22,11 +22,12 @@ jobs:
       - uses: actions/checkout@v4
       - run: cargo fmt --check -p sfcc-upload -p log-diff -p sfcc-core -p sfcc-dap
       - run: cargo test -p sfcc-upload -p log-diff -p sfcc-dap
-      # On its own, so the tests of the webdav feature run and the crate is
-      # also checked without it, the way the debug adapter builds it.
+      # On its own, so the tests of the webdav feature run - the log reader
+      # against a WebDAV server in memory among them - and the crate is also
+      # checked without it, the way the debug adapter builds it.
       - run: cargo test -p sfcc-core --all-features
-      - run: cargo clippy -p sfcc-core
-      - run: cargo clippy -p sfcc-dap -p sfcc-core -p log-diff --all-features -- -D warnings
+      - run: cargo clippy -p sfcc-core -- -D warnings
+      - run: cargo clippy -p sfcc-upload -p sfcc-dap -p sfcc-core -p log-diff --all-features --all-targets -- -D warnings
 
   grammar:
     name: tree-sitter-isml

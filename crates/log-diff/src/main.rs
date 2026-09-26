@@ -434,20 +434,7 @@ async fn run(cli: Cli) -> Result<i32> {
         Command::CodeVersions(args) => {
             let config = Config::load(args.config, None)?;
             let dav = Dav::new(&config)?;
-            let mut versions: Vec<(String, String)> = dav
-                .list(dav.root_url())
-                .await?
-                .into_iter()
-                .filter(|entry| entry.is_dir)
-                .filter_map(|entry| {
-                    let at = chrono::DateTime::parse_from_rfc2822(&entry.modified).ok()?;
-                    let at = at
-                        .with_timezone(&chrono::Utc)
-                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                    Some((at, entry.name))
-                })
-                .collect();
-            versions.sort();
+            let versions = ci::code_versions(&dav).await?;
             for (at, name) in versions {
                 println!("{name}\t{at}");
             }
@@ -652,6 +639,16 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
             &format!(
                 "first run on {}: {} signature(s) learned from the log since {}, nothing reported",
                 config.hostname, outcome.known, outcome.baseline_from
+            ),
+        );
+        return Ok(0);
+    }
+    if outcome.resigned {
+        status(
+            Tone::Ok,
+            &format!(
+                "{}: signatures are computed a new way; {} learned again, nothing reported",
+                config.hostname, outcome.known
             ),
         );
         return Ok(0);
