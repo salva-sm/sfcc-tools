@@ -88,6 +88,9 @@ pub struct Config {
     pub accept_invalid_certs: bool,
     /// An Account Manager client, for the APIs that need one.
     pub api_client: Option<ApiClient>,
+    /// Talk plain HTTP instead of HTTPS: for a test server on this machine
+    /// only, and never taken from dw.json.
+    pub plain_http: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -159,13 +162,15 @@ impl Config {
             cartridge_filter,
             accept_invalid_certs: parsed.self_signed.unwrap_or(false),
             api_client,
+            plain_http: false,
         })
     }
 
     /// Where the cartridges of this code version live over WebDAV.
     pub fn webdav_root(&self) -> String {
         format!(
-            "https://{}/on/demandware.servlet/webdav/Sites/Cartridges",
+            "{}://{}/on/demandware.servlet/webdav/Sites/Cartridges",
+            self.scheme(),
             self.hostname
         )
     }
@@ -173,9 +178,17 @@ impl Config {
     /// Where the instance writes its logs.
     pub fn logs_url(&self) -> String {
         format!(
-            "https://{}/on/demandware.servlet/webdav/Sites/Logs",
+            "{}://{}/on/demandware.servlet/webdav/Sites/Logs",
+            self.scheme(),
             self.hostname
         )
+    }
+
+    fn scheme(&self) -> &'static str {
+        match self.plain_http {
+            true => "http",
+            false => "https",
+        }
     }
 
     /// The Data API resource for this code version.

@@ -19,6 +19,9 @@ pub mod config;
 /// The instance log: records, a mark, and what was written since.
 #[cfg(feature = "webdav")]
 pub mod logs;
+/// A WebDAV server in memory, for tests.
+#[cfg(feature = "testing")]
+pub mod testing;
 /// WebDAV against the instance.
 #[cfg(feature = "webdav")]
 pub mod webdav;

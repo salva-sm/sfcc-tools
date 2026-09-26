@@ -9,11 +9,17 @@
 use crate::webdav::{Dav, encode_path};
 use anyhow::{Context, Result};
 use chrono::{Duration, NaiveDateTime, SecondsFormat, Utc};
+use futures::stream::{self, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// The levels worth reading when nobody says otherwise.
 pub const DEFAULT_LEVELS: &str = "error,customerror,custom";
+
+/// How many log files are read at once. An instance keeps one file per level
+/// and app server a day, and reading them one after another is most of the
+/// time a read takes; more at once would only be the instance's to throttle.
+const READS_AT_ONCE: usize = 6;
 
 /// One record of a log file: the line carrying its timestamp, and every line
 /// after it up to the next one - a stack trace, a request dump.
@@ -110,20 +116,22 @@ pub async fn since(dav: &Dav, mark: &Mark, levels: &[String]) -> Result<Since> {
         false => mark.day.as_str(),
     };
 
-    let mut entries = Vec::new();
-    let mut offsets = BTreeMap::new();
-    for file in listing(dav).await? {
-        let Some(day) = file_day(&file.name) else {
-            continue;
-        };
-        if day < first_day || !is_wanted(&file.name, levels, day) {
-            continue;
-        }
+    let wanted: Vec<_> = listing(dav)
+        .await?
+        .into_iter()
+        .filter_map(|file| {
+            let day = file_day(&file.name)?.to_string();
+            (day.as_str() >= first_day && is_wanted(&file.name, levels, &day))
+                .then_some((file, day))
+        })
+        .collect();
 
+    let reads = wanted.into_iter().map(|(file, day)| async move {
         let mut offset = mark.offsets.get(&file.name).copied().unwrap_or(0);
         if file.size < offset {
             offset = 0;
         }
+        let mut read = Vec::new();
         if file.size > offset {
             let url = format!("{}/{}", dav.logs_url(), encode_path(&file.name));
             let text = dav
@@ -135,11 +143,22 @@ pub async fn since(dav: &Dav, mark: &Mark, levels: &[String]) -> Result<Since> {
                 None => "",
             };
             offset += complete.len() as u64;
-            entries.extend(parse_entries(&file.name, complete));
+            read = parse_entries(&file.name, complete);
         }
+        Ok::<_, anyhow::Error>((file.name, day, offset, read))
+    });
+    let read: Vec<_> = stream::iter(reads)
+        .buffered(READS_AT_ONCE)
+        .try_collect()
+        .await?;
+
+    let mut entries = Vec::new();
+    let mut offsets = BTreeMap::new();
+    for (name, day, offset, read) in read {
+        entries.extend(read);
         // Yesterday's files are done; keeping their offsets would only grow the mark.
         if day == today {
-            offsets.insert(file.name, offset);
+            offsets.insert(name, offset);
         }
     }
 
@@ -186,28 +205,32 @@ pub async fn archived(dav: &Dav, first_day: &str, levels: &[String]) -> Result<V
         }
     }
 
-    let mut entries = Vec::new();
-    for (url, name) in files {
+    let wanted = files.into_iter().filter(|(_, name)| {
         let Some(plain) = name.strip_suffix(".gz") else {
-            continue;
+            return false;
         };
-        let Some(day) = file_day(plain) else {
-            continue;
-        };
-        if day < first_day || live.contains(plain) || !is_wanted(plain, levels, day) {
-            continue;
-        }
+        file_day(plain).is_some_and(|day| {
+            day >= first_day && !live.contains(plain) && is_wanted(plain, levels, day)
+        })
+    });
+    let reads = wanted.map(|(url, name)| async move {
         let compressed = dav
             .read_bytes(&url)
             .await
             .with_context(|| format!("cannot read {name}"))?;
+        let plain = name.strip_suffix(".gz").unwrap_or(&name);
         let mut text = String::new();
         use std::io::Read;
         flate2::read::MultiGzDecoder::new(compressed.as_slice())
             .read_to_string(&mut text)
             .with_context(|| format!("{name} is not a readable gzip file"))?;
-        entries.extend(parse_entries(plain, &text));
-    }
+        Ok::<_, anyhow::Error>(parse_entries(plain, &text))
+    });
+    let read: Vec<Vec<Entry>> = stream::iter(reads)
+        .buffered(READS_AT_ONCE)
+        .try_collect()
+        .await?;
+    let mut entries: Vec<Entry> = read.into_iter().flatten().collect();
     order(&mut entries);
     Ok(entries)
 }
