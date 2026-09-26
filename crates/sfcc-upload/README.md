@@ -261,9 +261,30 @@ rewritten on every transition:
 failure. The file is keyed by the cartridges directory so a reader that knows only the
 folder it has open can find the right watcher, and it is removed when the watcher stops.
 
-It exists so an editor can show whether the sandbox has the code on disk; the ISML
-language server reads it and puts it in Zed's status bar. Writing it never fails an
-upload — a status nobody can write is a status nobody reads, not a reason to stop.
+It exists so an editor can show whether the sandbox has the code on disk. Writing it never
+fails an upload — a status nobody can write is a status nobody reads, not a reason to stop.
+
+## Starting with the editor, and hearing from it there
+
+**Zed.** The ISML language server reads the status file: an upload in flight and a failure
+show in the status bar, and a notification appears when an upload fails and again when it
+recovers — never for one that worked, and not for every retry in between. It can also start
+the watcher when a workspace with a `dw.json` opens and none is running (`.zed/settings.json`):
+
+```json
+{ "lsp": { "isml-lsp": { "initialization_options": { "upload": { "autostart": true } } } } }
+```
+
+`"notify": false` next to it keeps the status bar and drops the notifications. The watcher
+started this way is the detached one: it outlives Zed, and `sfcc-upload stop` ends it.
+
+**VS Code.** [`templates/vscode-tasks.json`](templates/vscode-tasks.json) is a
+`.vscode/tasks.json` that runs `sfcc-upload watch --problems` when the folder opens, without
+showing a terminal. `--problems` prints each batch for VS Code's problem matcher: a failure
+lands in Problems — on the files that did not reach the sandbox — and in the status bar's
+error count, and a batch that works clears it. VS Code asks once whether to allow automatic
+tasks. This watcher belongs to the window: it stops with it, and it will not run next to a
+detached one for the same project.
 
 ## How it works
 

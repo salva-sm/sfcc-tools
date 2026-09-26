@@ -1131,7 +1131,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "isml-lsp"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "crossbeam-channel",
  "lsp-server",
@@ -1210,7 +1210,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "log-diff"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1844,7 +1844,7 @@ dependencies = [
 
 [[package]]
 name = "sfcc-upload"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "chrono",
