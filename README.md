@@ -28,7 +28,7 @@ These are the pieces that close those gaps. No instance, no network, no `node_mo
 | | | |
 | :-- | :-- | :-- |
 | 📤 | **[`crates/sfcc-upload`](crates/sfcc-upload)** | Cartridge uploader for sandboxes, as a CLI. Same job as Prophet, with no editor attached. Formerly `prost` |
-| 🔎 | **[`crates/log-diff`](crates/log-diff)** | Tells the errors a deploy or a change introduced from the ones already known: DEV, STG and PRD for the team, with spikes, a weekly digest and a dashboard; and each sandbox for its developer |
+| 🔎 | **[`crates/log-diff`](crates/log-diff)** | Tells the errors a deploy or a change introduced from the ones already known: DEV, STG and PRD for the team, with spikes and a weekly digest; and each sandbox for its developer |
 | 🧠 | **[`crates/isml-lsp`](crates/isml-lsp)** | Language server: ISML and `dw.*` completion, metadata-backed checks, route override chains, go-to-definition |
 | 🌳 | **[`grammar`](grammar)** | `tree-sitter-isml` — the only tree-sitter grammar for ISML there is |
 | ✏️ | **[`extensions/isml`](extensions/isml)** | Zed extension wiring the grammar and the language server together |

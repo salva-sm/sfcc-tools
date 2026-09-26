@@ -1,7 +1,7 @@
 # sfcc-log-ledger
 
-The known errors of an SFCC site on **DEV, STG and PRD**, the workflow that keeps the lists,
-and a dashboard to read them.
+The known errors of an SFCC site on **DEV, STG and PRD**, and the workflow that keeps the
+lists.
 
 Every 30 minutes on working days, [`log-diff`](https://github.com/salva-sm/sfcc-tools/tree/main/crates/log-diff)
 reads each instance's log since its last read, reduces every record to a signature
@@ -31,31 +31,10 @@ change for it.
 Data and the code that keeps it, nothing else: no binaries (`log-diff` is downloaded by
 each run) and nothing generated from the ledgers.
 
-## The dashboard
+## A dashboard
 
-Built on your machine from this repository, when you want it — one self-contained HTML
-page in your temp folder, nothing kept here:
-
-```bash
-log-diff dashboard --from <owner>/sfcc-log-ledger --open \
-  --code-url 'https://github.com/<owner>/<sfcc-repo>/blob/{sha}/source/cartridges/{path}#L{line}' \
-  --compare-url 'https://github.com/<owner>/<sfcc-repo>/compare/{from}...{to}'
-```
-
-It reads the ledgers and `team.json` through the GitHub API with your `gh` login (or
-`GITHUB_TOKEN`), so it needs no clone. `log-diff summary --from <owner>/sfcc-log-ledger`
-prints the digest the same way. Every run also attaches the page to itself as the
-**dashboard** artifact, for anyone without `log-diff`.
-
-Not published to GitHub Pages on purpose: on a plan without private Pages, that would
-make PRD's errors public.
-
-It shows, for the last 7, 30 or 90 days and for one environment or all three: records per
-day with the deploys marked, new signatures per day, the most important signatures (error
-pages first, then the most logged, with their trend and last 14 days), spikes, what reached
-PRD after DEV or STG had it first, and the deploys with the new signatures each brought.
-Click a signature for its history, its scrubbed example and a link to the line in
-the SFCC repository. Links into it: `?env=prd`, `?range=7`, `?signature=<id>`, `?theme=dark`.
+The ledgers are plain JSON, so a page of your own can read them - kept in this repository as
+source, next to the data, and published privately. log-diff does not generate one.
 
 ## Deploys
 
@@ -106,7 +85,7 @@ Reading a log never writes to an instance: WebDAV read access is all it needs.
 | `SOURCE_BRANCH` | `develop` | The branch DEV is deployed from |
 | `COMPARE_URL` | `https://github.com/<owner>/<sfcc-repo>/compare/{from}...{to}` | The commits between two deploys |
 | `CODE_URL` | `https://github.com/<owner>/<sfcc-repo>/blob/{sha}/source/cartridges/{path}#L{line}` | A signature's line of code |
-| `DASHBOARD_URL` | | Optional: where the dashboard is served, for a button on the digest |
+| `DASHBOARD_URL` | | Optional: where a dashboard of the ledgers is served, for a button on the digest |
 | `SPIKE_MIN`, `SPIKE_FACTOR` | `20`, `5` | Optional: what counts as a spike |
 
 **Workflow permissions:** the workflow commits the ledgers, so *Settings → Actions →
@@ -115,7 +94,7 @@ read-only.
 
 **First run:** *Actions → log-diff → Run workflow*. The first read of an environment learns
 instead of reporting — *baseline_days* (14 by default) of its log, the compressed days in
-`log_archive` included — so the charts and the spikes start with two weeks of history.
+`log_archive` included — so the spikes start with two weeks of history.
 
 ## Muting and tickets
 
@@ -130,8 +109,7 @@ A signature that does not matter goes in `team.json`, by pull request:
 }
 ```
 
-It is still counted, but never reported: not as new, not as a spike, not in the digest; the
-dashboard hides it unless *Hide muted* is unticked.
+It is still counted, but never reported: not as new, not as a spike, not in the digest.
 
 A Jira ticket, carrying everything the ledger knows, with its key recorded in `team.json`:
 
