@@ -246,9 +246,12 @@ $ log-diff list --pending -n 0        # everything pending, not only the first t
 
 Signatures are grouped by standing — pending, resolved, muted, baseline — and listed most
 important first: what shows as an error page comes before anything else, then what happened
-most, then what happened last. An error page is an uncaught `error` or a `fatal`, which SFCC
-answers with a 500, or any record whose message says `500` or `Internal Server Error`; its
-card carries a red **500**. `check` and `watch` order what is pending the same way, after
+most, then what happened last. An error page is an uncaught `error` or a `fatal` in a
+storefront request, which SFCC answers with a 500, or any record whose message says `500` or
+`Internal Server Error`; its card carries a red **500**. Business Manager and background
+threads are not error pages, and neither is `Error in template script.`: a failed `${}`
+renders empty, and its cause is logged apart in customerror. A signature failing inside a
+template is placed at the template (`account/editProfileForm.isml`), not at `render.js`. `check` and `watch` order what is pending the same way, after
 what is new.
 
 `watch` is the same pass on a timer. `check` needs nothing running beforehand; if `watch` is

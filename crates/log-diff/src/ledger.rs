@@ -36,6 +36,10 @@ pub struct Ledger {
     /// against.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub daily: BTreeMap<String, BTreeMap<String, u64>>,
+    /// Team only: when the first read, which learns instead of reporting, ended. What was
+    /// first seen before it was already there, not new.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<String>,
 }
 
 pub const DAYS_KEPT: usize = 90;
@@ -109,7 +113,14 @@ impl Known {
 
 pub fn serious(label: &str, example: &str) -> bool {
     let head = example.lines().next().unwrap_or_default();
-    matches!(label, "error" | "fatal")
+    // A failed `${}` renders empty and the page goes on; the cause is logged apart, in customerror.
+    if head.contains("Error in template script") {
+        return false;
+    }
+    // A shopper's error page comes from a storefront request, not from Business Manager or a
+    // background thread such as the OIDC token refresh.
+    let storefront = head.contains("PipelineCallServlet") && !head.contains("BUSINESSMGR");
+    (matches!(label, "error" | "fatal") && storefront)
         || head.contains(" 500")
         || head.contains("Internal Server Error")
 }
@@ -158,6 +169,7 @@ impl Default for Ledger {
             known_signatures: BTreeMap::new(),
             deploy_log: Vec::new(),
             daily: BTreeMap::new(),
+            baseline: None,
         }
     }
 }

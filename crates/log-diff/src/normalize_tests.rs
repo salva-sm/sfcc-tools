@@ -171,3 +171,29 @@ fn a_line_that_is_not_a_record_header_is_still_signed() {
     );
     assert_eq!(signature.id.len(), 16);
 }
+
+#[test]
+fn an_expression_in_a_template_is_placed_at_the_template_not_at_render_js() {
+    let wrapper = one(
+        "error-blade1-20260922.log",
+        "[2026-09-22 10:00:00.000 GMT] ERROR PipelineCallServlet|1|Sites-X-Site|Account-EditProfile|PipelineCall|abc org.apache.jsp._x.cartridges._y.default_.account._z Sites-X-Site STOREFRONT a b 1 - Error in template script.\n\
+         \tat [Template:account/editProfileForm:${pdict.profileForm.customer.base.apply.htmlName}]:1\n\
+         \tat modules/server/render.js:22 (template)\n\
+         \tat modules/server/render.js:102 (anonymous)\n",
+    );
+    assert_eq!(
+        wrapper.location.as_deref(),
+        Some("account/editProfileForm.isml")
+    );
+
+    let cause = one(
+        "customerror-blade1-20260922.log",
+        "[2026-09-22 10:00:00.000 GMT] ERROR PipelineCallServlet|1|Sites-X-Site|Search-Show|PipelineCall|abc custom.isml [] TypeError: Cannot read property \"isCategorySearch\" from null\n\
+         \tat [Template:/search/searchResultsNoDecorator:${pdict.productSearch.isCategorySearch ? 'a' : 'b'}]:1\n\
+         \tat modules/server/render.js:22 (template)\n",
+    );
+    assert_eq!(
+        cause.location.as_deref(),
+        Some("search/searchResultsNoDecorator.isml")
+    );
+}
