@@ -393,6 +393,15 @@ then spikes - which both Teams Workflows webhooks and the older incoming webhook
 webhook comes from `--webhook` or `LOG_DIFF_WEBHOOK`; without one nothing is posted and the
 run still succeeds, and a report with nothing in it posts nothing.
 
+A card stays one Teams will take. Past 30 new signatures in one run it is one event, not 30
+failures - a deploy that broke something broadly - and the card says so, with the 15 most
+logged one line each. Otherwise examples are cut to 300 characters, and a card still heavier
+than 24 KB (Teams refuses past about 28) drops the examples, then lists fewer.
+
+A ledger records how its signatures were computed. When a new log-diff computes them another
+way, its first run on an old ledger learns the log under the new ids and reports nothing,
+rather than every known failure as new.
+
 `log-diff summary` is the weekly digest: for each environment, the records of the last
 `--days` (7) against the days before, the share that shows as an error page, the new
 signatures, the most logged and the fastest growing - printed, and posted when a webhook is

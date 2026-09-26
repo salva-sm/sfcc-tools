@@ -399,3 +399,21 @@ fn a_steady_or_small_or_muted_or_brand_new_signature_does_not_spike() {
     team.record_daily(&counted(&fresh, &[("2026-09-22", 500)]));
     assert!(team.spikes("2026-09-22", 20, 5.0, &[]).is_empty());
 }
+
+#[test]
+fn a_ledger_signed_another_way_learns_again_once() {
+    let mut ledger = Ledger::default();
+    assert!(!ledger.resigned(), "an empty ledger has nothing to mistake");
+
+    ledger.observe(&found(FAILURE), None, false);
+    ledger.signatures = crate::normalize::SIGNATURES + 1;
+    assert!(ledger.resigned());
+
+    ledger.advance("dev01", Mark::start_of_today());
+    assert!(!ledger.resigned(), "once read again, it is signed this way");
+}
+
+#[test]
+fn a_ledger_older_than_the_field_was_signed_the_first_way() {
+    assert_eq!(Ledger::parse("{}").unwrap().signatures, 1);
+}

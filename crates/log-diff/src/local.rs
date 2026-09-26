@@ -119,6 +119,8 @@ impl Local {
         // Loaded again after the read, which is where the time goes: a hook
         // that ran meanwhile has already recorded what it found.
         let mut mine = Ledger::load(&self.state)?;
+        // Signed another way before: the same failures under new ids.
+        let baseline = baseline || mine.resigned();
         let (mut new, mut back) = (Vec::new(), Vec::new());
         for finding in findings(&read.entries) {
             if team.knows(&finding.signature.id) {

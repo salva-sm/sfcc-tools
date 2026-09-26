@@ -17,6 +17,11 @@ use sfcc_core::logs::Entry;
 use std::sync::LazyLock;
 use xxhash_rust::xxh3::xxh3_64;
 
+/// How signatures are computed. Raise it with any change that gives a failure
+/// a different id than before - what is scrubbed, which frames count - and a
+/// ledger kept under the old one learns its log once more, quietly, instead
+/// of reporting every failure it knows as new.
+pub const SIGNATURES: u32 = 1;
 /// Frames that take part in the signature. Below this the stack is the
 /// framework's, and the same for every failure.
 const FRAMES: usize = 8;
