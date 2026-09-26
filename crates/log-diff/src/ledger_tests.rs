@@ -417,3 +417,35 @@ fn a_ledger_signed_another_way_learns_again_once() {
 fn a_ledger_older_than_the_field_was_signed_the_first_way() {
     assert_eq!(Ledger::parse("{}").unwrap().signatures, 1);
 }
+
+#[test]
+fn a_failed_template_expression_is_not_an_error_page() {
+    assert!(!serious(
+        "error",
+        "ERROR PipelineCallServlet|Sites-X-Site|Account-Show|PipelineCall org.apache.jsp.x Sites-X-Site STOREFRONT - Error in template script."
+    ));
+    assert!(serious(
+        "error",
+        "ERROR PipelineCallServlet|x TypeError: boom"
+    ));
+}
+
+#[test]
+fn only_a_storefront_request_makes_an_error_page() {
+    assert!(serious(
+        "error",
+        "ERROR PipelineCallServlet|Sites-X-Site|Order-Confirm|PipelineCall system.core Sites-X-Site STOREFRONT a b 1 - Currency undefined"
+    ));
+    assert!(!serious(
+        "error",
+        "ERROR http-nio-1 com.demandware.am.client.oidc.OIDCTokenRefreshService - - - - 1 - Error refreshing OIDC token"
+    ));
+    assert!(!serious(
+        "error",
+        "ERROR http-nio-1 com.demandware.beehive.core.am.OIDCAuthenticationFailureHandler - BUSINESSMGR a b 1 - Unexpected error"
+    ));
+    assert!(serious(
+        "customerror",
+        "ERROR JobThread|1 custom [] HTTP 500 Internal Server Error from the payment service"
+    ));
+}

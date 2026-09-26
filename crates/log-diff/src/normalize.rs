@@ -72,6 +72,8 @@ regex!(DECIMAL, r"\b\d+[.,]\d+\b");
 regex!(WORD, r"[A-Za-z0-9_\-]+");
 // A script position, in a frame (`file.js:214`) or inside a message (`file.js#214`).
 regex!(POSITION, r"(\.(?:js|ds|isml))[:#](\d+)");
+// `[Template:account/editProfileForm:${pdict.x}]:1`: an expression inside an ISML template.
+regex!(TEMPLATE_FRAME, r"^\[Template:/?([^:\]]+)");
 regex!(
     MESSAGE_LOCATION,
     r"([A-Za-z0-9_\-]+/cartridge/[^\s()#:]+\.(?:js|ds|isml))#(\d+)"
@@ -211,6 +213,10 @@ fn without_positions(text: &str) -> String {
 
 fn location(frames: &[String], message: &str) -> Option<String> {
     let from_frames = frames.iter().find_map(|frame| {
+        // Its line is the expression's, not the file's; the frames under it are all render.js.
+        if let Some(template) = TEMPLATE_FRAME.captures(frame) {
+            return Some(format!("{}.isml", &template[1]));
+        }
         let position = frame.split_whitespace().next()?;
         let (path, line) = position.rsplit_once(':')?;
         let is_script = path.contains('/') && POSITION.is_match(position);

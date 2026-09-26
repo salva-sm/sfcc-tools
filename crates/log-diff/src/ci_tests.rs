@@ -85,6 +85,11 @@ async fn learns_first_then_reports_what_is_new_with_the_deploy_it_came_with() {
     assert!(first.baseline);
     assert!(first.report.is_empty());
     assert_eq!(first.known, 2, "today's log and the archive");
+    let learned = Ledger::load(&state).unwrap().baseline;
+    assert!(
+        learned.is_some(),
+        "the first read marks where learning ended"
+    );
 
     let deploy = |sha: &str, build: u64, ago: Duration| RunOptions {
         sha: Some(sha.to_string()),
