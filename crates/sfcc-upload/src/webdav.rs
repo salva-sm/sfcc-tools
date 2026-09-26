@@ -33,10 +33,10 @@ impl Ready for Dav {
                     bail!("the sandbox rejected the credentials from dw.json (HTTP 401/403)")
                 }
                 Availability::Unavailable(reason) => {
-                    if let Some(limit) = max_wait {
-                        if started.elapsed() >= limit {
-                            bail!("sandbox unreachable after {}s: {reason}", limit.as_secs());
-                        }
+                    if let Some(limit) = max_wait
+                        && started.elapsed() >= limit
+                    {
+                        bail!("sandbox unreachable after {}s: {reason}", limit.as_secs());
                     }
                     if !announced {
                         logging::warn(format!("sandbox unavailable ({reason}) - waiting"));
