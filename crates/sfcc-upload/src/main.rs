@@ -651,8 +651,17 @@ async fn clean(config: Config, jobs: usize, args: CleanArgs) -> Result<()> {
         logging::ok(format!("code version {} deleted", ctx.config.code_version));
     } else {
         let deleted = push::delete_paths(&ctx, &names).await?;
-        logging::changes(logging::Change::Deleted, &deleted);
-        logging::ok(format!("{} cartridge folder(s) deleted", deleted.len()));
+        logging::changes(logging::Change::Deleted, &deleted.gone);
+        if !deleted.failed.is_empty() {
+            bail!(
+                "{} cartridge folder(s) could not be deleted",
+                deleted.failed.len()
+            );
+        }
+        logging::ok(format!(
+            "{} cartridge folder(s) deleted",
+            deleted.gone.len()
+        ));
     }
     let _ = std::fs::remove_file(&ctx.manifest_path);
     Ok(())

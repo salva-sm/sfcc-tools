@@ -1,6 +1,6 @@
 //! A WebDAV server in memory that answers the way an instance does, for the
 //! tests of what reads one: PROPFIND a folder, GET a file whole or from an
-//! offset. Plain HTTP on the loopback interface, one request per connection.
+//! offset, PUT, MKCOL and DELETE - and can be taken down. Plain HTTP on the loopback interface, one request per connection.
 //!
 //! Paths are the ones under `Sites/`: `Logs/error-blade1-20260922.log`,
 //! `Logs/log_archive/error-blade1-20260920.log.gz`, `Cartridges/b12_x`.
@@ -23,6 +23,8 @@ struct Tree {
     modified: BTreeMap<String, String>,
     /// Every request, `METHOD path`, for a test to look at.
     requests: Vec<String>,
+    /// Answering 503 to everything, the way a stopped sandbox does.
+    down: bool,
 }
 
 /// The server. It stops when the test's runtime does.
@@ -93,6 +95,16 @@ impl MockDav {
         tree.modified.insert(path.to_string(), modified.to_string());
     }
 
+    /// Take the server down, or bring it back.
+    pub fn set_down(&self, down: bool) {
+        self.tree.lock().unwrap().down = down;
+    }
+
+    /// A file's contents, if it is there.
+    pub fn file(&self, path: &str) -> Option<Vec<u8>> {
+        self.tree.lock().unwrap().files.get(path).cloned()
+    }
+
     /// Every request so far, `GET Logs/error-...log`.
     pub fn requests(&self) -> Vec<String> {
         self.tree.lock().unwrap().requests.clone()
@@ -128,17 +140,17 @@ async fn answer(mut stream: TcpStream, tree: &Mutex<Tree>) -> std::io::Result<()
             .map(|(_, value)| value.clone())
     };
 
-    // What is left of the body is read and dropped: PROPFIND sends one.
+    // A PUT keeps its body; any other is read and dropped.
     let length: usize = header("content-length")
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
-    let mut body = request.len() - head_end;
-    while body < length {
+    let mut body = request[head_end..].to_vec();
+    while body.len() < length {
         let read = stream.read(&mut chunk).await?;
         if read == 0 {
             break;
         }
-        body += read;
+        body.extend_from_slice(&chunk[..read]);
     }
 
     let path = decode(target.strip_prefix(SITES).unwrap_or(&target));
@@ -146,8 +158,33 @@ async fn answer(mut stream: TcpStream, tree: &Mutex<Tree>) -> std::io::Result<()
     let (status, extra, payload) = {
         let mut tree = tree.lock().unwrap();
         tree.requests.push(format!("{method} {path}"));
+        let exists = |tree: &Tree, path: &str| {
+            let prefix = format!("{path}/");
+            tree.files
+                .keys()
+                .any(|file| file == path || file.starts_with(&prefix))
+        };
         match (header("authorization").is_some(), method.as_str()) {
+            _ if tree.down => ("503 Service Unavailable", String::new(), Vec::new()),
             (false, _) => ("401 Unauthorized", String::new(), Vec::new()),
+            (true, "PUT") => {
+                tree.files.insert(path.clone(), body);
+                ("201 Created", String::new(), Vec::new())
+            }
+            (true, "MKCOL") if exists(&tree, &path) => {
+                ("405 Method Not Allowed", String::new(), Vec::new())
+            }
+            (true, "MKCOL") => {
+                tree.files.insert(format!("{path}/.keep"), Vec::new());
+                ("201 Created", String::new(), Vec::new())
+            }
+            (true, "DELETE") if exists(&tree, &path) => {
+                let prefix = format!("{path}/");
+                tree.files
+                    .retain(|file, _| file != &path && !file.starts_with(&prefix));
+                ("204 No Content", String::new(), Vec::new())
+            }
+            (true, "DELETE") => ("404 Not Found", String::new(), Vec::new()),
             (true, "PROPFIND") => match listing(&tree, &path) {
                 Some(xml) => ("207 Multi-Status", String::new(), xml.into_bytes()),
                 None => ("404 Not Found", String::new(), Vec::new()),

@@ -280,6 +280,12 @@ flight. Small changes go straight up as individual `PUT`s.
 error — it waits and resumes, queueing the changes it saw meanwhile. Rejected credentials
 fail immediately.
 
+While watching, a save that does not reach the sandbox — it went down, or refused part of
+the batch — is said at once: on the console, and as `failed` in the status file, with how
+many changes are queued. They are retried after 10 s, then 20, 40 and every minute, and
+straight away on the next save; what did arrive is not sent twice. The watcher does not
+hang in a wait meanwhile: its heartbeat, `stop` and `status` keep working.
+
 **Watching.** Events are debounced 300 ms and coalesced, so a save, a branch switch or a
 webpack rebuild becomes one batch. `start` detaches the process, and keeps a log, pid and
 heartbeat per sandbox and code version.

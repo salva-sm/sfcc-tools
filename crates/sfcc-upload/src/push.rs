@@ -2,7 +2,7 @@ use crate::logging::{self, Change};
 use crate::manifest::{Entry, Manifest, hash_file, manifest_path};
 use crate::scan::{Ignore, LocalFile, cartridge_directories, scan};
 use crate::webdav::{Dav, Ready};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use futures::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use sfcc_core::config::Config;
@@ -127,10 +127,11 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
 
     let mut deleted = 0;
     if failure.is_none() && !removed.is_empty() {
-        let gone = delete_paths(ctx, &removed).await?;
-        logging::changes(Change::Deleted, &gone);
-        deleted = gone.len();
-        for path in &removed {
+        let result = delete_paths(ctx, &removed).await?;
+        logging::changes(Change::Deleted, &result.gone);
+        deleted = result.gone.len();
+        // What failed stays in the manifest, and is deleted by the next push.
+        for path in removed.iter().filter(|path| !result.failed.contains(path)) {
             manifest.forget(path);
         }
     }
@@ -235,28 +236,40 @@ pub async fn upload_files(
     }
 }
 
-/// Deletes the outermost of the given paths and answers with the ones that were
-/// really there, for the caller to report as one group.
-pub async fn delete_paths(ctx: &Ctx, paths: &[String]) -> Result<Vec<String>> {
+/// What a deletion did: the paths that were really there, for the caller to
+/// report as one group, and the ones the sandbox failed to delete.
+pub struct Deleted {
+    pub gone: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+/// Deletes the outermost of the given paths.
+pub async fn delete_paths(ctx: &Ctx, paths: &[String]) -> Result<Deleted> {
     let roots = outermost(paths);
-    let mut deleted: Vec<String> = stream::iter(roots)
+    let results: Vec<(String, Result<bool>)> = stream::iter(roots)
         .map(|path| async move {
-            match ctx.dav.delete(&path).await {
-                Ok(true) => Some(path),
-                Ok(false) => None,
-                Err(error) => {
-                    logging::error(format!("{error:#}"));
-                    None
-                }
-            }
+            let result = ctx.dav.delete(&path).await;
+            (path, result)
         })
         .buffer_unordered(ctx.jobs)
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .flatten()
-        .collect();
-    deleted.sort();
+        .collect()
+        .await;
+
+    let mut deleted = Deleted {
+        gone: Vec::new(),
+        failed: Vec::new(),
+    };
+    for (path, result) in results {
+        match result {
+            Ok(true) => deleted.gone.push(path),
+            Ok(false) => {}
+            Err(error) => {
+                logging::error(format!("{error:#}"));
+                deleted.failed.push(path);
+            }
+        }
+    }
+    deleted.gone.sort();
     Ok(deleted)
 }
 
@@ -417,8 +430,14 @@ async fn clear_remote_cartridges(ctx: &Ctx) -> Result<()> {
         "clearing {} cartridge folder(s) on the sandbox",
         names.len()
     ));
-    let gone = delete_paths(ctx, &names).await?;
-    logging::changes(Change::Deleted, &gone);
+    let result = delete_paths(ctx, &names).await?;
+    logging::changes(Change::Deleted, &result.gone);
+    if !result.failed.is_empty() {
+        bail!(
+            "could not clear {} cartridge folder(s)",
+            result.failed.len()
+        );
+    }
     Ok(())
 }
 
