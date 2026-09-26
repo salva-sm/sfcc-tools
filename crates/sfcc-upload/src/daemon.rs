@@ -136,19 +136,16 @@ pub fn stop(config: &Config) -> Result<Option<u32>> {
     Ok(Some(pid))
 }
 
-/// A detached watcher found by its pid file alone, without the dw.json that
-/// started it - so it can be stopped from anywhere.
+/// Found by its pid file alone, so it can be stopped without its dw.json.
 #[derive(Debug, Clone)]
 pub struct Running {
     /// The sandbox and code version, as the state files are named.
     pub identity: String,
     pub pid: u32,
-    /// What it watches, when its status file says.
     pub description: Option<String>,
 }
 
-/// Every detached watcher still alive, whatever project started it. Pid files
-/// of watchers that died are cleared on the way.
+/// Pid files of watchers that died are cleared on the way.
 pub fn running_anywhere() -> Vec<Running> {
     let Ok(entries) = std::fs::read_dir(state_dir().join("daemons")) else {
         return Vec::new();
@@ -191,7 +188,6 @@ fn describe_identity(identity: &str) -> Option<String> {
     ))
 }
 
-/// Stop a watcher found by [`running_anywhere`].
 pub fn stop_running(watcher: &Running) -> Result<()> {
     terminate(watcher.pid)?;
     let daemons = state_dir().join("daemons");

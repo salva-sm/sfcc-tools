@@ -1,27 +1,20 @@
-//! Records grouped by signature: the same failure forty times is one finding
-//! with a count.
-
 use crate::normalize::{Signature, signature};
 use chrono::{SecondsFormat, Utc};
 use sfcc_core::logs::Entry;
 use std::collections::{BTreeMap, HashMap};
 
-/// One signature, and how often and when it was logged in one read.
 #[derive(Debug, Clone)]
 pub struct Finding {
-    /// What failed.
     pub signature: Signature,
-    /// How many records carried it.
     pub count: u64,
-    /// The first of them, RFC 3339 in UTC.
+    /// RFC 3339, UTC.
     pub first: String,
-    /// The last of them.
     pub last: String,
-    /// How many on each day, `YYYY-MM-DD` in UTC - what a history is built of.
+    /// `YYYY-MM-DD`, UTC.
     pub per_day: BTreeMap<String, u64>,
 }
 
-/// Group records by signature, in the order each first appeared.
+/// In the order each signature first appeared.
 pub fn findings(entries: &[Entry]) -> Vec<Finding> {
     let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     let mut found: Vec<Finding> = Vec::new();

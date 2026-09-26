@@ -1,12 +1,8 @@
-//! The shared WebDAV client, and the one thing the uploader adds to it: waiting
-//! for a sleeping sandbox while saying so on the console.
-
 use crate::logging;
 use anyhow::{Result, bail};
 pub use sfcc_core::webdav::*;
 use std::time::{Duration, Instant};
 
-/// Waiting for the sandbox, announced on the console.
 pub trait Ready {
     /// Probe until the sandbox answers, creating the code version when it is
     /// missing. Gives up after `max_wait`, or never when it is `None`.

@@ -1,9 +1,5 @@
-//! A WebDAV server in memory that answers the way an instance does, for the
-//! tests of what reads one: PROPFIND a folder, GET a file whole or from an
-//! offset, PUT, MKCOL and DELETE - and can be taken down. Plain HTTP on the loopback interface, one request per connection.
-//!
-//! Paths are the ones under `Sites/`: `Logs/error-blade1-20260922.log`,
-//! `Logs/log_archive/error-blade1-20260920.log.gz`, `Cartridges/b12_x`.
+//! An in-memory WebDAV server shaped like an instance. Paths are under `Sites/`:
+//! `Logs/error-blade1-20260922.log`, `Cartridges/b12_x`.
 
 use crate::config::{Config, Credentials};
 use std::collections::BTreeMap;
@@ -13,21 +9,18 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 const SITES: &str = "/on/demandware.servlet/webdav/Sites/";
-/// What a folder or a file says it was last changed, when nobody set it.
 const MODIFIED: &str = "Tue, 22 Sep 2026 08:00:00 GMT";
 
 #[derive(Default)]
 struct Tree {
     files: BTreeMap<String, Vec<u8>>,
-    /// Last-modified dates set on purpose, of files and folders.
     modified: BTreeMap<String, String>,
-    /// Every request, `METHOD path`, for a test to look at.
     requests: Vec<String>,
-    /// Answering 503 to everything, the way a stopped sandbox does.
+    /// 503 to everything, the way a stopped sandbox answers.
     down: bool,
 }
 
-/// The server. It stops when the test's runtime does.
+/// Stops when the test's runtime does.
 #[derive(Clone)]
 pub struct MockDav {
     address: String,
@@ -35,7 +28,6 @@ pub struct MockDav {
 }
 
 impl MockDav {
-    /// A server with nothing in it, listening on a free port.
     pub async fn start() -> MockDav {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -54,7 +46,6 @@ impl MockDav {
         MockDav { address, tree }
     }
 
-    /// A config for this server, as `dw.json` would give it.
     pub fn config(&self) -> Config {
         Config {
             dw_json: PathBuf::from("dw.json"),
@@ -72,13 +63,11 @@ impl MockDav {
         }
     }
 
-    /// Write a file, whole.
     pub fn put(&self, path: &str, contents: impl Into<Vec<u8>>) {
         let mut tree = self.tree.lock().unwrap();
         tree.files.insert(path.to_string(), contents.into());
     }
 
-    /// Add to the end of a file, the way the instance writes its log.
     pub fn append(&self, path: &str, contents: &str) {
         let mut tree = self.tree.lock().unwrap();
         tree.files
@@ -87,7 +76,7 @@ impl MockDav {
             .extend_from_slice(contents.as_bytes());
     }
 
-    /// Make a folder, and say when it was last written: a code version.
+    /// A folder with a last-modified date: a code version.
     pub fn folder(&self, path: &str, modified: &str) {
         let mut tree = self.tree.lock().unwrap();
         let path = path.trim_end_matches('/');
@@ -95,17 +84,14 @@ impl MockDav {
         tree.modified.insert(path.to_string(), modified.to_string());
     }
 
-    /// Take the server down, or bring it back.
     pub fn set_down(&self, down: bool) {
         self.tree.lock().unwrap().down = down;
     }
 
-    /// A file's contents, if it is there.
     pub fn file(&self, path: &str) -> Option<Vec<u8>> {
         self.tree.lock().unwrap().files.get(path).cloned()
     }
 
-    /// Every request so far, `GET Logs/error-...log`.
     pub fn requests(&self) -> Vec<String> {
         self.tree.lock().unwrap().requests.clone()
     }
@@ -140,7 +126,6 @@ async fn answer(mut stream: TcpStream, tree: &Mutex<Tree>) -> std::io::Result<()
             .map(|(_, value)| value.clone())
     };
 
-    // A PUT keeps its body; any other is read and dropped.
     let length: usize = header("content-length")
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
@@ -229,8 +214,7 @@ async fn answer(mut stream: TcpStream, tree: &Mutex<Tree>) -> std::io::Result<()
     stream.shutdown().await
 }
 
-/// The multistatus for a folder: itself, then every file and folder right
-/// inside it. `None` when there is no such folder.
+/// The folder itself first, then its direct members.
 fn listing(tree: &Tree, folder: &str) -> Option<String> {
     let prefix = format!("{folder}/");
     let mut members: BTreeMap<String, Option<usize>> = BTreeMap::new();

@@ -1,8 +1,4 @@
-//! The Debug Adapter Protocol on the wire.
-//!
-//! Same framing as LSP — `Content-Length` header, blank line, JSON body —
-//! but its own message shapes: requests carry a `command`, responses quote
-//! the `request_seq` they answer, and events arrive unprompted.
+//! DAP on the wire: LSP's `Content-Length` framing, its own message shapes.
 
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -11,31 +7,25 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// A request from the editor.
 #[derive(Debug, Deserialize)]
 pub struct Request {
-    /// The editor's sequence number, quoted back in the response.
     pub seq: i64,
-    /// What is being asked for: `initialize`, `stackTrace`, and the rest.
     pub command: String,
-    /// The command's arguments, absent for those that take none.
     #[serde(default)]
     pub arguments: Value,
 }
 
 impl Request {
-    /// One argument, or `Value::Null` when the editor sent none.
+    /// `Value::Null` when the editor sent none.
     pub fn argument(&self, name: &str) -> &Value {
         self.arguments.get(name).unwrap_or(&Value::Null)
     }
 
-    /// One argument as a number, which is how the protocol carries every id.
     pub fn number(&self, name: &str) -> Option<i64> {
         self.argument(name).as_i64()
     }
 }
 
-/// Writes messages to the editor, from whichever thread has something to say.
 #[derive(Clone)]
 pub struct Writer {
     out: std::sync::Arc<std::sync::Mutex<Box<dyn Write + Send>>>,
@@ -43,7 +33,6 @@ pub struct Writer {
 }
 
 impl Writer {
-    /// Wrap a stream — stdout in a real session.
     pub fn new(out: Box<dyn Write + Send>) -> Writer {
         Writer {
             out: std::sync::Arc::new(std::sync::Mutex::new(out)),
@@ -51,7 +40,6 @@ impl Writer {
         }
     }
 
-    /// Answer a request.
     pub fn respond(&self, request: &Request, body: Value) {
         self.send(json!({
             "type": "response",
@@ -62,7 +50,6 @@ impl Writer {
         }));
     }
 
-    /// Refuse a request, with a message the editor shows.
     pub fn fail(&self, request: &Request, message: impl AsRef<str>) {
         self.send(json!({
             "type": "response",
@@ -73,12 +60,10 @@ impl Writer {
         }));
     }
 
-    /// Tell the editor something it did not ask about.
     pub fn event(&self, name: &str, body: Value) {
         self.send(json!({ "type": "event", "event": name, "body": body }));
     }
 
-    /// Write a line to the debug console.
     pub fn log(&self, text: impl AsRef<str>) {
         self.event(
             "output",
@@ -97,7 +82,7 @@ impl Writer {
     }
 }
 
-/// Read one message. `None` at end of stream.
+/// `None` at end of stream.
 pub fn read(input: &mut impl BufRead) -> Result<Option<Request>> {
     let mut length = None;
     loop {

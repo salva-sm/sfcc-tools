@@ -1,13 +1,5 @@
-//! What the watcher is doing, written where an editor can read it.
-//!
-//! Nothing in an editor can see a detached watcher, so a save that failed to
-//! upload looks exactly like one that worked. The watcher writes a one-line
-//! status next to its pid file after every transition; a language server
-//! polling that file can put the state in the status bar.
-//!
-//! The file is keyed by the cartridges directory rather than by the sandbox,
-//! so a reader that knows only the folder it has open can find the right one
-//! without reproducing how the sandbox identity is derived.
+//! The watcher's state as a file an editor can poll, since a detached watcher
+//! is otherwise invisible and a failed upload looks like one that worked.
 
 use std::path::{Path, PathBuf};
 
@@ -16,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use crate::manifest::state_dir;
 use sfcc_core::config::Config;
 
-/// Where the status files live, one per watcher.
 pub fn status_dir() -> PathBuf {
     state_dir().join("status")
 }
@@ -25,36 +16,29 @@ pub fn status_path(config: &Config) -> PathBuf {
     status_dir().join(format!("{}.json", config.identity()))
 }
 
-/// What the watcher is doing right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
-    /// Everything on disk is on the sandbox.
     Synced,
-    /// An upload is in flight.
     Uploading,
-    /// The last upload failed, and the changes are still queued.
+    /// The changes are still queued.
     Failed,
     /// No watcher is running for this folder.
     Stopped,
 }
 
-/// One watcher's state, as an editor reads it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Status {
     pub state: State,
-    /// Absolute path of the cartridges directory being watched.
+    /// Absolute path.
     pub cartridges: String,
-    /// The sandbox, for a reader that wants to name it.
     pub hostname: String,
     pub code_version: String,
-    /// Files in the batch the state refers to.
     #[serde(default)]
     pub files: usize,
-    /// Why it failed, when it did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
-    /// Seconds since the epoch, so a reader can tell a stale file from a live one.
+    /// Epoch seconds, so a reader can tell a stale file from a live one.
     pub at: i64,
 }
 
@@ -72,8 +56,7 @@ impl Status {
     }
 }
 
-/// Record a state. Never fails the upload it is reporting on: a status nobody
-/// can write is a status nobody reads, not a reason to stop.
+/// Never fails the upload it reports on: an unwritable status is no reason to stop.
 pub fn publish(config: &Config, state: State) {
     write(&Status::new(config, state), &status_path(config));
 }
@@ -90,7 +73,6 @@ pub fn publish_failure(config: &Config, detail: String) {
     write(&status, &status_path(config));
 }
 
-/// Leave the folder as a reader finds it when no watcher runs.
 pub fn clear(config: &Config) {
     let _ = std::fs::remove_file(status_path(config));
 }

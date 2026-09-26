@@ -1,15 +1,5 @@
-//! How many SFCC errors are waiting to be looked at, in Zed's status bar.
-//!
-//! `log-diff check` and `log-diff watch` write, per sandbox, how many of its
-//! error signatures are pending - reported and not dealt with yet. A pending
-//! error is worth interrupting for, so while there is one this shows it
-//! through LSP progress, the one channel Zed renders for an extension, the
-//! same way the uploader's state is shown; with none, it shows nothing.
-//!
-//! # The file it reads
-//!
-//! One JSON file per sandbox under log-diff's own folder - the one layout the
-//! two programs have to agree on.
+//! Pending SFCC error count from log-diff, shown via LSP progress (the only channel Zed renders for an extension).
+//! Reads one JSON file per sandbox under log-diff's folder: the layout both programs must agree on.
 
 use crossbeam_channel::{SendError, Sender};
 use std::path::{Path, PathBuf};
@@ -28,23 +18,17 @@ const POLL: Duration = Duration::from_secs(5);
 /// A check a day old says nothing about now; `watch` writes every few seconds.
 const STALE_SECONDS: i64 = 24 * 60 * 60;
 
-/// What log-diff last found for one sandbox.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct Status {
-    /// The cartridges of the checkout it was run for.
     pub cartridges: String,
-    /// The sandbox.
     pub hostname: String,
-    /// Signatures reported and not dealt with.
     pub pending: usize,
-    /// Of them, the ones the last pass turned up.
     #[serde(default)]
     pub new: usize,
     /// Seconds since the epoch.
     pub at: i64,
 }
 
-/// Follow log-diff in the background and report to the editor.
 pub fn report(roots: Vec<PathBuf>, sender: Sender<Message>) {
     std::thread::spawn(move || {
         if create_token(&sender).is_err() {
@@ -105,7 +89,6 @@ fn status_dir() -> Option<PathBuf> {
     Some(root.join("log-diff").join("status"))
 }
 
-/// `2 SFCC errors pending (1 new)`, or nothing when none is.
 pub fn describe(status: &Status) -> Option<String> {
     let noun = if status.pending == 1 {
         "error"

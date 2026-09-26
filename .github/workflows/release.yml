@@ -1,16 +1,8 @@
 name: Release
 
-# One tag, one release, every binary on it.
-#
-# The Zed extension downloads its language server with
-# `latest_github_release`, which can only ask for the *latest* release — so if
-# each binary had its own tag, whichever was tagged last would become "latest"
-# and the extension would look for an asset that release does not carry.
-#
-# Assets are named without the version, which keeps a stable download URL:
-#   https://github.com/salva-sm/sfcc-tools/releases/latest/download/sfcc-upload-x86_64-windows.exe
-# Those names must stay in sync with `download_binary` in
-# `extensions/isml/src/isml.rs`.
+# One tag for every binary: the Zed extensions can only ask for the *latest* release.
+# Asset names carry no version, for a stable URL; keep them in sync with `download_binary`
+# in extensions/isml/src/isml.rs and extensions/b2c-debug/src/lib.rs.
 on:
   push:
     tags: ["v*"]
@@ -30,17 +22,14 @@ jobs:
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
-      # Two real axes, not `include`: an include entry whose keys are all new
-      # is merged into every combination, and the last one wins — which
-      # silently collapses ten jobs into two.
+      # Two real axes, not `include`: all-new include keys merge into every
+      # combination, silently collapsing ten jobs into two.
       matrix:
         crate: [isml-lsp, log-diff, sfcc-upload, sfcc-dap]
         platform:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: x86_64-linux }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: aarch64-linux }
-          # Both macOS binaries come off the ARM runner: Xcode ships the two
-          # SDKs, and the Intel `macos-13` runners are being retired — a job
-          # asking for one sits queued instead of failing.
+          # Both macOS binaries come off the ARM runner: Intel `macos-13` jobs sit queued.
           - { os: macos-latest, target: x86_64-apple-darwin, name: x86_64-macos }
           - { os: macos-latest, target: aarch64-apple-darwin, name: aarch64-macos }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, name: x86_64-windows }
@@ -60,9 +49,7 @@ jobs:
             -C "$DIR" "${{ matrix.crate }}"
           echo "ASSET=${{ matrix.crate }}-${{ matrix.platform.name }}.tar.gz" >> "$GITHUB_ENV"
 
-      # The uploader and the log differ are installed by downloading one file,
-      # so on Windows they ship as a bare .exe; the language server is unpacked
-      # by the extension, which expects a zip.
+      # The uploader and log differ are one-file downloads; what an extension unpacks is a zip.
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh

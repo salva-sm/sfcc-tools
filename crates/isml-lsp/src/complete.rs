@@ -1,10 +1,4 @@
-//! What to offer at the cursor.
-//!
-//! Deciding *where* the cursor is comes first — [`context_at`] — and what to
-//! put there second. The contexts are the ones a general editor gets wrong or
-//! cannot see: the ISML tag set (HTML offers `<is:include>`, which does not
-//! exist), tag attributes and their values, template paths, route names, the
-//! `dw.*` API, and the custom attributes the instance actually defines.
+//! Completion: [`context_at`] decides where the cursor is, then [`Completer`] what to offer there.
 
 use std::path::Path;
 
@@ -22,48 +16,31 @@ use crate::workspace::Workspace;
 
 const MAX_TEMPLATES: usize = 2000;
 
-/// What the cursor is in the middle of writing.
-///
-/// Every variant carries `typed`, the number of characters already there, so
-/// the completion replaces them instead of appending to them.
+/// `typed` counts the characters already there, so the completion replaces them instead of appending.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Context {
-    /// Just after `<`.
     TagName {
-        /// Characters of the name already typed.
         typed: usize,
     },
-    /// Inside an open tag, where an attribute goes.
     AttributeName {
-        /// The tag being written.
         tag: String,
-        /// Characters of the attribute name already typed.
         typed: usize,
     },
-    /// Inside the quotes of an attribute.
     AttributeValue {
-        /// The tag being written.
         tag: String,
-        /// The attribute whose value it is.
         attribute: String,
-        /// Characters of the value already typed.
         typed: usize,
     },
     /// After `.custom.` on something with a known object type.
     CustomAttribute(custom::Pending),
-    /// Inside the argument of `getCustomPreferenceValue`.
     SitePreference {
-        /// Characters already typed.
         typed: usize,
     },
     /// The first argument of `server.<verb>(`, which names a route.
     RouteName {
-        /// Characters already typed.
         typed: usize,
     },
-    /// Inside `require('`, where a `dw/...` module may go.
     DwModule {
-        /// Characters already typed.
         typed: usize,
     },
     /// A bare `dwSite` being typed, which stands for the class plus the
@@ -74,21 +51,15 @@ pub enum Context {
     },
     /// `var Trans` at the head of a file, where a `require` is being written.
     DwDeclaration {
-        /// `var`, `const` or `let`, as written.
         keyword: String,
-        /// The class name typed so far.
         typed: String,
     },
-    /// After the dot on an identifier bound to an API class by `require`.
     DwMember {
-        /// The qualified class the receiver stands for.
         class: String,
-        /// Characters already typed.
         typed: usize,
     },
 }
 
-/// The context at a character offset into the document.
 pub fn context_at(text: &str, offset: usize, is_isml: bool) -> Option<Context> {
     let chars: Vec<char> = text.chars().collect();
     let offset = offset.min(chars.len());
@@ -158,7 +129,6 @@ fn tag_context(chars: &[char], offset: usize) -> Option<Context> {
     }
 }
 
-/// Offset of the `<` that opens the tag the cursor is inside, if it is.
 fn open_tag_start(chars: &[char], offset: usize) -> Option<usize> {
     let mut index = offset;
     while index > 0 {
@@ -212,7 +182,6 @@ fn trailing_name_len(chars: &[char]) -> usize {
     length
 }
 
-/// True when the cursor sits in the route argument of a `server.<verb>(`.
 fn is_pending_route(head: &str) -> bool {
     const VERBS: [&str; 6] = ["get", "post", "use", "append", "prepend", "replace"];
     let Some(quote) = head.rfind(['\'', '"']) else {
@@ -238,7 +207,6 @@ fn is_pending_require(head: &str) -> bool {
         .is_some_and(|call| call.trim_end().ends_with("require"))
 }
 
-/// `Site.` where the document bound `Site` to an API class.
 fn pending_member(head: &str, text: &str) -> Option<Context> {
     let typed: String = head
         .chars()
@@ -262,7 +230,6 @@ fn pending_member(head: &str, text: &str) -> Option<Context> {
     })
 }
 
-/// `var Trans` — a declaration whose right-hand side is still missing.
 fn pending_declaration(head: &str) -> Option<Context> {
     let line = head.rsplit('\n').next()?;
     let typed = trailing_word(line);
@@ -313,20 +280,16 @@ fn typed_since_quote(head: &str) -> usize {
     }
 }
 
-/// Everything an answer may need to draw on.
 pub struct Completer<'a> {
-    /// The cartridges, and the indexes built from them.
     pub workspace: &'a Workspace,
-    /// The custom attributes the checkout declares.
     pub metadata: &'a Metadata,
-    /// The document being edited, which decides where a new `require` goes.
+    /// Decides where a new `require` goes.
     pub text: &'a str,
-    /// The file being edited, which names the controller a bare route belongs to.
+    /// Names the controller a bare route belongs to.
     pub file: &'a Path,
 }
 
 impl Completer<'_> {
-    /// What to offer for a context, each item replacing what is typed.
     pub fn items(&self, context: &Context, cursor: Position) -> Vec<CompletionItem> {
         match context {
             Context::TagName { typed } => tag_items(replaced(cursor, *typed)),
@@ -354,8 +317,7 @@ impl Completer<'_> {
         }
     }
 
-    /// The routes this controller already has somewhere in the path — what a
-    /// `server.append` in this file could legally attach to.
+    /// Routes this controller has elsewhere in the path: what a `server.append` here can attach to.
     fn route_items(&self, range: Range) -> Vec<CompletionItem> {
         let Some(controller) = self.file.file_stem().and_then(|stem| stem.to_str()) else {
             return Vec::new();
@@ -420,8 +382,7 @@ impl Completer<'_> {
             .collect()
     }
 
-    /// The union over the candidate types, since a name that could be either
-    /// of two objects can legally carry the attributes of both.
+    /// The union over candidate types: an ambiguous name may carry the attributes of either.
     fn custom_items(&self, types: &[&str], range: Range) -> Vec<CompletionItem> {
         let mut items: Vec<CompletionItem> = Vec::new();
         for type_id in types {
@@ -447,9 +408,8 @@ impl Completer<'_> {
 }
 
 impl Completer<'_> {
-    /// `dwSite` becomes `Site`, with `var Site = require('dw/system/Site');`
-    /// added to the require block in the same keystroke — unless the document
-    /// already has it, in which case only the name is inserted.
+    /// `dwSite` becomes `Site` plus `var Site = require('dw/system/Site');` in one keystroke,
+    /// unless the document already has it.
     fn import_items(&self, range: Range) -> Vec<CompletionItem> {
         let imports = api::imports(self.text);
         api::api()
@@ -581,8 +541,7 @@ fn attribute_items(tag: &str, range: Range) -> Vec<CompletionItem> {
         .collect()
 }
 
-/// The whole tag, so accepting `isif` leaves a usable skeleton rather than a
-/// bare name the developer still has to close by hand.
+/// The whole tag, so accepting `isif` leaves a usable skeleton to fill in.
 fn snippet(tag: &isml::Tag) -> String {
     let required: Vec<String> = tag
         .attributes

@@ -99,7 +99,6 @@ pub async fn follow(ctx: &Ctx, options: TailOptions) -> Result<()> {
 }
 
 impl<'a> Printer<'a> {
-    /// A printer with no history to replay, for one-shot reports.
     pub fn plain(cartridges: &'a Path) -> Printer<'a> {
         Printer {
             cartridges,

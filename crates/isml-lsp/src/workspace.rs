@@ -1,5 +1,3 @@
-//! Discovery of the SFCC cartridges in the open folder.
-
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,7 +19,6 @@ const SKIPPED: [&str; 8] = [
     ".vscode",
 ];
 
-/// One cartridge in the open folder.
 #[derive(Debug, Clone)]
 pub struct Cartridge {
     /// The directory name, which is how the cartridge path refers to it.
@@ -31,35 +28,26 @@ pub struct Cartridge {
 }
 
 impl Cartridge {
-    /// The `cartridge/` directory inside it, where everything actually lives.
     pub fn cartridge_dir(&self) -> PathBuf {
         self.root.join("cartridge")
     }
 }
 
-/// What the open folder holds, and the indexes built from it on demand.
 #[derive(Debug, Default)]
 pub struct Workspace {
-    /// Every cartridge found, sorted by name.
     pub cartridges: Vec<Cartridge>,
     /// `cartridges/modules` folders, which hold plain CommonJS modules such as
     /// `server` that are required without a `cartridge/` segment.
     pub module_roots: Vec<PathBuf>,
-    /// The cartridge path of each storefront, from `dw.json` and from any
-    /// site archive in the folder. Empty when the checkout records neither.
     pub paths: Vec<CartridgePath>,
     /// Built on the first `template="..."` completion, not at startup: most
     /// sessions never ask, and walking every cartridge costs a second.
     templates: OnceLock<Vec<String>>,
-    /// Built on the first question about a route.
     controllers: OnceLock<Controllers>,
-    /// Built on the first question about a resource key.
     resource_keys: OnceLock<HashSet<String>>,
 }
 
 impl Workspace {
-    /// Walk the open folders for cartridges and cartridge paths, taking the
-    /// editor's initialization options as another source of the path order.
     /// The heavier indexes are left until something asks for them.
     pub fn scan(roots: &[PathBuf], settings: &serde_json::Value) -> Self {
         let mut workspace = Workspace::default();
@@ -72,7 +60,6 @@ impl Workspace {
         workspace
     }
 
-    /// The cartridge a file belongs to, if any.
     pub fn cartridge_of(&self, file: &Path) -> Option<&Cartridge> {
         self.cartridges
             .iter()
@@ -91,9 +78,8 @@ impl Workspace {
         ordered
     }
 
-    /// Every template path an `isinclude` could name, as SFCC spells them:
-    /// no locale folder, no `.isml`, forward slashes. Sorted and deduplicated,
-    /// since the same path exists in every cartridge that overrides it.
+    /// Template paths as SFCC spells them: no locale folder, no `.isml`, forward slashes.
+    /// Deduplicated, since the same path exists in every overriding cartridge.
     pub fn templates(&self) -> &[String] {
         self.templates.get_or_init(|| {
             let mut paths: Vec<String> = Vec::new();
@@ -107,9 +93,7 @@ impl Workspace {
         })
     }
 
-    /// Every key any default bundle defines, across every cartridge. Which
-    /// bundle is not recorded: the question worth answering is whether the key
-    /// exists at all, since a form resolves its labels against several.
+    /// Keys of every default bundle; which bundle is not recorded, since a form resolves labels against several.
     pub fn resource_keys(&self) -> &HashSet<String> {
         self.resource_keys.get_or_init(|| {
             let mut keys = HashSet::new();
@@ -124,7 +108,6 @@ impl Workspace {
         })
     }
 
-    /// Every controller in every cartridge, and the routes each declares.
     pub fn controllers(&self) -> &Controllers {
         self.controllers
             .get_or_init(|| Controllers::scan(&self.cartridges))

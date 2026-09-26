@@ -35,76 +35,48 @@ struct SfccCi {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-/// What kind of instance a hostname belongs to, which decides whether a
-/// tool may write to it.
 pub enum Instance {
-    /// A developer sandbox. The only kind written to without asking.
     Sandbox,
-    /// A shared development instance.
     Development,
-    /// Staging. Never written to.
     Staging,
-    /// Production. Never written to.
     Production,
-    /// A host that matches none of the known shapes.
     Unknown,
 }
 
 #[derive(Debug, Clone)]
-/// How a request to the instance authenticates.
 pub enum Credentials {
-    /// A Business Manager user, or a WebDAV access key.
     Basic {
-        /// The Business Manager user name.
         username: String,
-        /// Its password, or the access key.
+        /// A password or a WebDAV access key.
         password: String,
     },
-    /// An Account Manager API client, exchanged for a bearer token.
     OAuth {
-        /// The client id.
         client_id: String,
-        /// Its secret.
         client_secret: String,
     },
 }
 
 #[derive(Debug, Clone)]
-/// Everything a tool needs from `dw.json`, resolved.
 pub struct Config {
-    /// The file this came from.
     pub dw_json: PathBuf,
-    /// The instance host, without scheme or trailing slash.
     pub hostname: String,
-    /// How to authenticate against it.
     pub credentials: Credentials,
-    /// The code version directory being worked on.
     pub code_version: String,
-    /// The directory holding the cartridges, absolute.
     pub cartridges_dir: PathBuf,
-    /// The cartridges to act on, or `None` for all of them.
     pub cartridge_filter: Option<Vec<String>>,
-    /// Whether a self-signed certificate is acceptable.
     pub accept_invalid_certs: bool,
-    /// An Account Manager client, for the APIs that need one.
     pub api_client: Option<ApiClient>,
-    /// Talk plain HTTP instead of HTTPS: for a test server on this machine
-    /// only, and never taken from dw.json.
+    /// For a local test server only; never taken from dw.json.
     pub plain_http: bool,
 }
 
 #[derive(Debug, Clone)]
-/// An Account Manager API client.
 pub struct ApiClient {
-    /// The client id.
     pub id: String,
-    /// Its secret.
     pub secret: String,
 }
 
 impl Config {
-    /// Read the nearest `dw.json`, walking up from the working directory
-    /// unless a path is given.
     pub fn load(
         explicit_path: Option<PathBuf>,
         code_version_override: Option<String>,
@@ -114,8 +86,7 @@ impl Config {
                 if !path.is_file() {
                     bail!("dw.json not found at {}", path.display());
                 }
-                // Canonical, but without the `\\?\` prefix Windows adds, which
-                // editors and problem matchers do not take for a path.
+                // Canonical, but without the `\\?\` prefix Windows adds, which editors do not take for a path.
                 normalize(&path)
             }
             None => discover_dw_json()?,
@@ -166,7 +137,6 @@ impl Config {
         })
     }
 
-    /// Where the cartridges of this code version live over WebDAV.
     pub fn webdav_root(&self) -> String {
         format!(
             "{}://{}/on/demandware.servlet/webdav/Sites/Cartridges",
@@ -175,7 +145,6 @@ impl Config {
         )
     }
 
-    /// Where the instance writes its logs.
     pub fn logs_url(&self) -> String {
         format!(
             "{}://{}/on/demandware.servlet/webdav/Sites/Logs",
@@ -191,18 +160,15 @@ impl Config {
         }
     }
 
-    /// The Data API resource for this code version.
     pub fn code_version_url(&self) -> String {
         format!("{}/{}", self.webdav_root(), self.code_version)
     }
 
-    /// What kind of instance this points at.
     pub fn instance(&self) -> Instance {
         classify_host(&self.hostname)
     }
 
-    /// Refuse to write anywhere that is not a developer sandbox. Staging
-    /// and production are refused outright, with no override.
+    /// Staging and production are refused outright, with no override.
     pub fn ensure_writable(&self, allow_shared: bool) -> Result<()> {
         match self.instance() {
             Instance::Sandbox => Ok(()),
@@ -220,8 +186,6 @@ impl Config {
         }
     }
 
-    /// A filename-safe name for this host and code version, for the state
-    /// a tool keeps per sandbox.
     pub fn identity(&self) -> String {
         let raw = format!("{}__{}", self.hostname, self.code_version);
         raw.chars()
@@ -236,7 +200,6 @@ impl Config {
     }
 }
 
-/// What kind of instance a hostname is, by its shape alone.
 pub fn classify_host(hostname: &str) -> Instance {
     let host = hostname.to_lowercase();
     let words: Vec<&str> = host
@@ -318,9 +281,8 @@ fn resolve_credentials(parsed: &DwJson) -> Option<Credentials> {
 
 fn resolve_cartridges_dir(root: &Path, configured: Option<&str>) -> Result<PathBuf> {
     if let Some(relative) = configured {
-        // The value is relative to dw.json. When the file sits in a
-        // subdirectory it is routinely written relative to the repository
-        // root instead, which resolves against the parent and nowhere else.
+        // Relative to dw.json, but often written relative to the repo root
+        // when dw.json sits in a subdirectory.
         let from_root = root.join(relative);
         let from_parent = root.parent().map(|parent| parent.join(relative));
         for candidate in [Some(from_root.clone()), from_parent].into_iter().flatten() {

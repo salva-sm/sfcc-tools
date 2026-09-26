@@ -1,9 +1,4 @@
-//! What log-diff prints: a card per signature for a person, or the lines an
-//! editor's problem matcher reads, never both.
-//!
-//! Colour is decided once per process, like the uploader's: a terminal on
-//! stdout and no `NO_COLOR`, unless `--color` says otherwise. The layout does
-//! not depend on it, so a hook's output read in a pipe says the same thing.
+//! The layout does not depend on colour, so a hook's output read in a pipe says the same thing.
 
 use chrono::{DateTime, Local};
 use regex::Regex;
@@ -21,7 +16,6 @@ const CYAN: &str = "\x1b[36m";
 const NEW_BADGE: &str = "\x1b[1;97;41m";
 const BACK_BADGE: &str = "\x1b[1;97;45m";
 const SPIKE_BADGE: &str = "\x1b[1;30;43m";
-/// Longest message on a card before it is cut.
 const MESSAGE_CHARS: usize = 160;
 
 static STYLE: OnceLock<Style> = OnceLock::new();
@@ -32,7 +26,6 @@ struct Style {
     problems: bool,
 }
 
-/// `always`, `never` or `auto`; and whether to print for a problem matcher.
 pub fn configure(color: &str, problems: bool) {
     let color = match color {
         "always" => true,
@@ -52,7 +45,6 @@ fn style() -> Style {
     })
 }
 
-/// Whether the output is for a problem matcher rather than a person.
 pub fn problems() -> bool {
     style().problems
 }
@@ -64,23 +56,16 @@ fn paint(tone: &str, text: &str) -> String {
     }
 }
 
-/// What a status line is about, which decides its mark and colour.
 #[derive(Clone, Copy)]
 pub enum Tone {
-    /// Nothing to worry about.
     Ok,
-    /// Something new turned up.
     New,
-    /// Nothing new, but something still pending.
     Pending,
-    /// Something went wrong, or is being waited for.
     Warn,
-    /// Neither good nor bad news.
     Info,
 }
 
-/// One status line. For a problem matcher it keeps the `log-diff:` prefix its
-/// begin and end patterns look for.
+/// For a problem matcher, keeps the `log-diff:` prefix its begin and end patterns look for.
 pub fn status(tone: Tone, message: &str) {
     if problems() {
         println!("log-diff: {message}");
@@ -100,7 +85,6 @@ pub fn status(tone: Tone, message: &str) {
     println!("{} {} {message}", paint(DIM, &stamp()), paint(color, mark));
 }
 
-/// An error of log-diff itself, on stderr.
 pub fn error(message: &str) {
     match problems() {
         true => eprintln!("log-diff: {message}"),
@@ -112,55 +96,30 @@ fn stamp() -> String {
     Local::now().format("%H:%M:%S").to_string()
 }
 
-/// How a card is marked.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Badge {
-    /// First seen in this pass.
     New,
-    /// Resolved before, and logged again in this pass.
     Back,
-    /// Known, and logged far more today than usual.
     Spike,
-    /// Reported before, not acknowledged.
     Pending,
-    /// Nothing to mark.
     None,
 }
 
-/// Everything a card shows about one signature.
 pub struct Card<'a> {
-    /// The signature id.
     pub id: &'a str,
-    /// The level it was logged at.
     pub label: &'a str,
-    /// The innermost exception named.
     pub exception: Option<&'a str>,
-    /// The top script frame, `path:line`.
     pub location: Option<&'a str>,
-    /// The scrubbed example: the message, then `  at` frames.
+    /// The message, then `  at` frames.
     pub example: &'a str,
-    /// How many times.
     pub count: u64,
-    /// First seen, RFC 3339.
     pub first_seen: &'a str,
-    /// Last seen, RFC 3339.
     pub last_seen: Option<&'a str>,
-    /// New, pending, or neither.
     pub badge: Badge,
-    /// The deploy it is laid at, already worded.
+    /// Already worded.
     pub deploy: Option<String>,
-    /// Whether it shows as an error page, a 500.
     pub serious: bool,
 }
-
-/// A card: what failed, the message, where, and when.
-///
-/// ```text
-///  ✖ TypeError  NEW  customerror · x3
-///    Cannot read property "shipments" from null
-///    ↳ app_acme/cartridge/scripts/checkout/CheckoutServices.js:214 in validateBasket
-///    first 13:04 · last 13:05 · 4cfc684705f583bc
-/// ```
 pub fn card(card: &Card) -> String {
     let (mark, tone) = level(card.label);
     let what = card.exception.unwrap_or(match card.label {
@@ -228,9 +187,8 @@ pub fn card(card: &Card) -> String {
     lines.join("\n")
 }
 
-/// The part of the record's first line worth reading: without the thread and
-/// category, without a leading `Exception:` already in the title, and without
-/// a trailing `(file.js#214)` the location line already shows.
+/// Drops the thread and category, a leading `Exception:` already in the title, and a trailing
+/// `(file.js#214)` the location line already shows.
 pub fn message(head: &str, exception: Option<&str>) -> String {
     static POSITION: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"\s*\([^()\s]+#\d+\)\s*$").expect("the pattern is a valid regex")
@@ -250,8 +208,8 @@ pub fn message(head: &str, exception: Option<&str>) -> String {
     short
 }
 
-/// The controller the record was logged under - `Cart-AddProduct` - read out
-/// of the thread `PipelineCallServlet|Sites-Acme-Site|Cart-AddProduct|PipelineCall`.
+/// `Cart-AddProduct`, out of the thread
+/// `PipelineCallServlet|Sites-Acme-Site|Cart-AddProduct|PipelineCall`.
 pub fn controller(head: &str) -> Option<&str> {
     let before = head.split_once("[] ").map_or(head, |(before, _)| before);
     let thread = before.split_whitespace().find(|word| word.contains('|'))?;
@@ -266,7 +224,6 @@ pub fn controller(head: &str) -> Option<&str> {
     })
 }
 
-/// A mark and a colour per level, so the kind of failure reads at a glance.
 fn level(label: &str) -> (&'static str, &'static str) {
     match label {
         "fatal" => ("‼", RED),
@@ -277,7 +234,6 @@ fn level(label: &str) -> (&'static str, &'static str) {
     }
 }
 
-/// `13:04` today, `22/09 13:04` before, on this machine's clock.
 fn moment(rfc3339: &str) -> String {
     let Ok(moment) = DateTime::parse_from_rfc3339(rfc3339) else {
         return rfc3339.to_string();

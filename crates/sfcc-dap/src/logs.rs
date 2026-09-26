@@ -1,11 +1,4 @@
-//! The sandbox log, in the debug console.
-//!
-//! A breakpoint only catches what you predicted. The error that threw
-//! somewhere else lands in the instance's log, and having it in the same
-//! window is the difference between seeing it and going to look for it.
-//!
-//! `sfcc-upload logger` already follows that log and rewrites stack frames into
-//! local paths, so this starts it rather than reimplementing it.
+//! The sandbox log in the debug console, by running `sfcc-upload logger`.
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -15,20 +8,16 @@ use serde_json::json;
 
 use crate::protocol::Writer;
 
-/// The uploader, which is where the log follower lives.
 const LOGGER: &str = "sfcc-upload";
-/// A debug session is no place for the whole firehose.
 const DEFAULT_LEVELS: &str = "error,customerror";
 
-/// A running log follower, stopped when it goes out of scope.
+/// Stops the follower when dropped.
 pub struct Logs {
     child: Option<Child>,
 }
 
 impl Logs {
-    /// Follow the sandbox log into the debug console. Never fails the
-    /// session: a console without the log is worse than one with it, but far
-    /// better than no debugger.
+    /// Never fails the session: no log is better than no debugger.
     pub fn follow(config: &Path, levels: Option<&str>, writer: &Writer) -> Logs {
         let started = Command::new(LOGGER)
             .args([
@@ -70,7 +59,6 @@ impl Logs {
         Logs { child: Some(child) }
     }
 
-    /// Nothing to follow, because the configuration asked for none.
     pub fn none() -> Logs {
         Logs { child: None }
     }

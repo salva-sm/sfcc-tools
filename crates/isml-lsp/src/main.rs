@@ -1,6 +1,3 @@
-//! The `isml-lsp` executable. Everything it does lives in the library;
-//! this is the entry point and the message a human gets for running it.
-
 use std::error::Error;
 use std::io::IsTerminal;
 
@@ -14,8 +11,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     }
 }
 
-/// Run by hand, a language server looks broken: it sits waiting for a
-/// handshake on stdin that a person is never going to type. Say so instead.
+/// Run by hand, a language server seems to hang waiting on stdin; say so instead.
 fn greeting() -> Option<String> {
     const USAGE: &str = concat!(
         "isml-lsp ",

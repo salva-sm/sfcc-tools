@@ -1,8 +1,6 @@
 {
-  // Copy into the SFCC project as .vscode/tasks.json (or merge its task into
-  // the one already there). VS Code asks once whether this folder may run
-  // tasks automatically; answer "Allow", or run "Tasks: Manage Automatic
-  // Tasks" later.
+  // Copy into the SFCC project as .vscode/tasks.json (or merge the task in).
+  // Allow automatic tasks when VS Code asks, or later via "Tasks: Manage Automatic Tasks".
   "version": "2.0.0",
   "tasks": [
     {
@@ -12,8 +10,8 @@
       "args": ["watch", "--problems"],
       "options": {
         "env": {
-          // The team's ledger. A private repository also needs GITHUB_TOKEN
-          // (or LOG_DIFF_TOKEN) in your own environment - never in this file.
+          // A private repository also needs GITHUB_TOKEN (or LOG_DIFF_TOKEN)
+          // in your own environment - never in this file.
           "LOG_DIFF_SHARED": "https://raw.githubusercontent.com/<owner>/sfcc-log-ledger/main/ledger.json"
         }
       },
@@ -31,8 +29,7 @@
           "line": 2,
           "message": 3
         },
-        // Each report lists every pending signature between these two lines,
-        // so the Problems panel always shows the whole set.
+        // Every pending signature is listed between these lines, so Problems shows the whole set.
         "background": {
           "activeBegin": "^log-diff: checking ",
           "activeEnd": "^log-diff: (up to date|\d+ pending|\d+ new)"

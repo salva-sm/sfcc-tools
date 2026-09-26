@@ -1,5 +1,3 @@
-//! The `sfcc-dap` executable: a debug adapter an editor speaks to over stdio.
-
 use std::io::{BufReader, IsTerminal, Write};
 use std::path::PathBuf;
 
@@ -28,8 +26,7 @@ fn main() -> Result<()> {
         println!("sfcc-dap {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    // Run by hand, an adapter looks hung: it is waiting on a handshake nobody
-    // is going to type.
+    // Run by hand, an adapter looks hung waiting on a handshake nobody will type.
     if arguments.iter().any(|it| it == "--help" || it == "-h") || std::io::stdin().is_terminal() {
         println!("{USAGE}");
         return Ok(());
@@ -46,8 +43,7 @@ fn main() -> Result<()> {
     let session = match Session::open(&config, &client_id) {
         Ok(session) => session,
         Err(error) => {
-            // Said on the console as well as returned: an editor reports a
-            // failed launch as little more than a shrug otherwise.
+            // Also on the console: editors report a failed launch as little more than a shrug.
             writer.log(format!("cannot attach to {}: {error:#}", config.hostname));
             writer.event("terminated", serde_json::json!({}));
             std::io::stdout().flush().ok();
@@ -65,7 +61,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// The value after a flag, when it is there.
 fn value(arguments: &[String], flag: &str) -> Option<String> {
     let at = arguments.iter().position(|it| it == flag)?;
     arguments.get(at + 1).cloned()

@@ -1,9 +1,4 @@
-//! The custom attributes the instance defines, read from the metadata XML
-//! kept in the repository.
-//!
-//! `system-objecttype-extensions.xml` and `custom-objecttype-definitions.xml`
-//! are the only local record of what `product.custom.x` may legally be, so an
-//! editor that reads them can complete the name and flag the typo.
+//! Custom attributes from the metadata XML in the repository, the only local record of what `x.custom.y` may be.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -24,25 +19,18 @@ const SKIPPED: [&str; 7] = [
 /// `getCustomPreferenceValue` rather than a `.custom.` access.
 pub const SITE_PREFERENCES: &str = "SitePreferences";
 
-/// One custom attribute, as the metadata declares it.
 #[derive(Debug, Clone, Default)]
 pub struct AttributeDefinition {
-    /// The attribute id, which is what the code writes after `.custom.`.
     pub id: String,
     /// The label Business Manager shows.
     pub display_name: Option<String>,
-    /// `string`, `boolean`, `enum-of-string` and the rest.
     pub value_type: Option<String>,
-    /// The values an enumerated attribute accepts.
     pub values: Vec<String>,
-    /// Whether the platform refuses to save the object without it.
     pub mandatory: bool,
-    /// Whether it holds a different value per locale.
     pub localizable: bool,
 }
 
 impl AttributeDefinition {
-    /// One line for the completion list: what it is, not where it came from.
     /// One line for a completion list: what it is, not where it came from.
     pub fn detail(&self) -> String {
         let mut detail = self.value_type.clone().unwrap_or_else(|| "?".into());
@@ -55,7 +43,6 @@ impl AttributeDefinition {
         detail
     }
 
-    /// The label and the accepted values, when there are any to show.
     pub fn documentation(&self) -> Option<String> {
         let mut lines = Vec::new();
         if let Some(name) = &self.display_name {
@@ -68,7 +55,6 @@ impl AttributeDefinition {
     }
 }
 
-/// Every custom attribute the checkout declares, by object type.
 #[derive(Debug, Default)]
 pub struct Metadata {
     types: BTreeMap<String, BTreeMap<String, AttributeDefinition>>,
@@ -76,7 +62,6 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    /// Read every object-type file under the open folders.
     pub fn scan(roots: &[PathBuf]) -> Metadata {
         let mut metadata = Metadata::default();
         for root in roots {
@@ -91,12 +76,10 @@ impl Metadata {
         self.sources > 0
     }
 
-    /// Every attribute of one object type, by id.
     pub fn attributes_of(&self, type_id: &str) -> Option<&BTreeMap<String, AttributeDefinition>> {
         self.types.get(type_id)
     }
 
-    /// One attribute of one object type.
     pub fn attribute(&self, type_id: &str, attribute_id: &str) -> Option<&AttributeDefinition> {
         self.types.get(type_id)?.get(attribute_id)
     }
@@ -248,8 +231,7 @@ mod tests {
 </metadata>
 "#;
 
-    /// Tests run in parallel: sharing one directory means one test can scan
-    /// the file another is still writing.
+    /// Tests run in parallel, so each gets its own directory.
     fn sample(test: &str) -> Metadata {
         let directory = std::env::temp_dir().join(format!("isml-lsp-metadata-{test}"));
         let _ = fs::create_dir_all(&directory);

@@ -1,27 +1,18 @@
-//! Several environments' ledgers at once - `dev=ledgers/dev.json` - for the
-//! commands that look across them, the summary. Or all of them straight from
-//! the ledger repository on GitHub, without a clone.
-
 use crate::ledger::{Ledger, fetch};
 use crate::team::Team;
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 use std::time::Duration;
 
-/// The environments a ledger repository keeps, in the order they are shown.
 pub const ENVIRONMENTS: [&str; 3] = ["dev", "stg", "prd"];
 
-/// One environment and what its ledger knows.
 pub struct Environment {
-    /// Its name, as given: dev, stg, prd.
     pub name: String,
-    /// Its ledger.
     pub ledger: Ledger,
 }
 
-/// Read `name=path` or `name=url` specs; a bare path is named after its file.
-/// A ledger not written yet is an environment with nothing in it, not an error:
-/// a repository set up for three environments can start with one.
+/// A ledger not written yet is empty, not an error: a repository for three environments can
+/// start with one.
 pub async fn load(specs: &[String]) -> Result<Vec<Environment>> {
     let mut environments = Vec::new();
     for spec in specs {
@@ -48,9 +39,6 @@ pub async fn load(specs: &[String]) -> Result<Vec<Environment>> {
     Ok(environments)
 }
 
-/// Every environment's ledger and the team file, read from a ledger
-/// repository on GitHub - `owner/repo`, or `owner/repo@branch` - through the
-/// API, with the token of the environment or of the `gh` login.
 pub async fn from_repository(spec: &str) -> Result<(Vec<Environment>, Team)> {
     let (slug, branch) = match spec.split_once('@') {
         Some((slug, branch)) => (slug, branch),
@@ -62,8 +50,8 @@ pub async fn from_repository(spec: &str) -> Result<(Vec<Environment>, Team)> {
     let token = github_token().context(
         "reading a private repository takes a token: set GITHUB_TOKEN, or log in with `gh auth login`",
     )?;
-    // A missing file is an environment not read yet; a missing repository is
-    // a mistake, and GitHub says 404 for one the token cannot see as well.
+    // A missing file is an environment not read yet, but a missing repository is a mistake;
+    // GitHub also says 404 for one the token cannot see.
     let status = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?
@@ -98,7 +86,6 @@ pub async fn from_repository(spec: &str) -> Result<(Vec<Environment>, Team)> {
     Ok((environments, team))
 }
 
-/// A file of a repository, or `None` when it is not there.
 async fn github_file(slug: &str, branch: &str, path: &str, token: &str) -> Result<Option<String>> {
     let url = format!("https://api.github.com/repos/{slug}/contents/{path}?ref={branch}");
     let response = reqwest::Client::builder()
@@ -125,8 +112,6 @@ async fn github_file(slug: &str, branch: &str, path: &str, token: &str) -> Resul
     }
 }
 
-/// `LOG_DIFF_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN`, or the token `gh` is
-/// logged in with - which is most developers' already.
 pub fn github_token() -> Option<String> {
     for name in ["LOG_DIFF_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"] {
         if let Ok(token) = std::env::var(name)

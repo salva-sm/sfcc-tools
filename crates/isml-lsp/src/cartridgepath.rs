@@ -1,12 +1,5 @@
-//! Where the cartridge path comes from.
-//!
-//! Which `server.append` actually runs depends on the order of the cartridge
-//! path, and that order is not in the source. Three places can hold it: the
-//! editor's settings, the `cartridge` array of `dw.json`, and
-//! `<custom-cartridges>` in the site archive, which has one ordered list per
-//! storefront. Plenty of checkouts have neither of the last two — `dw.json` is
-//! personal and usually ignored, and a site archive is instance configuration
-//! nobody wants to import by accident — so the settings come first and win.
+//! Cartridge path order, which is not in the source: from editor settings, site archives or `dw.json`.
+//! Settings win: `dw.json` is personal and usually ignored, and site archives are rarely checked out.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,7 +9,6 @@ use serde_json::Value;
 const MAX_DEPTH: usize = 8;
 const SKIPPED: [&str; 6] = ["node_modules", ".git", "static", "build", "dist", "target"];
 
-/// One storefront's cartridge path: the order that decides who overrides whom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CartridgePath {
     /// The site id, or `dw.json` when that is where it came from.
@@ -26,15 +18,12 @@ pub struct CartridgePath {
 }
 
 impl CartridgePath {
-    /// Position in the path, or `None` for a cartridge this site does not use.
     pub fn rank(&self, cartridge: &str) -> Option<usize> {
         self.order.iter().position(|name| name == cartridge)
     }
 }
 
-/// Every cartridge path this session knows: what the editor was told, then
-/// one per site archive and whatever `dw.json` declares. Empty when nothing
-/// records any.
+/// Settings first, then one per site archive and `dw.json`.
 pub fn load(roots: &[PathBuf], settings: &Value) -> Vec<CartridgePath> {
     let mut found = from_settings(settings);
     for root in roots {
@@ -47,9 +36,7 @@ pub fn load(roots: &[PathBuf], settings: &Value) -> Vec<CartridgePath> {
     found
 }
 
-/// The `cartridge_path` of the server's initialization options: either one
-/// path, or an object naming one per storefront. Each path is a colon-joined
-/// string or an array, whichever reads better in the settings file.
+/// `cartridge_path` init option: one path or an object per storefront; each a colon-joined string or an array.
 fn from_settings(settings: &Value) -> Vec<CartridgePath> {
     let Some(declared) = settings.get("cartridge_path") else {
         return Vec::new();

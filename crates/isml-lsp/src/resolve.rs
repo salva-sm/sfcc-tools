@@ -1,5 +1,3 @@
-//! Turning a [`Reference`] into the files it points at.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -8,15 +6,12 @@ use crate::reference::Reference;
 use crate::workspace::Workspace;
 
 const MODULE_EXTENSIONS: [&str; 3] = ["js", "json", "ds"];
-/// Locale variants live next to `default`; the fallback template is the one in
-/// `default`, so it is tried first.
+/// `default` holds the fallback template, so it is tried first.
 const TEMPLATE_DIRS: [&str; 1] = ["default"];
 
-/// A place a reference points at.
 pub struct Hit {
-    /// The file.
     pub path: PathBuf,
-    /// Zero-based line to put the cursor on.
+    /// Zero-based.
     pub line: u32,
 }
 
@@ -26,8 +21,7 @@ impl From<PathBuf> for Hit {
     }
 }
 
-/// Every place a reference points at, most relevant first. More than one
-/// is normal: a template or a script exists in every cartridge overriding it.
+/// Most relevant first; a template or script usually exists in several overriding cartridges.
 pub fn resolve(reference: &Reference, from: &Path, workspace: &Workspace) -> Vec<Hit> {
     match reference {
         Reference::Template(path) => templates(path, from, workspace),
@@ -37,7 +31,7 @@ pub fn resolve(reference: &Reference, from: &Path, workspace: &Workspace) -> Vec
     }
 }
 
-/// Every cartridge that declares the route, what runs first.
+/// Every cartridge declaring the route, the one that runs first.
 fn routes(reference: &Reference, from: &Path, workspace: &Workspace) -> Vec<Hit> {
     let Some(route) = hover::route_of(reference, from) else {
         return Vec::new();

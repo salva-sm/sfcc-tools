@@ -1,16 +1,7 @@
 name: Extension zip (b2c-debug)
 
-# Builds the drop-in zip a teammate installs without any toolchain, and
-# attaches it to the release for a `v*` tag, alongside the binaries.
-#
-# It reproduces what Zed's own extension builder does on
-# `zed: install dev extension`: cargo build --release --target wasm32-wasip2,
-# copied in as extension.wasm. Zed also strips custom sections from it, which
-# is a size optimisation - the `zed:api-version` section it reads at load time
-# is present either way. There is no grammar here, so that is the whole build.
-#
-# The adapter itself is `sfcc-dap`, released alongside the binaries; the
-# extension downloads it or finds it on PATH.
+# Reproduces Zed's `install dev extension` build. Zed also strips custom sections,
+# a size optimisation only: `zed:api-version` survives either way.
 on:
   push:
     branches: [main]
@@ -21,8 +12,7 @@ permissions:
   contents: write
 
 env:
-  # The extension is excluded from the cargo workspace, so it builds — and
-  # keeps its target directory — on its own.
+  # Excluded from the cargo workspace, so it has its own target directory.
   EXT: extensions/b2c-debug
 
 jobs:

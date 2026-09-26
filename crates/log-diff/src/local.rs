@@ -1,16 +1,5 @@
-//! On a developer's machine: read the sandbox log since the last look, and
-//! report what neither the team nor this developer has seen before.
-//!
-//! `check` is one pass and `watch` is the same pass on a timer, so a hook that
-//! runs while a watcher is going finds the ledger the watcher left and does
-//! not report the same thing twice.
-//!
-//! A signature reported is pending until it is dealt with: acknowledged, or
-//! not logged again for as long as `--expire` says, after which it resolves on
-//! its own. Only pending signatures expire. A resolved one that is logged
-//! again comes back - pending once more, and able to expire again - so being
-//! wrong about a fix costs one more notification, never a missed one. A muted
-//! one, or one taken in with a baseline, is never reported again.
+//! A resolved signature logged again comes back pending: being wrong about a fix costs one more
+//! notification, never a missed one.
 
 use crate::finding::{Finding, findings};
 use crate::ledger::{Known, Ledger, Seen, Standing, by_importance, load_shared, local_dir};
@@ -26,35 +15,24 @@ use std::time::{Duration, Instant};
 
 /// How long `watch` trusts its copy of the team ledger.
 const TEAM_REFRESH: Duration = Duration::from_secs(300);
-/// Longest message on a problem line.
 const PROBLEM_CHARS: usize = 200;
 
-/// Where to read, and where to remember.
 pub struct Local {
-    /// The sandbox.
     pub config: Config,
-    /// Log levels to read.
     pub levels: Vec<String>,
-    /// This developer's ledger.
     pub state: PathBuf,
-    /// The team's ledger, a path or a URL.
+    /// A path or a URL.
     pub shared: Option<String>,
-    /// Whether to pop a desktop notification for what is new.
     pub desktop: bool,
-    /// How long a pending signature stays pending without being logged again.
-    /// `None` keeps it until it is acknowledged.
+    /// `None` keeps a pending signature until it is acknowledged.
     pub expire: Option<Duration>,
 }
 
-/// What one pass found.
 pub struct Outcome {
-    /// Signatures seen for the first time in this pass.
     pub new: Vec<Finding>,
-    /// Signatures resolved before, and logged again in this pass.
     pub back: Vec<Finding>,
     /// Everything reported and not acknowledged, new, back or older.
     pub pending: Vec<(String, Known)>,
-    /// Pending signatures this pass resolved for not having been logged in time.
     pub expired: usize,
 }
 
@@ -69,8 +47,7 @@ impl Outcome {
     }
 }
 
-/// Whether the sandbox can be read right now. `None` when it cannot, which
-/// is not worth failing over: there is simply nothing to check.
+/// `Some(reason)` when unreachable, which is not worth failing over: there is nothing to check.
 pub async fn reachable(dav: &Dav) -> Result<Option<String>> {
     match dav.availability().await {
         Availability::Ready | Availability::MissingCodeVersion => Ok(None),
@@ -83,8 +60,7 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-/// Where the status of a sandbox's checks is written: `status/<identity>.json`
-/// in log-diff's own folder, the one layout the language server has to share.
+/// The one layout the ISML language server has to share.
 fn status_path(config: &Config) -> PathBuf {
     local_dir()
         .join("status")
@@ -92,7 +68,6 @@ fn status_path(config: &Config) -> PathBuf {
 }
 
 impl Local {
-    /// The team's ledger, and a warning when it had to make do.
     pub async fn team(&self) -> Result<Ledger> {
         let Some(source) = &self.shared else {
             return Ok(Ledger::default());
@@ -104,10 +79,7 @@ impl Local {
         Ok(ledger)
     }
 
-    /// Read what was logged since the last pass and record it.
-    ///
-    /// With `baseline`, everything found is taken as already known: the way to
-    /// start from a sandbox that has been failing for reasons of its own.
+    /// With `baseline`, everything found is taken as already known.
     pub async fn pass(&self, dav: &Dav, team: &Ledger, baseline: bool) -> Result<Outcome> {
         let host = &self.config.hostname;
         let from = Ledger::load(&self.state)?
@@ -116,8 +88,7 @@ impl Local {
             .unwrap_or_else(Mark::start_of_today);
         let read = logs::since(dav, &from, &self.levels).await?;
 
-        // Loaded again after the read, which is where the time goes: a hook
-        // that ran meanwhile has already recorded what it found.
+        // Loaded again after the read, which is where the time goes: a hook may have run meanwhile.
         let mut mine = Ledger::load(&self.state)?;
         // Signed another way before: the same failures under new ids.
         let baseline = baseline || mine.resigned();
@@ -166,9 +137,7 @@ impl Local {
         })
     }
 
-    /// What an editor shows: how many signatures are pending for this
-    /// checkout, in a file next to the ledger, one per sandbox. The ISML
-    /// language server reads it for Zed's status bar. Never fails a pass.
+    /// Read by the ISML language server for Zed's status bar. Never fails a pass.
     fn write_status(&self, pending: usize, fresh: usize) {
         let path = status_path(&self.config);
         if let Some(parent) = path.parent() {
@@ -184,7 +153,6 @@ impl Local {
         let _ = std::fs::write(path, status.to_string());
     }
 
-    /// Tell whoever is looking: the terminal always, the desktop when asked.
     pub fn report(&self, outcome: &Outcome) {
         let host = &self.config.hostname;
         let (new, back, pending) = (outcome.new.len(), outcome.back.len(), outcome.pending.len());
@@ -234,8 +202,6 @@ impl Local {
                 ),
             }
 
-            // What turned up in this pass first, then what is still waiting;
-            // within each, the most important first.
             let mut shown: Vec<&(String, Known)> = outcome.pending.iter().collect();
             shown.sort_by(|(left_id, left), (right_id, right)| {
                 let waiting = |id: &str| outcome.badge(id) == Badge::Pending;
@@ -296,9 +262,7 @@ impl Local {
         }
     }
 
-    /// `path:line: error: [level] message (id)` - the shape a compiler prints,
-    /// which every editor's problem matcher already reads. The path is the
-    /// local file when the frame names one this checkout has.
+    /// `path:line: error: [level] message (id)`: the shape every editor's problem matcher reads.
     fn problem(&self, id: &str, known: &Known) -> String {
         let (file, line) = self.local_position(known.location.as_deref());
         let head = known.example.lines().next().unwrap_or_default();
@@ -331,8 +295,6 @@ impl Local {
         }
     }
 
-    /// `pass` and `report` on a timer, until interrupted. Only prints when
-    /// something changed, so the terminal stays quiet while nothing does.
     pub async fn watch(&self, dav: &Dav, interval: Duration) -> Result<()> {
         status(
             Tone::Info,
@@ -389,7 +351,6 @@ impl Local {
     }
 }
 
-/// `3d`, `36h`, `90m`: an expiry the way it was most likely written.
 pub fn worded(duration: Duration) -> String {
     let seconds = duration.as_secs();
     match seconds {
@@ -400,10 +361,7 @@ pub fn worded(duration: Duration) -> String {
     }
 }
 
-/// Deal with pending signatures. No ids lists them instead.
-///
-/// Acknowledged means fixed: logged again later, it comes back. Muted means it
-/// does not matter: it is never reported again.
+/// Acknowledged means fixed: logged again later, it comes back. Muted: never reported again.
 pub fn acknowledge(state: &Path, ids: &[String], all: bool, mute: bool) -> Result<()> {
     let mut mine = Ledger::load(state)?;
     let pending: Vec<String> = mine
@@ -462,8 +420,6 @@ pub fn acknowledge(state: &Path, ids: &[String], all: bool, mute: bool) -> Resul
     Ok(())
 }
 
-/// List signatures by standing, the most important first: what shows as a
-/// 500, then what happened most. No standings lists them all.
 pub fn list(state: &Path, wanted: &[Standing], limit: usize) -> Result<()> {
     let mine = Ledger::load(state)?;
     let standings = match wanted.is_empty() {
@@ -531,9 +487,7 @@ pub fn list(state: &Path, wanted: &[Standing], limit: usize) -> Result<()> {
     Ok(())
 }
 
-/// Hear of muted signatures again: they become resolved, so the next time one
-/// is logged it comes back. A baseline one can be named too, to start
-/// watching it; `all` only takes the muted ones.
+/// Muted ones become resolved, so they come back when logged. `all` leaves baseline ones alone.
 pub fn unmute(state: &Path, ids: &[String], all: bool) -> Result<()> {
     let mut mine = Ledger::load(state)?;
     let resolved_at = now();
@@ -565,7 +519,6 @@ pub fn unmute(state: &Path, ids: &[String], all: bool) -> Result<()> {
     Ok(())
 }
 
-/// A known signature, as a card.
 fn card_of<'a>(id: &'a str, known: &'a Known, badge: Badge) -> Card<'a> {
     Card {
         id,

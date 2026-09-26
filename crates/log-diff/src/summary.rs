@@ -1,6 +1,3 @@
-//! The week in errors, per environment: what is new, what grew, and what
-//! hurts most - for a Teams channel on Monday morning, or a terminal.
-
 use crate::envs::Environment;
 use crate::ledger::{Known, serious};
 use crate::notify::{envelope, headline};
@@ -10,44 +7,30 @@ use chrono::{Duration, Utc};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-/// Signatures listed per environment.
 const TOP: usize = 5;
 
-/// One environment's week.
 pub struct Week {
-    /// The environment.
     pub name: String,
-    /// Records in the window, and in the window before it.
     pub total: u64,
     /// Records in the window before, for the trend.
     pub before: u64,
-    /// Share of the window's records that show as an error page.
+    /// Share of the records that show as an error page.
     pub serious_share: f64,
-    /// Signatures first seen in the window, most important first.
     pub new: Vec<Line>,
-    /// The signatures with the most records in the window, 500s first.
     pub top: Vec<Line>,
-    /// Signatures that grew most against the window before.
     pub growing: Vec<Line>,
-    /// Days in the window a signature spiked on.
     pub spikes: usize,
 }
 
-/// One signature in the summary.
 pub struct Line {
-    /// `TypeError at path:line`.
     pub headline: String,
-    /// Records in the window.
     pub count: u64,
-    /// Records in the window before.
     pub before: u64,
-    /// Whether it shows as an error page.
     pub serious: bool,
-    /// Its ticket, when the team has one.
     pub ticket: Option<String>,
 }
 
-/// Summarise `days` days of each environment, leaving out what is muted.
+/// Leaves out what is muted.
 pub fn weeks(environments: &[Environment], team: &Team, days: i64) -> Vec<Week> {
     let today = Utc::now().date_naive();
     let day = |back: i64| {
@@ -157,8 +140,8 @@ pub fn weeks(environments: &[Environment], team: &Team, days: i64) -> Vec<Week> 
         .collect()
 }
 
-/// `TypeError at path:line`, or the level and the message when no exception
-/// is named - `customerror: Basket <n> has no shipment` says more than the level.
+/// Without an exception, the message: `customerror: Basket <n> has no shipment` says more
+/// than the level.
 fn named(known: &Known) -> String {
     match known.exception_class {
         Some(_) => headline(
@@ -177,7 +160,6 @@ fn named(known: &Known) -> String {
     }
 }
 
-/// `+35%`, `-10%`, or `new` when there was nothing before.
 pub fn trend(now: u64, before: u64) -> String {
     match before {
         0 if now == 0 => "=".to_string(),
@@ -189,7 +171,6 @@ pub fn trend(now: u64, before: u64) -> String {
     }
 }
 
-/// The weeks as a Teams card.
 pub fn card(weeks: &[Week], days: i64, dashboard: Option<&str>) -> Value {
     let mut body = vec![json!({
         "type": "TextBlock",

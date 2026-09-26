@@ -21,14 +21,11 @@ use sfcc_core::webdav::Dav;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// Errors only. Warnings and custom info logs change too often to be news.
+// Warnings and custom info logs change too often to be news.
 const DEFAULT_LEVELS: &str = "error,customerror,fatal";
 
-/// Exit status when there is something new, as opposed to a failure.
 const EXIT_NEW: i32 = 1;
-/// Exit status when log-diff itself could not do its job.
 const EXIT_FAILED: i32 = 2;
-/// How long `check` waits for the sandbox before giving up on it.
 const PROBE_LIMIT: Duration = Duration::from_secs(15);
 
 const EXAMPLES: &str = "\
@@ -558,8 +555,7 @@ async fn run(cli: Cli) -> Result<i32> {
 
 async fn check(args: CheckArgs) -> Result<i32> {
     let (local, dav) = local(args.local)?;
-    // A git hook waits on this, and a host that drops packets would otherwise
-    // take every retry's timeout before anyone could commit.
+    // A git hook waits on this; a host that drops packets would take every retry's timeout.
     let probe = tokio::time::timeout(PROBE_LIMIT, reachable(&dav)).await;
     let unreachable = match probe {
         Ok(result) => result?,
@@ -751,8 +747,6 @@ fn local(args: LocalArgs) -> Result<(Local, Dav)> {
     Ok((local, dav))
 }
 
-/// The ledgers and team file a command was pointed at: a repository on
-/// GitHub, or paths and URLs one by one.
 async fn ledgers(
     from: &Option<String>,
     specs: &[String],
@@ -846,18 +840,15 @@ fn default_state() -> PathBuf {
     ledger::local_dir().join("local-ledger.json")
 }
 
-/// With no ledger repository yet, `run` against DEV from this machine keeps
-/// the team's ledger here, and `check` and `watch` pick it up on their own.
+/// Where `run` keeps the team's ledger without a ledger repository; `check` and `watch` read it.
 fn team_on_this_machine() -> PathBuf {
     ledger::local_dir().join("dev-ledger.json")
 }
 
-/// Time between passes: never less than a second.
 fn parse_interval(raw: &str) -> Result<Duration> {
     Ok(parse_span(raw)?.max(Duration::from_secs(1)))
 }
 
-/// `10s`, `2m`, `36h`, `3d`, or plain seconds.
 fn parse_span(raw: &str) -> Result<Duration> {
     let raw = raw.trim();
     let (number, unit) = match raw.find(|c: char| !c.is_ascii_digit()) {

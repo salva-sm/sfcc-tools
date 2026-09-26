@@ -64,9 +64,8 @@ impl Manifest {
     }
 }
 
-/// The uploader's state directory. It was `prost` before the rename; the old
-/// one is moved over the first time, so the manifests survive and the next
-/// push does not re-upload everything.
+/// Was `prost` before the rename; moved over once so the manifests survive and
+/// the next push does not re-upload everything.
 pub fn state_dir() -> PathBuf {
     let current = state_root().join(STATE_NAME);
     if !current.exists() {

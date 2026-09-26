@@ -170,10 +170,9 @@ pub fn select_changed(files: &[LocalFile], manifest: &Manifest) -> Vec<LocalFile
         .collect()
 }
 
-/// Drops the entries of files about to be sent, so a transfer that fails
-/// halfway leaves them unknown rather than recorded at their previous content.
-/// Otherwise a file that reaches the sandbox and is then edited back to that
-/// content passes for unchanged, and the sandbox keeps the version in between.
+/// Forgets files about to be sent, so a transfer failing halfway leaves them
+/// unknown: otherwise a file uploaded, then edited back to its recorded content,
+/// passes for unchanged and the sandbox keeps the version in between.
 pub fn forget_files(manifest: &mut Manifest, files: &[LocalFile]) {
     for file in files {
         manifest.forget(&file.relative);
@@ -236,8 +235,6 @@ pub async fn upload_files(
     }
 }
 
-/// What a deletion did: the paths that were really there, for the caller to
-/// report as one group, and the ones the sandbox failed to delete.
 pub struct Deleted {
     pub gone: Vec<String>,
     pub failed: Vec<String>,
@@ -294,8 +291,7 @@ async fn upload_individually(
     files: Vec<LocalFile>,
     progress: Option<&ProgressBar>,
 ) -> Result<Vec<(String, Entry)>> {
-    // One file the sandbox refuses, such as a `.bak` it answers 403 to, must
-    // not keep the others of the batch from being sent and recorded.
+    // One file the sandbox refuses (a `.bak` gets 403) must not hold back the rest.
     let mut recorded = Vec::new();
     let mut failure = None;
     for file in files {
@@ -357,7 +353,6 @@ async fn upload_chunk(
     Ok(recorded)
 }
 
-/// A zip archive, and the manifest entry of every file in it.
 type Archive = (Vec<u8>, Vec<(String, Entry)>);
 
 fn build_archive(files: Vec<LocalFile>) -> Result<Archive> {

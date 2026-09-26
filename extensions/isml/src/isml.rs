@@ -13,8 +13,7 @@ struct IsmlExtension {
 }
 
 impl IsmlExtension {
-    /// A configured or locally built server always wins: on the machine the
-    /// extension is developed on, `isml-lsp` is on `PATH` and rebuilt often.
+    /// A configured or locally built server always wins: in development it is rebuilt often.
     fn local_binary(worktree: &zed::Worktree) -> (Option<String>, Vec<String>) {
         let configured = LspSettings::for_worktree(SERVER_BINARY, worktree)
             .ok()

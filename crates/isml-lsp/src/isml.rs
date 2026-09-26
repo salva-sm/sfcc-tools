@@ -1,22 +1,13 @@
-//! The ISML tag set, as the platform defines it.
-//!
-//! Without this an editor falls back to HTML, which offers `<is:include>` and
-//! other tags that do not exist. Serving the real set from the language server
-//! means the wrong one stops being offered.
+//! The ISML tag set, so editors stop offering HTML-mode guesses like `<is:include>`.
 
-/// One ISML tag, with everything needed to offer and insert it.
 pub struct Tag {
-    /// The tag name, without the angle bracket.
     pub name: &'static str,
-    /// One line on what the tag does.
     pub summary: &'static str,
-    /// What goes between it and its closing tag.
     pub body: Body,
-    /// The attributes the platform accepts on it.
     pub attributes: &'static [Attribute],
 }
 
-/// What goes between the tag and its closing tag, which decides the snippet.
+/// Decides the snippet.
 pub enum Body {
     /// `<isinclude ... />`
     Empty,
@@ -26,15 +17,11 @@ pub enum Body {
     Block,
 }
 
-/// One attribute of a tag.
 pub struct Attribute {
-    /// The attribute name.
     pub name: &'static str,
-    /// One line on what it controls.
     pub summary: &'static str,
-    /// Whether the platform refuses the tag without it.
     pub required: bool,
-    /// The values the platform accepts, when it is a closed set.
+    /// Empty when any value is accepted.
     pub values: &'static [&'static str],
 }
 
@@ -42,20 +29,16 @@ const NONE: &[&str] = &[];
 const SCOPES: &[&str] = &["page", "request", "session"];
 const ENCODINGS: &[&str] = &["on", "off", "html", "xml", "wml", "jshtml", "jsonvalue"];
 
-/// One tag by name.
 pub fn tag(name: &str) -> Option<&'static Tag> {
     TAGS.iter().find(|candidate| candidate.name == name)
 }
 
-/// Every tag the platform defines.
 pub fn tags() -> &'static [Tag] {
     TAGS
 }
 
-/// Tags whose attributes name a template, so their value completes to one.
 pub const TEMPLATE_ATTRIBUTE: &str = "template";
 
-/// The tag set itself.
 pub static TAGS: &[Tag] = &[
     Tag {
         name: "isif",

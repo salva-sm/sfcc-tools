@@ -1,25 +1,6 @@
-//! Whether the sandbox has the code that is on disk.
-//!
-//! A detached uploader is invisible from inside the editor, so a save that
-//! failed to reach the sandbox looks exactly like one that worked — and the
-//! next half hour goes into debugging code the instance never received.
-//!
-//! Zed has no status-bar API for an extension, but it does render LSP
-//! progress, so that is the channel used here.
-//!
-//! # What it can and cannot show
-//!
-//! Progress is meant for work in flight, not for steady state. So this
-//! reports the two states worth interrupting for — **uploading** and
-//! **failed**, the latter staying up until an upload succeeds — and shows
-//! nothing at all when everything is in sync. There is no always-on green
-//! light, because a progress item that never ends reads as a stuck spinner.
-//!
-//! # The file it reads
-//!
-//! The uploader writes one JSON file per watcher under its own state
-//! directory. This module knows that layout, which is the one thing the two
-//! programs have to agree on until they share a binary.
+//! Uploader state via LSP progress, Zed's only status channel for an extension.
+//! Only uploading and failed are shown: a progress item that never ends reads as a stuck spinner.
+//! Reads one JSON file per watcher under the uploader's state directory: the layout both programs must agree on.
 
 use crossbeam_channel::{SendError, Sender};
 use std::path::{Path, PathBuf};
@@ -39,42 +20,31 @@ const POLL: Duration = Duration::from_millis(1500);
 /// with no word, it is gone rather than quiet.
 const STALE_SECONDS: i64 = 90;
 
-/// What the uploader is doing, as its status file spells it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
-    /// Everything on disk is on the sandbox.
     Synced,
-    /// An upload is in flight.
     Uploading,
-    /// The last upload failed, and the changes are still queued.
+    /// The last upload failed; the changes are still queued.
     Failed,
-    /// No watcher is running for this folder.
     Stopped,
 }
 
-/// One watcher's state.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Status {
-    /// What it is doing.
     pub state: State,
-    /// The cartridges directory being watched, which is how a workspace
-    /// recognises its own watcher.
+    /// How a workspace recognises its own watcher.
     pub cartridges: String,
-    /// The sandbox host.
     pub hostname: String,
     /// Files in the batch the state refers to.
     #[serde(default)]
     pub files: usize,
-    /// Why it failed, when it did.
     #[serde(default)]
     pub detail: Option<String>,
     /// Seconds since the epoch.
     pub at: i64,
 }
 
-/// Follow the uploader in the background and report it to the editor, for as
-/// long as the session lasts.
 pub fn report(roots: Vec<PathBuf>, sender: Sender<Message>) {
     std::thread::spawn(move || {
         if create_token(&sender).is_err() {
@@ -96,7 +66,6 @@ pub fn report(roots: Vec<PathBuf>, sender: Sender<Message>) {
     });
 }
 
-/// The status of the watcher covering one of the open folders, if there is one.
 pub fn current(roots: &[PathBuf]) -> Option<Status> {
     let directory = status_dir()?;
     let mut best: Option<Status> = None;
@@ -121,8 +90,6 @@ fn read(path: &Path) -> Option<Status> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
-/// A watcher belongs to this session when what it watches is inside a folder
-/// the editor has open.
 fn covers(status: &Status, roots: &[PathBuf]) -> bool {
     let watched = PathBuf::from(&status.cartridges);
     roots.iter().any(|root| watched.starts_with(root))
@@ -156,7 +123,6 @@ fn describe(status: &Status) -> String {
     }
 }
 
-/// Only what is worth interrupting for reaches the status bar.
 fn worth_showing(state: Option<State>) -> bool {
     matches!(state, Some(State::Uploading) | Some(State::Failed))
 }
