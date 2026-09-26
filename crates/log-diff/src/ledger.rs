@@ -42,8 +42,8 @@ pub struct Ledger {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deploy_log: Vec<Deploy>,
     /// Team only: records per day (`YYYY-MM-DD`, UTC) per signature, for the
-    /// last [`DAYS_KEPT`] days - what spikes are measured against and the
-    /// dashboard charts.
+    /// last [`DAYS_KEPT`] days - what spikes are measured against, and what a
+    /// dashboard can chart.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub daily: BTreeMap<String, BTreeMap<String, u64>>,
 }

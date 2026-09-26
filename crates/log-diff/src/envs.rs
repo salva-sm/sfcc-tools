@@ -1,7 +1,6 @@
 //! Several environments' ledgers at once - `dev=ledgers/dev.json` - for the
-//! commands that look across them: the summary and the dashboard. Or all of
-//! them straight from the ledger repository on GitHub, so nothing generated
-//! from them ever has to be kept there.
+//! commands that look across them, the summary. Or all of them straight from
+//! the ledger repository on GitHub, without a clone.
 
 use crate::ledger::{Ledger, fetch};
 use crate::team::Team;

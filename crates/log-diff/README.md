@@ -6,7 +6,7 @@ news when nobody has seen it before.
 
 It runs in two places. On CI, against the shared DEV, STG and PRD instances, it keeps one
 ledger per environment, learns the deploys from the instances themselves, posts what is new
-and what spiked to Teams, sends a weekly digest, and builds a dashboard of it all. On a
+and what spiked to Teams, and sends a weekly digest. On a
 developer's machine, against their sandbox, it reads the DEV ledger without writing to it and
 only speaks up about what the team does not already know.
 
@@ -109,7 +109,6 @@ log-diff deploy --sha SHA --at TIMESTAMP                 CI: record a deploy lea
 log-diff code-versions                                   the instance's code versions, oldest first
 log-diff notify --report new.json                        CI: post new errors and spikes to Teams
 log-diff summary --from owner/repo                       the last days per environment, for Teams
-log-diff dashboard --from owner/repo --open              an HTML dashboard of the ledgers
 log-diff ticket <ID> --ledger prd=... --project KEY      a Jira ticket for a signature
 log-diff completions <shell>      the tab completion script for zsh or PowerShell
 ```
@@ -399,26 +398,11 @@ run still succeeds, and a report with nothing in it posts nothing.
 signatures, the most logged and the fastest growing - printed, and posted when a webhook is
 given. The template's `summary.yml` sends it on Monday mornings.
 
-### The dashboard
+### A dashboard
 
-`log-diff dashboard --from <owner>/sfcc-log-ledger --open` builds one self-contained HTML
-page on your machine - in the temp folder unless `--out` says otherwise - from the ledgers
-and the team file, read through the GitHub API with your `gh` login or `GITHUB_TOKEN`. No
-clone is needed, and nothing generated is kept in the ledger repository; each run of its
-workflow attaches the same page as an artifact instead. `--ledger dev=path --ledger prd=url`
-builds it from files one by one. For the last 7, 30 or 90 days, one environment or all of
-them:
-
-- records per day per environment, with the deploys marked, and new signatures per day;
-- the most important signatures - error pages first, then the most logged - with their
-  trend against the period before and their last 14 days;
-- spikes, what reached PRD after DEV or STG had it first, and the deploys with the new
-  signatures each brought;
-- a signature's history, scrubbed example, and a link to its line of code.
-
-Each chart has a table view, colour follows the environment (the three validated for colour
-blindness together), light and dark are both designed, and `?env=`, `?range=`,
-`?signature=` and `?theme=` link into it. `--open` opens it once written.
+Not part of log-diff. The ledgers are plain JSON - `known_signatures`, `deploy_log`, and
+`daily` with the records per day per signature - so a ledger repository can publish a page of
+its own from them, next to the data, without anything here generating it.
 
 ## In the editor
 

@@ -96,15 +96,6 @@ jobs:
         continue-on-error: true
         run: bash scripts/read-environment.sh prd
 
-      # Built for the run's artifacts only: this repository keeps data, never
-      # what is generated from it. `log-diff dashboard --from <this repository>`
-      # builds the same page on anyone's machine.
-      - name: Dashboard
-        run: |
-          log-diff dashboard --ledger dev=ledgers/dev.json --ledger stg=ledgers/stg.json \
-            --ledger prd=ledgers/prd.json --team team.json \
-            --out "$RUNNER_TEMP/dashboard/index.html" --color never
-
       - name: Commit
         run: |
           git config user.name "log-diff"
@@ -118,9 +109,3 @@ jobs:
             git commit -m "$message"
             git push
           fi
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dashboard
-          path: ${{ runner.temp }}/dashboard/index.html
-          retention-days: 7

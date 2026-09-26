@@ -1,5 +1,4 @@
 mod ci;
-mod dashboard;
 mod envs;
 mod finding;
 mod jira;
@@ -122,19 +121,11 @@ enum Command {
         given - a weekly schedule makes it Monday's digest."
     )]
     Summary(SummaryArgs),
-    /// Write an HTML dashboard of the ledgers: charts, rankings, spikes, deploys
-    #[command(
-        long_about = "Write one self-contained HTML page from the ledgers: records and new \
-        signatures per day and per environment, the most important signatures, spikes, what \
-        reached production after DEV or STG had it, and the deploys with what each brought. \
-        Nothing in it is fetched, so it opens from a checkout, a workflow artifact or Pages."
-    )]
-    Dashboard(DashboardArgs),
     /// Open a Jira ticket for a signature, and remember it in the team file
     #[command(
         long_about = "Open a Jira ticket for a signature, carrying what the ledger knows - \
         where it fails, how often, since which deploy, and the scrubbed example - and record \
-        its key in the team file, so the dashboard and the digest link to it. Jira Cloud, \
+        its key in the team file, so the digest - and whatever else reads it - links to it. Jira Cloud, \
         with JIRA_URL, JIRA_EMAIL and JIRA_API_TOKEN from the environment."
     )]
     Ticket(TicketArgs),
@@ -302,35 +293,6 @@ struct SummaryArgs {
     /// Where the dashboard can be opened, for a button on the card
     #[arg(long, value_name = "URL", env = "LOG_DIFF_DASHBOARD_URL")]
     dashboard_url: Option<String>,
-}
-
-#[derive(Args)]
-struct DashboardArgs {
-    /// An environment's ledger, `name=path` or `name=url`; repeat for each
-    #[arg(
-        long = "ledger",
-        value_name = "NAME=PATH",
-        required_unless_present = "from"
-    )]
-    ledgers: Vec<String>,
-    /// Read every ledger and the team file from a ledger repository on GitHub instead
-    #[arg(long, value_name = "OWNER/REPO[@BRANCH]", conflicts_with_all = ["ledgers", "team"])]
-    from: Option<String>,
-    /// The team file: muted signatures and tickets
-    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
-    team: Option<PathBuf>,
-    /// Where to write the page (default: log-diff-dashboard.html in the temp folder)
-    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
-    out: Option<PathBuf>,
-    /// Link to a line of code, with {sha}, {path} and {line}
-    #[arg(long, value_name = "URL", env = "LOG_DIFF_CODE_URL")]
-    code_url: Option<String>,
-    /// Link comparing two deploys, with {from} and {to}
-    #[arg(long, value_name = "URL", env = "LOG_DIFF_COMPARE_URL")]
-    compare_url: Option<String>,
-    /// Open it in the browser once written
-    #[arg(long)]
-    open: bool,
 }
 
 #[derive(Args)]
@@ -550,24 +512,6 @@ async fn run(cli: Cli) -> Result<i32> {
                 let card = summary::card(&weeks, args.days, args.dashboard_url.as_deref());
                 notify::post(&webhook, &card).await?;
                 status(Tone::Ok, "summary posted to Teams");
-            }
-            Ok(0)
-        }
-        Command::Dashboard(args) => {
-            let (environments, team) =
-                ledgers(&args.from, &args.ledgers, args.team.as_deref()).await?;
-            let links = dashboard::Links {
-                code: args.code_url,
-                compare: args.compare_url,
-            };
-            // Generated, so never next to the data it is built from.
-            let out = args
-                .out
-                .unwrap_or_else(|| std::env::temp_dir().join("log-diff-dashboard.html"));
-            dashboard::write(&out, &dashboard::data(&environments, &team, &links))?;
-            status(Tone::Ok, &format!("dashboard written to {}", out.display()));
-            if args.open {
-                open_in_browser(&out);
             }
             Ok(0)
         }
@@ -891,27 +835,6 @@ async fn ticket(args: TicketArgs) -> Result<i32> {
         ),
     );
     Ok(0)
-}
-
-/// Open a file in the default browser, and never fail over it.
-fn open_in_browser(path: &std::path::Path) {
-    let target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let result = if cfg!(windows) {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", ""])
-            .arg(&target)
-            .spawn()
-    } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg(&target).spawn()
-    } else {
-        std::process::Command::new("xdg-open").arg(&target).spawn()
-    };
-    if result.is_err() {
-        status(
-            Tone::Info,
-            &format!("open {} in a browser", target.display()),
-        );
-    }
 }
 
 /// A commit, shortened; a code version name, when that is all there is, whole.
