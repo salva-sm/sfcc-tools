@@ -1,8 +1,4 @@
-//! "Did my change start throwing?" — the sandbox log between two points in time.
-//!
-//! `logger` follows the log; this reads a slice of it. You mark the log before
-//! exercising a flow and ask afterwards what is new, which is the difference
-//! between watching a stream and getting an answer.
+//! What the sandbox logged between a mark and now.
 
 use crate::logging;
 use crate::manifest::state_dir;
@@ -30,7 +26,7 @@ fn mark_path(config: &Config) -> PathBuf {
         .join(format!("{}.json", config.identity()))
 }
 
-/// Remember how long each of today's log files is right now.
+/// Records the current length of each of today's log files.
 pub async fn mark(ctx: &Ctx, levels: &[String]) -> Result<()> {
     ctx.dav.wait_until_ready(Some(WAIT)).await?;
     let mark = logs::mark(&ctx.dav, levels).await?;
@@ -51,7 +47,6 @@ pub async fn mark(ctx: &Ctx, levels: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Everything logged since the mark, one block per distinct failure.
 /// Returns false when nothing new showed up.
 pub async fn report(ctx: &Ctx, options: ReportOptions) -> Result<bool> {
     let path = mark_path(&ctx.config);
@@ -95,8 +90,7 @@ pub async fn report(ctx: &Ctx, options: ReportOptions) -> Result<bool> {
     Ok(true)
 }
 
-/// The mark's moment on this machine's clock. A mark from before the move to
-/// UTC is already local, and is quoted as it is.
+/// A mark from before the move to UTC is already local, and is quoted as is.
 fn local_time(taken: &str) -> String {
     match DateTime::parse_from_rfc3339(taken) {
         Ok(moment) => moment
@@ -112,8 +106,6 @@ struct Group {
     times: Vec<String>,
 }
 
-/// The same failure repeated is one problem, not twenty. Entries collapse on
-/// everything but their timestamp.
 fn group(entries: Vec<Entry>) -> Vec<Group> {
     let mut groups: Vec<Group> = Vec::new();
     let mut seen: HashMap<String, usize> = HashMap::new();

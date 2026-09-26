@@ -1,7 +1,4 @@
-//! The override chain of a route, as something to read.
-//!
-//! Hovering a route name answers the question the file cannot: who else
-//! declares it, in what order, and which of those a request actually reaches.
+//! Route hover: who declares it, in what order, and which one a request reaches.
 
 use std::path::{Path, PathBuf};
 
@@ -10,9 +7,7 @@ use crate::reference::Reference;
 use crate::routes::{Effect, Link, Route};
 use crate::workspace::Workspace;
 
-/// The route a reference names. A bare route name in a `server.<verb>` call
-/// belongs to the controller being edited, so the file supplies the half the
-/// literal leaves out.
+/// A bare route name in `server.<verb>` belongs to the controller being edited.
 pub fn route_of(reference: &Reference, file: &Path) -> Option<Route> {
     let Reference::Route { controller, name } = reference else {
         return None;
@@ -27,7 +22,6 @@ pub fn route_of(reference: &Reference, file: &Path) -> Option<Route> {
     })
 }
 
-/// `Site.getCurrent` — the signature and what the platform says it does.
 pub fn member_markdown(line: &str, column: usize, text: &str) -> Option<String> {
     let (class, name) = api::member_at(line, column, text)?;
     let (member, kind) = api::api().class(&class)?.member(&name)?;
@@ -46,7 +40,6 @@ pub fn member_markdown(line: &str, column: usize, text: &str) -> Option<String> 
     Some(out)
 }
 
-/// `require('dw/system/Site')` — what that class is for.
 pub fn module_markdown(reference: &Reference) -> Option<String> {
     let Reference::Module(path) = reference else {
         return None;
@@ -74,16 +67,13 @@ fn kind_label(kind: api::MemberKind) -> &'static str {
     }
 }
 
-/// One cartridge path's answer, labelled by the site it belongs to.
 pub struct Chain {
-    /// The site this order belongs to, or `None` when none is known.
     pub label: Option<String>,
-    /// The declarations, leftmost cartridge first.
+    /// Leftmost cartridge first.
     pub links: Vec<Link>,
 }
 
-/// The chain under every cartridge path the checkout records; one unordered
-/// chain when it records none.
+/// One chain per recorded cartridge path; a single unordered one when none is recorded.
 pub fn chains(route: &Route, workspace: &Workspace) -> Vec<Chain> {
     let controllers = workspace.controllers();
     if workspace.paths.is_empty() {
@@ -125,7 +115,6 @@ pub fn targets(chains: &[Chain]) -> Vec<(PathBuf, u32)> {
     targets
 }
 
-/// The chain as a table per site, with the file being read marked.
 pub fn markdown(route: &Route, chains: &[Chain], current: &Path) -> Option<String> {
     if chains.is_empty() {
         return None;

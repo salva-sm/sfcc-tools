@@ -1,18 +1,7 @@
 name: Extension zip (isml)
 
-# Builds the drop-in zip a teammate installs without any toolchain, and
-# attaches it to the release for a `v*` tag, alongside the binaries.
-#
-# It reproduces what Zed's own extension builder does when you run
-# `zed: install dev extension` (crates/extension/src/extension_builder.rs):
-#
-#   * cargo build --release --target wasm32-wasip2   -> extension.wasm
-#   * wasi-sdk clang -fPIC -shared -Os -Wl,--export=tree_sitter_<name>
-#                                                    -> grammars/<name>.wasm
-#
-# Zed additionally strips custom sections from extension.wasm, which is a size
-# optimisation: the `zed:api-version` section it reads at load time is present
-# either way.
+# Reproduces Zed's `install dev extension` build (crates/extension/src/extension_builder.rs).
+# Zed also strips custom sections, a size optimisation only: `zed:api-version` survives.
 on:
   push:
     branches: [main]
@@ -44,9 +33,7 @@ jobs:
           cargo build --release --target wasm32-wasip2
         working-directory: extensions/isml
 
-      # Downloaded to a file and checked before unpacking: piping straight
-      # into tar turns a truncated response into `not in gzip format`, and
-      # leaves the release half-built because of someone else's CDN.
+      # Checked before unpacking: piped into tar, a truncated download is only `not in gzip format`.
       - name: Install wasi-sdk
         run: |
           url="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"

@@ -1,54 +1,36 @@
-//! From a log record to its signature: the same failure, whoever triggered it
-//! and whenever, hashes to the same thing.
-//!
-//! What goes into the hash is the level, the message with everything volatile
-//! scrubbed out, and the top of the stack without line numbers. Line numbers
-//! stay out on purpose: an unrelated edit higher up the same file shifts them,
-//! and a known failure should not turn new because of it. They are kept in
-//! what is shown, where they are what you need.
-//!
-//! Scrubbing also keeps customer data out of the ledger: ids, emails, tokens,
-//! query strings and addresses never reach it. Only the first line and the
-//! stack are ever looked at - the request dump an error log appends after them
-//! is where the rest of the personal data is, and it is dropped whole.
+//! Line numbers stay out of the hash: an unrelated edit higher up a file shifts them.
+//! Scrubbing keeps customer data out of the ledger; the request dump after the stack is dropped.
 
 use regex::{Captures, Regex};
 use sfcc_core::logs::Entry;
 use std::sync::LazyLock;
 use xxhash_rust::xxh3::xxh3_64;
 
-/// How signatures are computed. Raise it with any change that gives a failure
-/// a different id than before - what is scrubbed, which frames count - and a
-/// ledger kept under the old one learns its log once more, quietly, instead
-/// of reporting every failure it knows as new.
+/// Raise it with any change that gives a failure a different id, so old ledgers relearn quietly
+/// instead of reporting everything as new.
 pub const SIGNATURES: u32 = 1;
-/// Frames that take part in the signature. Below this the stack is the
-/// framework's, and the same for every failure.
+/// Below this the stack is the framework's, the same for every failure.
 const FRAMES: usize = 8;
-/// Frames kept in the stored example.
 const EXAMPLE_FRAMES: usize = 3;
-/// Longest message kept in the stored example.
 const EXAMPLE_CHARS: usize = 400;
 
-/// One failure, however many times it happened.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Signature {
-    /// Sixteen hex digits, stable across runs, machines and versions.
+    /// Stable across runs, machines and versions.
     pub id: String,
     /// The level, as the file name spells it.
     pub label: String,
-    /// The innermost `...Error` or `...Exception` named in the message.
+    /// The innermost one named in the message.
     pub exception_class: Option<String>,
-    /// The top script frame, `cartridge/path/file.js:214`.
+    /// `cartridge/path/file.js:214`.
     pub location: Option<String>,
-    /// The scrubbed message, line numbers included.
+    /// Scrubbed, line numbers included.
     pub message: String,
-    /// The scrubbed stack, line numbers included.
+    /// Scrubbed, line numbers included.
     pub frames: Vec<String>,
 }
 
 impl Signature {
-    /// What the ledger keeps as the one example of this failure.
     pub fn example(&self) -> String {
         let mut example: String = self.message.chars().take(EXAMPLE_CHARS).collect();
         for frame in self.frames.iter().take(EXAMPLE_FRAMES) {
@@ -66,7 +48,7 @@ macro_rules! regex {
     };
 }
 
-// The record header: `[moment] LEVEL thread|with|segments category []`.
+// `[moment] LEVEL thread|with|segments category []`.
 regex!(HEADER, r"^\[[^\]]*\]\s*");
 regex!(THREAD, r"^(\w+)\s+(\S*\|\S*)\s*");
 // Scrubbers, applied in this order.
@@ -99,7 +81,6 @@ regex!(
     r"\b(?:[a-z_][\w]*\.)*([A-Z]\w*(?:Error|Exception))\b"
 );
 
-/// The signature of one record.
 pub fn signature(entry: &Entry) -> Signature {
     let mut lines = entry.lines.iter();
     let head = lines.next().map(String::as_str).unwrap_or_default();
@@ -130,9 +111,9 @@ pub fn signature(entry: &Entry) -> Signature {
     }
 }
 
-/// The header without its moment, and its thread without the thread number
-/// and session. `PipelineCallServlet|157318437|Sites-Site|Cart-Show|PipelineCall|t1ZZ-bCb`
-/// keeps the servlet, the site and the controller.
+/// Drops the moment, thread number and session: of
+/// `PipelineCallServlet|157318437|Sites-Site|Cart-Show|PipelineCall|t1ZZ-bCb`, the servlet, site
+/// and controller stay.
 fn strip_header(head: &str) -> String {
     let rest = HEADER.replace(head, "");
     let Some(found) = THREAD.captures(&rest) else {
@@ -158,7 +139,6 @@ fn strip_header(head: &str) -> String {
     )
 }
 
-/// Everything that changes from one occurrence of a failure to the next.
 pub fn scrub(text: &str) -> String {
     let text = TIMESTAMP.replace_all(text, "<time>");
     let text = UUID.replace_all(&text, "<uuid>");
@@ -173,8 +153,6 @@ pub fn scrub(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// A URL keeps its host and the shape of its path; the query goes, and so
-/// does any path segment that is an id.
 fn scrub_url(url: &str) -> String {
     let bare = url.split(['?', '#']).next().unwrap_or(url);
     let Some((scheme, rest)) = bare.split_once("://") else {
@@ -190,10 +168,8 @@ fn scrub_url(url: &str) -> String {
     scrubbed
 }
 
-/// Words that are ids: numbers of four digits or more, and anything six long
-/// or more mixing letters and digits - order numbers, product ids, session
-/// fragments. Short numbers stay; `404` and `line 3` mean something. Paths are
-/// left alone, since a cartridge is allowed a digit in its name.
+/// Short numbers stay (`404`, `line 3` mean something); paths stay, as a cartridge name may
+/// have a digit.
 fn scrub_words(text: &str) -> String {
     let mut scrubbed = String::with_capacity(text.len());
     for (index, word) in text.split(' ').enumerate() {
@@ -221,8 +197,7 @@ fn scrub_words(text: &str) -> String {
     scrubbed
 }
 
-/// A frame is a path, a line and a function name, none of them volatile -
-/// except a template frame, which can quote an expression's value.
+/// Only a template frame is volatile: it can quote an expression's value.
 fn scrub_frame(frame: &str) -> String {
     match frame.starts_with('[') {
         true => scrub(frame),
@@ -234,7 +209,6 @@ fn without_positions(text: &str) -> String {
     POSITION.replace_all(text, "$1").into_owned()
 }
 
-/// The first frame that is a script file, or a script named in the message.
 fn location(frames: &[String], message: &str) -> Option<String> {
     let from_frames = frames.iter().find_map(|frame| {
         let position = frame.split_whitespace().next()?;

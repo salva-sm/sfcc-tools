@@ -1,9 +1,4 @@
-//! The SFCC configuration files nothing else checks.
-//!
-//! A form definition and a `steptypes.json` are read by the platform at run
-//! time, so a typo in a resource key surfaces as a raw key on the page and a
-//! wrong `module` path as a job that fails the first time someone runs it.
-//! Both are decidable from the checkout.
+//! Form definitions and `steptypes.json`: read only at run time, so typos otherwise surface in production.
 
 use std::path::Path;
 
@@ -13,7 +8,6 @@ use crate::workspace::Workspace;
 
 const SOURCE: &str = "sfcc";
 
-/// Attributes of a form field that hold a resource key rather than a value.
 const KEY_ATTRIBUTES: [&str; 5] = [
     "label",
     "missing-error",
@@ -22,8 +16,6 @@ const KEY_ATTRIBUTES: [&str; 5] = [
     "parse-error",
 ];
 
-/// Checks for the configuration files this recognises — form definitions
-/// and `steptypes.json`. Empty for anything else.
 pub fn diagnostics(file: &Path, text: &str, workspace: &Workspace) -> Vec<Diagnostic> {
     if is_form(file) {
         return form(text, workspace);
@@ -44,8 +36,7 @@ fn is_form(file: &Path) -> bool {
 
 fn form(text: &str, workspace: &Workspace) -> Vec<Diagnostic> {
     let keys = workspace.resource_keys();
-    // No bundle in the folder means every key is unknown, which would paint
-    // the file. Say nothing instead.
+    // Without a bundle every key is unknown; say nothing rather than paint the file.
     if keys.is_empty() {
         return Vec::new();
     }
@@ -73,8 +64,7 @@ fn form(text: &str, workspace: &Workspace) -> Vec<Diagnostic> {
     found
 }
 
-/// A `label` may hold a literal — a month number, a card brand, a place name.
-/// Only a dotted, unspaced value is claiming to be a resource key.
+/// A `label` may be a literal (month, card brand); only a dotted, unspaced value is a key.
 fn looks_like_a_key(value: &str) -> bool {
     value.contains('.')
         && !value.contains(char::is_whitespace)
@@ -146,7 +136,6 @@ struct Value {
     start: usize,
 }
 
-/// `attribute="value"`, with where the value starts.
 fn attribute_value(line: &str, attribute: &str) -> Option<Value> {
     let marker = format!("{attribute}=\"");
     let at = line.find(&marker)?;

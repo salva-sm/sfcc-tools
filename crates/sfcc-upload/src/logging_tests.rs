@@ -1,6 +1,5 @@
 use super::*;
 
-/// The layout, never the colour: every expectation below is plain text.
 fn plain(change: Change, paths: &[String], headline: bool) -> Vec<String> {
     no_color_in_tests();
     render(change, paths, headline)

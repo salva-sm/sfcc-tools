@@ -2,15 +2,7 @@
  * @file ISML (Salesforce B2C Commerce) grammar for tree-sitter
  * @license MIT
  *
- * Derived from tree-sitter/tree-sitter-html (MIT). On top of HTML it adds:
- *  - the ISML tag set, with the right void/container semantics;
- *  - `${ ... }` expressions in text, in attribute position, as an attribute
- *    value, and interleaved inside quoted attribute values;
- *  - ISML tags inside a tag's attribute list and inside quoted attribute
- *    values, both of which are everyday SFRA idioms:
- *      <form ... <isprint value="${form.attributes}"/>>
- *      <div class="a <isif condition="${x}">active</isif>">
- *  - `<isscript>` and `<iscomment>` raw text.
+ * Derived from tree-sitter/tree-sitter-html (MIT).
  */
 
 /// <reference types="tree-sitter-cli/dsl" />
@@ -64,8 +56,7 @@ module.exports = grammar({
       $.erroneous_end_tag,
     ),
 
-    // `${ ... }` — an ISML expression. The body is scanned externally so that
-    // nested braces, strings and comparison operators do not end it early.
+    // Scanned externally so nested braces, strings and comparisons do not end it early.
     isml_expression: $ => seq(
       '${',
       optional($.expression_content),
@@ -159,9 +150,8 @@ module.exports = grammar({
       '>',
     ),
 
-    // Where HTML only allows attributes, ISML also allows a bare expression
-    // (`${obj.disabled ? 'disabled' : ''}`) and a whole ISML tag
-    // (`<isprint value="${form.attributes}"/>`, `<isif ...>attr="v"</isif>`).
+    // ISML allows a bare expression or a whole ISML tag where HTML only allows
+    // attributes: `<form <isprint value="${form.attributes}"/>>`.
     _tag_content: $ => choice(
       $.attribute,
       $.isml_expression,
@@ -186,9 +176,7 @@ module.exports = grammar({
 
     attribute_value: _ => /([^<>"'=\s$]|\$[^{])+/,
 
-    // An entity can be named, numeric (decimal), or numeric (hexadecimal). The
-    // longest entity name is 29 characters long, and the HTML spec says that
-    // no more will ever be added.
+    // The longest entity name is 29 characters, and the HTML spec adds no more.
     entity: _ => /&(#([xX][0-9a-fA-F]{1,6}|[0-9]{1,5})|[A-Za-z]{1,30});?/,
 
     quoted_attribute_value: $ => choice(
@@ -206,18 +194,15 @@ module.exports = grammar({
       )), '"'),
     ),
 
-    // Any run of characters that neither closes the value, opens an expression
-    // nor opens a tag. A `$` not followed by `{` is ordinary text, matched
-    // either by the second alternative or, at the very end, by the lone `$`
-    // above — a trailing `\$?` here would swallow the `$` of a following `${`.
+    // A trailing lone `$` is matched by the `'$'` alias above; a `\$?` here
+    // would swallow the `$` of a following `${`.
     _single_quoted_text: _ => token(prec(-1, /([^'$<]|\$[^{'<])+/)),
     _double_quoted_text: _ => token(prec(-1, /([^"$<]|\$[^{"<])+/)),
 
     text: _ => choice(
       /[^<>&\s$]([^<>&$]*[^<>&\s$])?/,
       '$',
-      // A bare `&` that is not the start of an entity is plain text here,
-      // unlike in tree-sitter-html where it is a parse error.
+      // A bare `&` is text here, unlike tree-sitter-html where it is an error.
       '&',
     ),
   },

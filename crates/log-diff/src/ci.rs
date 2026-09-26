@@ -1,16 +1,5 @@
-//! On CI, against a shared instance: read the log since the last run, lay
-//! each new signature at the deploy that was live when it was first logged,
-//! count every signature per day, and write the team's ledger.
-//!
-//! Several merges can land between two deploys, and a deploy's errors only
-//! show up once someone uses what it shipped - often after the next deploy has
-//! been dispatched. So a signature is not blamed on the deploy that triggered
-//! the run, but on the one whose window its first timestamp falls in, and the
-//! suspects are the commits between that deploy and the one before it.
-//!
-//! A known signature is news again when it spikes: logged far more today
-//! than on an average day of the week before, the way a regression of an old
-//! failure looks.
+//! A deploy's errors show up once someone uses what it shipped, often after the next deploy,
+//! so a signature is blamed on the deploy live at its first timestamp, not the one that ran.
 
 use crate::finding::findings;
 use crate::ledger::{Ledger, serious};
@@ -23,53 +12,33 @@ use sfcc_core::logs::{self, Mark};
 use sfcc_core::webdav::Dav;
 use std::path::PathBuf;
 
-/// What `run` was told.
 pub struct RunOptions {
-    /// Log levels to read.
     pub levels: Vec<String>,
-    /// The team's ledger.
     pub state: PathBuf,
-    /// The commit just deployed, when this run is for a deploy.
     pub sha: Option<String>,
-    /// Its CI build number.
     pub build: Option<u64>,
-    /// When it went live, when that was not just now.
     pub at: Option<String>,
-    /// Where to write the report for `notify`.
     pub report: Option<PathBuf>,
-    /// A compare link, with `{from}` and `{to}` for the two shas.
     pub compare_url: Option<String>,
-    /// A link to a line of code, with `{sha}`, `{path}` and `{line}`.
     pub code_url: Option<String>,
-    /// How many days before today the first run learns from. Ignored once
-    /// the ledger has a cursor.
+    /// Ignored once the ledger has a cursor.
     pub baseline_days: u32,
-    /// The team file: what is muted for everyone.
     pub team: Option<PathBuf>,
-    /// Fewest records in a day that can make a spike.
     pub spike_min: u64,
-    /// How many times its usual day a signature must be logged to spike.
     pub spike_factor: f64,
-    /// Name the report after this environment rather than the host.
     pub environment: Option<String>,
 }
 
-/// What a run did.
 pub struct Outcome {
-    /// What it found new, and what spiked.
     pub report: Report,
-    /// Whether this was the first run, which learns instead of reporting.
+    /// First run: learned instead of reporting.
     pub baseline: bool,
-    /// The day the first run started learning from, `YYYYMMDD`.
+    /// `YYYYMMDD`.
     pub baseline_from: String,
-    /// Whether the ledger was signed another way, and this run learned the
-    /// new signatures instead of reporting them.
+    /// The ledger was signed another way: learned again instead of reporting.
     pub resigned: bool,
-    /// Signatures in the ledger after the run.
     pub known: usize,
 }
-
-/// One run.
 pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Outcome> {
     let host = &config.hostname;
     let mut ledger = Ledger::load(&options.state)?;
@@ -82,28 +51,23 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
                 .with_timezone(&Utc),
             None => Utc::now(),
         };
-        // A dispatch retried, or a deploy already recorded by `log-diff
-        // deploy`, is the same deploy, not a second one.
+        // A retried dispatch, or one already recorded by `log-diff deploy`, is the same deploy.
         if !ledger.has_deploy(sha) && !options.build.is_some_and(|build| ledger.has_build(build)) {
             ledger.record_deploy(sha, options.build, at);
         }
     }
 
-    // With nothing to compare against, the first run learns what the
-    // instance already logs instead of reporting all of it as new - today's
-    // log, or as many days back as asked. The more history, the fewer of
-    // the failures that only turn up once a week get blamed on a deploy.
+    // The more history the baseline has, the fewer weekly failures get blamed on a deploy.
     let (from, baseline) = match ledger.cursor_for(host) {
         Some(cursor) => (cursor.clone(), false),
         None => (Mark::days_back(options.baseline_days), true),
     };
     let baseline_from = from.day.clone();
-    // Signatures computed another way are the same failures under new ids:
-    // learned, like a baseline, but from where the cursor is.
+    // Signatures computed another way are the same failures under new ids: learn them again.
     let resigned = !baseline && ledger.resigned();
     let mut entries = Vec::new();
     if baseline && options.baseline_days > 0 {
-        // The days the instance has already archived are only in log_archive.
+        // Days the instance already archived are only in log_archive.
         entries.extend(logs::archived(dav, &from.day, &options.levels).await?);
     }
     let read = logs::since(dav, &from, &options.levels).await?;
@@ -198,8 +162,7 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
     })
 }
 
-/// The code versions on the instance, as `(written, name)`, oldest first:
-/// each build is deployed to one of its own, so this is the deploy history.
+/// `(written, name)`, oldest first: with a code version per build, the deploy history.
 pub async fn code_versions(dav: &Dav) -> Result<Vec<(String, String)>> {
     let mut versions: Vec<(String, String)> = dav
         .list(dav.root_url())
@@ -222,8 +185,6 @@ fn compare_url(template: Option<&str>, from: Option<&str>, to: &str) -> Option<S
     Some(template?.replace("{from}", from?).replace("{to}", to))
 }
 
-/// A link to the line a signature points at, at the deploy that brought it,
-/// or at the head of the branch when there is none.
 pub fn code_url(
     template: Option<&str>,
     sha: Option<&str>,

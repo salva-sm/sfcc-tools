@@ -1,133 +1,95 @@
-//! Telling someone: the desktop for a developer, a Teams channel for the team,
-//! and the report file that sits between `run` and `notify`.
-
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Duration;
 
-/// Findings listed in one Teams card. The rest are a count and a link.
 const CARD_ITEMS: usize = 10;
-/// New signatures in one run past which they are not a list of failures but
-/// one event - a deploy that broke something everywhere, or logs signed a new
-/// way - and the card says so instead of listing them.
+/// Past this many new signatures in one run, they are one event (a deploy that broke everything,
+/// logs signed a new way), not a list of failures.
 pub const FLOOD: usize = 30;
-/// Headlines on the card of a flood.
 const FLOOD_LINES: usize = 15;
-/// Longest example on a card, in characters.
 const CARD_EXAMPLE_CHARS: usize = 300;
-/// The most a card may weigh. Teams refuses a message past about 28 KB, and
-/// says so only with an error; this leaves room for the envelope's escaping.
+/// Teams refuses a message past about 28 KB, saying so only with an error; this leaves room
+/// for the envelope's escaping.
 pub const CARD_BYTES: usize = 24_000;
-/// Desktop notifications shown one by one before they become one summary.
 const DESKTOP_ITEMS: usize = 3;
 
-/// What one `run` found, for `notify` to send.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Report {
     /// The instance read, or the environment it is.
     pub instance: String,
-    /// When the run happened.
     pub generated: String,
-    /// The signatures nobody had seen before.
     pub new: Vec<ReportItem>,
-    /// Known signatures logged far more today than they used to be.
     #[serde(default)]
     pub spikes: Vec<ReportSpike>,
 }
 
-/// One new signature.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportItem {
-    /// The signature id.
     pub id: String,
-    /// The level it was logged at.
     pub label: String,
-    /// The innermost exception named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exception_class: Option<String>,
-    /// The top script frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
-    /// One occurrence, scrubbed.
     pub example: String,
-    /// Occurrences in this run.
     pub count: u64,
-    /// The first of them.
     pub first_seen: String,
-    /// The deploy that was live when it first showed up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deploy: Option<ReportDeploy>,
-    /// The line it points at, in the repository.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_url: Option<String>,
 }
 
-/// A known signature that spiked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportSpike {
-    /// The signature id.
     pub id: String,
-    /// The level it was logged at.
     pub label: String,
-    /// The innermost exception named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exception_class: Option<String>,
-    /// The top script frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
-    /// One occurrence, scrubbed.
     pub example: String,
-    /// Records today, so far.
     pub today: u64,
     /// Records on an average day of the week before.
     pub usual: f64,
-    /// Whether it shows as an error page.
     #[serde(default)]
     pub serious: bool,
-    /// The line it points at, in the repository.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_url: Option<String>,
 }
 
-/// The deploy a new signature is laid at, and the commits it brought.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportDeploy {
-    /// The commit deployed.
     pub sha: String,
-    /// Its CI build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<u64>,
-    /// The deploy before it; the suspects are the commits in between.
+    /// The suspects are the commits between this and `sha`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_sha: Option<String>,
-    /// A link comparing the two.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compare_url: Option<String>,
 }
 
 impl Report {
-    /// Read a report `run` wrote.
     pub fn load(path: &Path) -> Result<Report> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("cannot read {}", path.display()))?;
         serde_json::from_str(&raw).with_context(|| format!("{} is not a report", path.display()))
     }
 
-    /// Write it for `notify`, or for anything else that wants it.
     pub fn save(&self, path: &Path) -> Result<()> {
         std::fs::write(path, serde_json::to_string_pretty(self)? + "\n")
             .with_context(|| format!("cannot write {}", path.display()))
     }
 
-    /// Whether there is nothing to tell anyone.
     pub fn is_empty(&self) -> bool {
         self.new.is_empty() && self.spikes.is_empty()
     }
 }
 
-/// A one-line headline for a signature: `TypeError at path/file.js:214`.
+/// `TypeError at path/file.js:214`.
 pub fn headline(label: &str, exception: Option<&str>, location: Option<&str>) -> String {
     let what = exception.unwrap_or(label);
     match location {
@@ -136,13 +98,11 @@ pub fn headline(label: &str, exception: Option<&str>, location: Option<&str>) ->
     }
 }
 
-/// Post the report to a Teams channel.
 pub async fn teams(webhook: &str, report: &Report) -> Result<()> {
     post(webhook, &card(report)).await
 }
 
-/// Post a message to a Teams channel. Works with a Workflows webhook and a
-/// legacy incoming webhook alike: both take an Adaptive Card in this envelope.
+/// Workflows and legacy incoming webhooks alike take an Adaptive Card in [`envelope`].
 pub async fn post(webhook: &str, message: &Value) -> Result<()> {
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -159,7 +119,6 @@ pub async fn post(webhook: &str, message: &Value) -> Result<()> {
     Ok(())
 }
 
-/// An Adaptive Card around `body`, in the envelope Teams webhooks take.
 pub fn envelope(body: Vec<Value>, actions: Vec<Value>) -> Value {
     json!({
         "type": "message",
@@ -178,7 +137,6 @@ pub fn envelope(body: Vec<Value>, actions: Vec<Value>) -> Value {
     })
 }
 
-/// `3 new errors, 1 spike on DEV`.
 fn title(report: &Report) -> String {
     let mut parts = Vec::new();
     match report.new.len() {
@@ -194,16 +152,13 @@ fn title(report: &Report) -> String {
     format!("{} on {}", parts.join(", "), report.instance)
 }
 
-/// How much of a report a card carries.
 #[derive(Clone, Copy)]
 struct Shape {
-    /// Findings, and spikes, listed.
     items: usize,
-    /// Whether each carries its example.
     examples: bool,
 }
 
-/// The card for a report: as much of it as fits, a flood as one event.
+/// As much of the report as fits, a flood as one event.
 fn card(report: &Report) -> Value {
     if report.new.len() > FLOOD {
         return flood(report);
@@ -236,7 +191,6 @@ fn card(report: &Report) -> Value {
     card
 }
 
-/// What a message weighs, sent.
 fn weight(message: &Value) -> usize {
     message.to_string().len()
 }
@@ -352,8 +306,6 @@ fn shaped(report: &Report, shape: Shape) -> Value {
     envelope(body, actions)
 }
 
-/// So many new signatures at once are one event, not that many failures: a
-/// card saying so, with the most logged of them, one line each.
 fn flood(report: &Report) -> Value {
     let mut body = vec![
         json!({
@@ -395,7 +347,7 @@ fn flood(report: &Report) -> Value {
     body.push(json!({ "type": "TextBlock", "wrap": true, "text": lines.join("\n") }));
 
     let mut actions = Vec::new();
-    // The deploy the most of them came with is the one to look at.
+    // The deploy the most logged came with is the one to look at.
     if let Some(deploy) = items.iter().find_map(|item| item.deploy.as_ref())
         && let Some(url) = &deploy.compare_url
     {
@@ -411,7 +363,6 @@ fn flood(report: &Report) -> Value {
     envelope(body, actions)
 }
 
-/// `text`, cut to `chars` characters with an ellipsis.
 fn clip(text: &str, chars: usize) -> String {
     match text.char_indices().nth(chars) {
         Some((end, _)) => format!("{}...", &text[..end]),
@@ -419,7 +370,7 @@ fn clip(text: &str, chars: usize) -> String {
     }
 }
 
-/// A commit, shortened; a code version name, when that is all there is, whole.
+/// A code version name, when that is all there is, is kept whole.
 fn short(sha: &str) -> &str {
     match sha.len() >= 12 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         true => &sha[..9],
@@ -427,7 +378,6 @@ fn short(sha: &str) -> &str {
     }
 }
 
-/// A desktop notification per headline, or one summary when there are many.
 /// Failing to show one is never an error: the terminal already has it.
 pub fn desktop(instance: &str, headlines: &[String]) {
     if headlines.is_empty() {

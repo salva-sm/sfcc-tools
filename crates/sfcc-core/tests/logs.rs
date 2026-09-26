@@ -1,6 +1,3 @@
-//! The log reader against a WebDAV server in memory: what is read, from
-//! where, and what the next read starts from.
-
 use chrono::{Duration, Utc};
 use flate2::Compression;
 use flate2::write::GzEncoder;

@@ -1,10 +1,4 @@
-//! Registers the SFCC script debugger with Zed.
-//!
-//! Zed only speaks to debuggers it knows about, and B2C Commerce is not one
-//! of them. This tells it how to start `sfcc-dap`, which does the work: the
-//! Debug Adapter Protocol on the editor's side, the instance's own
-//! `dw/debugger/v2_0` API on the other. Nothing else is needed — no Node,
-//! and no CLI.
+//! Tells Zed how to start `sfcc-dap`.
 
 use std::fs;
 
@@ -19,17 +13,13 @@ const ADAPTER_BINARY: &str = "sfcc-dap";
 const ADAPTER_REPOSITORY: &str = "salva-sm/sfcc-tools";
 const CARTRIDGE_CANDIDATES: [&str; 2] = ["source/cartridges", "cartridges"];
 
-/// What a `.zed/debug.json` entry may say.
+/// A `.zed/debug.json` entry.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Settings {
-    /// An explicit path to the adapter, when it is not on `PATH`.
     binary: Option<String>,
-    /// The cartridges directory, absolute or relative to the worktree.
     cartridge_path: Option<String>,
-    /// A `dw.json` other than the one beside the cartridges.
     config: Option<String>,
-    /// The client id reported to the instance, when two people share one.
     client_id: Option<String>,
 }
 
@@ -54,8 +44,7 @@ impl zed::Extension for B2cDebugExtension {
         let settings: Settings = serde_json::from_str(&definition.config)
             .map_err(|error| format!("cannot read the debug configuration: {error}"))?;
 
-        // A configured or locally built adapter always wins; the download is
-        // only for a machine with no Rust toolchain on it.
+        // A configured or locally built adapter always wins over the download.
         let command = match settings
             .binary
             .clone()
@@ -125,7 +114,6 @@ impl zed::Extension for B2cDebugExtension {
 }
 
 impl B2cDebugExtension {
-    /// Fetch the adapter from the repository's latest release.
     fn download_binary(&mut self) -> Result<String> {
         if let Some(path) = &self.cached_binary_path {
             if fs::metadata(path).is_ok_and(|stat| stat.is_file()) {

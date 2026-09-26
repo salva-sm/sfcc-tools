@@ -1,26 +1,19 @@
-//! Turning an editor's file into one the instance knows, and back.
-//!
-//! The editor deals in absolute local paths; the instance deals in paths
-//! relative to the cartridges directory. Getting this wrong is the usual
-//! reason a breakpoint never binds, so it is kept in one place.
+//! Local paths to the instance's cartridge-relative paths, and back.
 
 use std::path::{Path, PathBuf};
 
-/// The two views of the same tree.
 pub struct Paths {
     cartridges: PathBuf,
 }
 
 impl Paths {
-    /// Anchored on the directory that holds the cartridges.
     pub fn new(cartridges: impl Into<PathBuf>) -> Paths {
         Paths {
             cartridges: cartridges.into(),
         }
     }
 
-    /// What the instance calls a local file: a leading slash, then the
-    /// cartridge and the path within it, with forward slashes.
+    /// `/cartridge/path/within`, with forward slashes.
     pub fn to_script(&self, local: &Path) -> Option<String> {
         let relative = local.strip_prefix(&self.cartridges).ok()?;
         let joined = relative
@@ -31,14 +24,12 @@ impl Paths {
         (!joined.is_empty()).then(|| format!("/{joined}"))
     }
 
-    /// The local file behind a script path, whether or not it exists.
     pub fn to_local(&self, script: &str) -> PathBuf {
         let relative = script.trim_start_matches('/');
         self.cartridges
             .join(relative.replace('/', std::path::MAIN_SEPARATOR_STR))
     }
 
-    /// The cartridge a script path belongs to.
     pub fn cartridge_of(script: &str) -> Option<&str> {
         script
             .trim_start_matches('/')
@@ -47,12 +38,8 @@ impl Paths {
             .filter(|name| !name.is_empty())
     }
 
-    /// Every other cartridge holding the same path inside `cartridge/`.
-    ///
-    /// The usual reason a breakpoint never binds is that the copy being
-    /// edited is not the copy being loaded, and naming the others is enough
-    /// to see it — which of them wins needs the cartridge path, which the
-    /// debugger API does not carry.
+    /// Other cartridges holding the same file: the usual reason a breakpoint never
+    /// binds. Which one wins needs the cartridge path, which the API does not carry.
     pub fn also_in(&self, script: &str) -> Vec<String> {
         let Some(cartridge) = Self::cartridge_of(script) else {
             return Vec::new();

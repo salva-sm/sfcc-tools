@@ -1,6 +1,3 @@
-//! Finding the reference under the cursor in an ISML or JavaScript line.
-
-/// Something in the source that points at a file, a key or a route.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Reference {
     /// `<isinclude template="account/dashboard"/>`
@@ -8,25 +5,16 @@ pub enum Reference {
     /// `require('*/cartridge/scripts/helpers/brandHelper')`
     Module(String),
     /// `Resource.msg('label.profile.firstname', 'account', null)`
-    Resource {
-        /// The key being looked up.
-        key: String,
-        /// The bundle it was asked of.
-        bundle: String,
-    },
-    /// A route: `server.append('Show', ...)` in a controller, or an endpoint
-    /// named in full — `URLUtils.url('Account-Show')`. The controller is known
-    /// only in the second case; otherwise it is the file being edited.
+    Resource { key: String, bundle: String },
+    /// `server.append('Show', ...)` or a full endpoint like `URLUtils.url('Account-Show')`;
+    /// only the latter names the controller, otherwise it is the file being edited.
     Route {
-        /// The controller, when the literal named one.
         controller: Option<String>,
-        /// The route name.
         name: String,
     },
 }
 
-/// The reference the cursor sits on, if any. `column` is a character offset
-/// into `line`.
+/// `column` is a character offset into `line`.
 pub fn at_cursor(line: &str, column: usize) -> Option<Reference> {
     let chars: Vec<char> = line.chars().collect();
     let column = column.min(chars.len());
@@ -94,7 +82,6 @@ fn string_literal_at(chars: &[char], column: usize) -> Option<StringLiteral> {
     None
 }
 
-/// True when `before` ends with `name(` plus optional whitespace.
 fn ends_with_call(before: &str, name: &str) -> bool {
     let trimmed = before.trim_end();
     let Some(head) = trimmed.strip_suffix('(') else {
@@ -168,7 +155,6 @@ fn resource_call(chars: &[char], column: usize) -> Option<Reference> {
     None
 }
 
-/// Offsets of the `(` that opens a localisation call.
 fn call_openings(line: &str) -> Vec<usize> {
     const NAMES: [&str; 3] = ["Resource.msgf", "Resource.msg", "i18nMessage"];
     let chars: Vec<char> = line.chars().collect();

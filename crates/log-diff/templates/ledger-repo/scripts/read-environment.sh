@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-# Read one environment's log into its ledger: dev, stg or prd.
-#
-#   scripts/read-environment.sh dev
-#
-# Everything comes from the environment the workflow sets up; nothing is
-# required but the instance's host and credentials, and an environment
-# without a host is skipped rather than failed, so a repository can start
-# with DEV alone. See README.md for every variable.
+# Read one environment's log into its ledger: scripts/read-environment.sh dev|stg|prd
+# Only the host and credentials are required; an environment without a host is
+# skipped, so a repository can start with DEV alone. Variables: README.md.
 set -euo pipefail
 
 env="$1"
@@ -23,8 +18,8 @@ ledger="ledgers/$env.json"
 work="$RUNNER_TEMP/sfcc-$env"
 mkdir -p "$work/cartridges"
 
-# dw.json outside the checkout, so it can never be committed. It needs a
-# cartridges folder next to it even though nothing is uploaded.
+# dw.json outside the checkout, so it is never committed. It needs a cartridges
+# folder next to it even though nothing is uploaded.
 jq -n \
   --arg hostname "$host" \
   --arg username "$(var "SFCC_${ENV}_USERNAME")" \
@@ -39,9 +34,8 @@ jq -n \
   > "$work/dw.json"
 
 # --- Deploys ------------------------------------------------------------------
-# Every build is deployed to a code version of its own, named after it, so the
-# instance lists its own deploys: one code version each, written when it went
-# up. Nothing in the pipeline has to tell this repository anything.
+# With a code version per build, named after it, the instance lists its own
+# deploys; nothing in the pipeline has to tell this repository anything.
 pattern="$(var "${ENV}_CODE_VERSION_PATTERN")"
 pattern="${pattern:-${CODE_VERSION_PATTERN:-}}"
 if [ -n "$pattern" ]; then
@@ -55,8 +49,8 @@ if [ -n "$pattern" ]; then
       sha="$(jq -r --argjson build "$build" \
         '[.deploy_log[]? | select(.build == $build) | .sha] | first // empty' ledgers/dev.json)"
     fi
-    # Otherwise the last commit on the branch before the build went up - right
-    # unless something was merged while it was building.
+    # Otherwise the branch's last commit before the build went up: right unless
+    # something was merged while it was building.
     if [ -z "$sha" ] && [ -n "${SOURCE_REPO:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
       branch="$(var "${ENV}_SOURCE_BRANCH")"
       branch="${branch:-${SOURCE_BRANCH:-develop}}"
@@ -67,8 +61,7 @@ if [ -n "$pattern" ]; then
   done
 fi
 
-# A deploy announced by the pipeline itself - Jenkins today, GitHub Actions
-# tomorrow - with a repository_dispatch: it knows the commit for certain.
+# A deploy announced by the pipeline with a repository_dispatch: its commit is exact.
 args=()
 if [ "${DISPATCH_ENVIRONMENT:-dev}" = "$env" ] && [ -n "${DISPATCH_SHA:-}" ]; then
   args+=(--sha "$DISPATCH_SHA")

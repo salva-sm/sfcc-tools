@@ -8,12 +8,9 @@ authors = ["salva-sm"]
 description = "What every SFCC tool here needs: the sandbox credentials in dw.json, what may be written to, and the instance log"
 
 [features]
-# WebDAV and the log reader built on it. Off by default: the debug adapter
-# only needs dw.json, and has no reason to carry an async HTTP stack.
+# Off by default: the debug adapter only needs dw.json, not an async HTTP stack.
 webdav = ["dep:chrono", "dep:flate2", "dep:futures", "dep:reqwest", "dep:tokio"]
-# A WebDAV server in memory, for the tests of the tools built on this one.
 testing = ["webdav", "tokio/net", "tokio/io-util", "tokio/rt"]
-# Tab completion for the command-line tools, installed by the tools themselves.
 completions = ["dep:clap", "dep:clap_complete"]
 
 [dependencies]

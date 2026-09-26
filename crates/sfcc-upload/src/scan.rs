@@ -20,10 +20,8 @@ const DEFAULT_IGNORED_NAMES: [&str; 12] = [
     "desktop.ini",
 ];
 
-/// Editor and script leftovers, which the sandbox refuses with a 403 anyway,
-/// plus two things a cartridge never needs on an instance:
-/// a source map, which only serves a browser that has the sources, and a unit
-/// test, which runs before the upload rather than on the sandbox.
+/// Leftovers the sandbox refuses with a 403 anyway, plus source maps and unit
+/// tests, which are never needed on an instance.
 const DEFAULT_IGNORED_SUFFIXES: [&str; 9] = [
     ".swp", ".swo", ".orig", ".rej", ".bak", "~", ".map", ".test.js", ".spec.js",
 ];

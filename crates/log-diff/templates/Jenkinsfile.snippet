@@ -1,11 +1,7 @@
-// Optional: the ledger learns deploys from the instances' code versions on its
-// own. This only makes a deploy's commit exact. Put it after each deploy stage,
-// with ENVIRONMENT set to dev, stg or prd for that stage.
-//
-// Needs a GitHub token allowed to dispatch to the ledger repository
-// (fine-grained: Contents read/write on that one repository), stored in Jenkins
-// as a secret text credential. Replace <owner> with the account or
-// organisation holding the ledger repository.
+// Optional: only makes a deploy's commit exact. After each deploy stage, with
+// ENVIRONMENT set to dev, stg or prd. Needs a GitHub token that can dispatch to
+// the ledger repository (fine-grained: Contents read/write on it) as a Jenkins
+// secret text credential. Replace <owner> with the ledger repository's owner.
 stage('Tell log-diff') {
   environment { ENVIRONMENT = 'dev' }
   steps {

@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# Regression check: every fixture must parse without a single ERROR node, and
-# the highlight/injection queries must load against the grammar.
-#
-# Pass a directory to also measure a real corpus, e.g.
-#   ./check.sh path/to/cartridges
+# Usage: ./check.sh [path/to/cartridges]  (a directory also measures a real corpus)
 set -e
 
 here="$(cd "$(dirname "$0")" && pwd)"
-# On the Windows dev machine the only C compiler is zig, behind a shim; on CI
-# the platform compiler is used.
+# The Windows dev machine's only C compiler is zig, behind a shim.
 if [ -z "${CC:-}" ] && [ -f /c/rust/zig/clang.cmd ]; then
     export CC=/c/rust/zig/clang.cmd
 fi

@@ -1,10 +1,5 @@
-//! What is already known: every signature seen, when, how often, and which
-//! deploy brought it.
-//!
-//! The same shape serves twice. The team's ledger lives in its own repository
-//! and only CI writes to it. Each developer has a local one next to it, which
-//! only remembers what they were already told - read from the team's, written
-//! to their own, never the other way round.
+//! One shape, two uses: the team's ledger, written only by CI, and each developer's local one,
+//! which remembers what they were told. The team's is read, never written, locally.
 
 use crate::finding::Finding;
 use anyhow::{Context, Result, bail};
@@ -15,117 +10,88 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// The format this build reads and writes. A newer one is refused rather
-/// than rewritten without the fields this build does not know.
+/// A newer format is refused rather than rewritten without the fields this build does not know.
 pub const VERSION: u32 = 1;
-/// Deploys remembered. Old ones only matter through the signatures they
-/// introduced, which keep their sha.
+/// Old deploys only matter through the signatures they introduced, which keep their sha.
 const DEPLOYS_KEPT: usize = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// A ledger file.
 pub struct Ledger {
-    /// The format version.
     #[serde(default = "version")]
     pub version: u32,
-    /// How its signatures were computed: [`crate::normalize::SIGNATURES`]
-    /// when it was written. A ledger older than the field is the first.
+    /// [`crate::normalize::SIGNATURES`] when written; a ledger older than the field is the first.
     #[serde(default = "first_signatures")]
     pub signatures: u32,
-    /// The instance the cursor belongs to. A cursor from another instance
-    /// means nothing here.
+    /// The instance the cursor belongs to; a cursor from another one means nothing here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
-    /// Where the last read of the log ended.
     #[serde(default)]
     pub cursor: Option<Mark>,
-    /// Signature id -> what is known about it.
     #[serde(default)]
     pub known_signatures: BTreeMap<String, Known>,
-    /// Deploys seen, oldest first.
+    /// Oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deploy_log: Vec<Deploy>,
-    /// Team only: records per day (`YYYY-MM-DD`, UTC) per signature, for the
-    /// last [`DAYS_KEPT`] days - what spikes are measured against, and what a
-    /// dashboard can chart.
+    /// Team only: day (`YYYY-MM-DD`, UTC) -> signature -> records; what spikes are measured
+    /// against.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub daily: BTreeMap<String, BTreeMap<String, u64>>,
 }
 
-/// Days of per-day counts kept.
 pub const DAYS_KEPT: usize = 90;
-/// Days before today a spike is measured against.
 const SPIKE_WINDOW: i64 = 7;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-/// One signature, as far as the ledger knows it.
 pub struct Known {
-    /// The level it was logged at.
     pub label: String,
-    /// The innermost exception named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exception_class: Option<String>,
-    /// The top script frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
-    /// One occurrence, scrubbed.
+    /// Scrubbed.
     pub example: String,
-    /// When it was first logged.
     pub first_seen: String,
-    /// When it was last logged.
     pub last_seen: String,
-    /// How many times, while the ledger was watching.
+    /// Only while the ledger was watching.
     pub count: u64,
-    /// The deploy that was live when it first showed up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_deploy_sha: Option<String>,
-    /// Local only: reported, and not acknowledged yet.
+    /// Local only.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pending: bool,
-    /// Local only: pending again, after it had been resolved.
+    /// Local only: pending again after it had been resolved.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub back: bool,
-    /// Local only: when it was acknowledged or expired. Logged again after
-    /// that, it is back. A signature neither pending nor resolved - muted, or
-    /// taken in with a baseline - is never reported again.
+    /// Local only: acknowledged or expired. Neither pending nor resolved means never reported
+    /// again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_at: Option<String>,
     /// Local only: muted on purpose, as opposed to taken in with a baseline.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub muted: bool,
-    /// Team only: the last day it was reported as a spike, so that a day's
-    /// spike is reported once, not on every run of the day.
+    /// Team only: so that a day's spike is reported once, not on every run of the day.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spiked_on: Option<String>,
 }
 
-/// A known signature logged far more today than it used to be.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Spike {
-    /// The signature.
     pub id: String,
-    /// Records today, so far.
     pub today: u64,
     /// Records per day over the week before.
     pub usual: f64,
 }
 
-/// Where a signature stands in a developer's own ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Standing {
-    /// Reported, and not dealt with yet.
     Pending,
-    /// Acknowledged or expired; reported again if it is logged again.
     Resolved,
-    /// Muted on purpose: never reported again.
     Muted,
-    /// Taken in with a baseline, or dealt with before log-diff kept track of
-    /// how: never reported again.
+    /// Taken in with a baseline, or dealt with before log-diff kept track of how.
     Baseline,
 }
 
 impl Known {
-    /// Where it stands.
     pub fn standing(&self) -> Standing {
         match (self.pending, self.muted, self.resolved_at.is_some()) {
             (true, _, _) => Standing::Pending,
@@ -135,15 +101,12 @@ impl Known {
         }
     }
 
-    /// Whether it is the kind of failure a shopper sees as an error page: an
-    /// uncaught `error` or a `fatal` - which SFCC answers with a 500 - or a
-    /// record that says 500 itself.
+    /// Shows as an error page: SFCC answers an uncaught `error` or a `fatal` with a 500.
     pub fn serious(&self) -> bool {
         serious(&self.label, &self.example)
     }
 }
 
-/// See [`Known::serious`].
 pub fn serious(label: &str, example: &str) -> bool {
     let head = example.lines().next().unwrap_or_default();
     matches!(label, "error" | "fatal")
@@ -151,8 +114,6 @@ pub fn serious(label: &str, example: &str) -> bool {
         || head.contains("Internal Server Error")
 }
 
-/// Most important first: what shows as a 500, then what happened most, then
-/// what happened last.
 pub fn by_importance(left: &Known, right: &Known) -> std::cmp::Ordering {
     right
         .serious()
@@ -161,28 +122,20 @@ pub fn by_importance(left: &Known, right: &Known) -> std::cmp::Ordering {
         .then(right.last_seen.cmp(&left.last_seen))
 }
 
-/// What recording a finding in a developer's own ledger made of it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Seen {
-    /// Never seen before.
     New,
-    /// Resolved, and logged again since.
     Back,
-    /// Already pending, muted, or taken in with a baseline.
     Known,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-/// A deploy to the instance.
 pub struct Deploy {
-    /// The commit deployed.
     pub sha: String,
-    /// The CI build that deployed it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<u64>,
-    /// When it went live, RFC 3339.
+    /// RFC 3339.
     pub timestamp: String,
-    /// Signatures first seen while it was live.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub new_signatures: Vec<String>,
 }
@@ -210,7 +163,6 @@ impl Default for Ledger {
 }
 
 impl Ledger {
-    /// The ledger at `path`; an empty one when there is no file yet.
     pub fn load(path: &Path) -> Result<Ledger> {
         match std::fs::read_to_string(path) {
             Ok(raw) => {
@@ -221,7 +173,6 @@ impl Ledger {
         }
     }
 
-    /// A ledger from its JSON.
     pub fn parse(raw: &str) -> Result<Ledger> {
         let ledger: Ledger = serde_json::from_str(raw).context("not a ledger")?;
         if ledger.version > VERSION {
@@ -233,8 +184,8 @@ impl Ledger {
         Ok(ledger)
     }
 
-    /// Write the ledger whole or not at all: a watcher and a hook may be at
-    /// it at the same time, and half a file is worse than a lost update.
+    /// Whole or not at all: a watcher and a hook may write at once, and half a file is worse
+    /// than a lost update.
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path
             .parent()
@@ -252,7 +203,6 @@ impl Ledger {
             .with_context(|| format!("cannot replace {}", path.display()))
     }
 
-    /// Where the last read ended, if it was a read of this instance.
     pub fn cursor_for(&self, instance: &str) -> Option<&Mark> {
         match self.instance.as_deref() == Some(instance) {
             true => self.cursor.as_ref(),
@@ -260,26 +210,23 @@ impl Ledger {
         }
     }
 
-    /// Move the cursor, and claim it for `instance`. What it knows from now
-    /// on is signed the way this log-diff signs.
+    /// What it knows from now on is signed the way this log-diff signs.
     pub fn advance(&mut self, instance: &str, cursor: Mark) {
         self.instance = Some(instance.to_string());
         self.cursor = Some(cursor);
         self.signatures = crate::normalize::SIGNATURES;
     }
 
-    /// Whether its signatures were computed another way than this log-diff
-    /// computes them, so that what it knows would all look new.
+    /// Signed another way than this log-diff signs, so all it knows would look new.
     pub fn resigned(&self) -> bool {
         self.signatures != crate::normalize::SIGNATURES && !self.known_signatures.is_empty()
     }
 
-    /// Whether the signature is known.
     pub fn knows(&self, id: &str) -> bool {
         self.known_signatures.contains_key(id)
     }
 
-    /// Count a finding. Returns whether it was new to this ledger.
+    /// Returns whether it was new to this ledger.
     pub fn observe(&mut self, finding: &Finding, deploy: Option<&str>, pending: bool) -> bool {
         if let Some(known) = self.known_signatures.get_mut(&finding.signature.id) {
             known.count += finding.count;
@@ -311,8 +258,6 @@ impl Ledger {
         true
     }
 
-    /// Add a finding's records to the per-day counts, dropping days older
-    /// than [`DAYS_KEPT`].
     pub fn record_daily(&mut self, finding: &Finding) {
         for (day, count) in &finding.per_day {
             *self
@@ -329,10 +274,7 @@ impl Ledger {
         }
     }
 
-    /// Known signatures logged at least `min` times on `today` and `factor`
-    /// times more than on an average day of the week before, each reported
-    /// once a day. What first showed up today is new, not a spike, and what
-    /// is in `quiet` is never one.
+    /// Each reported once a day. What first showed up today is new, not a spike.
     pub fn spikes(&mut self, today: &str, min: u64, factor: f64, quiet: &[&str]) -> Vec<Spike> {
         let Some(counts) = self.daily.get(today).cloned() else {
             return Vec::new();
@@ -378,9 +320,7 @@ impl Ledger {
         spikes
     }
 
-    /// Count a finding in a developer's own ledger, where a resolved signature
-    /// logged again after it was resolved is back. With `baseline`, a new one
-    /// is taken in as known and never reported.
+    /// With `baseline`, a new one is taken in as known and never reported.
     pub fn observe_local(&mut self, finding: &Finding, baseline: bool) -> Seen {
         let Some(known) = self.known_signatures.get_mut(&finding.signature.id) else {
             self.observe(finding, None, !baseline);
@@ -394,8 +334,8 @@ impl Ledger {
         if finding.last > known.last_seen {
             known.last_seen = finding.last.clone();
         }
-        // Both moments are whole seconds, so the same second counts as after:
-        // a return missed is worse than one reported a second early.
+        // Whole seconds, so the same second counts as after: a missed return is worse than an
+        // early one.
         let returned = !known.pending
             && known
                 .resolved_at
@@ -410,9 +350,7 @@ impl Ledger {
         Seen::Back
     }
 
-    /// Resolve every pending signature last logged before `cutoff`, except
-    /// the ones in `spared`, just reported and not seen by anyone yet. Returns
-    /// how many. Only pending ones expire: what is resolved or muted stays so.
+    /// `spared`: just reported and not seen by anyone yet.
     pub fn expire(&mut self, cutoff: &str, now: &str, spared: &[&str]) -> usize {
         let mut expired = 0;
         for (id, known) in self.known_signatures.iter_mut() {
@@ -427,7 +365,6 @@ impl Ledger {
         expired
     }
 
-    /// Record a deploy going live at `at`.
     pub fn record_deploy(&mut self, sha: &str, build: Option<u64>, at: DateTime<Utc>) {
         self.deploy_log.push(Deploy {
             sha: sha.to_string(),
@@ -441,31 +378,26 @@ impl Ledger {
         self.deploy_log.drain(..excess);
     }
 
-    /// Whether a deploy of `sha` is already recorded. Short and full shas of
-    /// the same commit are the same deploy.
+    /// Short and full shas of the same commit are the same deploy.
     pub fn has_deploy(&self, sha: &str) -> bool {
         self.deploy_log
             .iter()
             .any(|deploy| deploy.sha.starts_with(sha) || sha.starts_with(&deploy.sha))
     }
 
-    /// Whether a deploy by CI build `build` is already recorded, whatever sha
-    /// it was recorded under.
     pub fn has_build(&self, build: u64) -> bool {
         self.deploy_log
             .iter()
             .any(|deploy| deploy.build == Some(build))
     }
 
-    /// The deploy that was live at `moment`: the last one to go live before it.
     pub fn deploy_at(&self, moment: &str) -> Option<usize> {
         self.deploy_log
             .iter()
             .rposition(|deploy| deploy.timestamp.as_str() <= moment)
     }
 
-    /// Signatures reported to this developer and not acknowledged, leaving
-    /// out any the team has learned about since.
+    /// Leaves out any the team has learned about since.
     pub fn pending<'a>(
         &'a self,
         team: &'a Ledger,
@@ -476,10 +408,8 @@ impl Ledger {
     }
 }
 
-/// The team's ledger, from a path or a URL. A URL is fetched with
-/// `LOG_DIFF_TOKEN` or `GITHUB_TOKEN` as a bearer token when one is set, and
-/// kept in `cache`: when it cannot be reached, the last copy is better than
-/// treating everything the team already knows as new.
+/// A fetched URL is kept in `cache`: when unreachable, the last copy beats treating everything
+/// the team knows as new.
 pub async fn load_shared(source: &str, cache: &Path) -> Result<(Ledger, Option<String>)> {
     if !source.starts_with("http://") && !source.starts_with("https://") {
         return Ok((Ledger::load(Path::new(source))?, None));
@@ -534,7 +464,6 @@ pub async fn fetch(url: &str) -> Result<String> {
     Ok(response.text().await?)
 }
 
-/// Where a developer's own ledger lives unless told otherwise.
 pub fn local_dir() -> PathBuf {
     if cfg!(windows)
         && let Ok(appdata) = std::env::var("APPDATA")

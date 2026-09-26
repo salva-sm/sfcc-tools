@@ -1,11 +1,8 @@
-//! `run` end to end, against a WebDAV server in memory.
-
 use super::*;
 use chrono::Duration;
 use sfcc_core::testing::MockDav;
 use std::path::Path;
 
-/// A ledger file of its own for each test, removed when it is done.
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -31,7 +28,6 @@ fn log_file() -> String {
     format!("Logs/error-blade1-{}.log", logs::today())
 }
 
-/// A record logged `ago` before now, failing in `script`.
 fn record(ago: Duration, script: &str, message: &str) -> String {
     let at = (Utc::now() - ago).format("%Y-%m-%d %H:%M:%S%.3f GMT");
     format!(
@@ -69,7 +65,6 @@ async fn learns_first_then_reports_what_is_new_with_the_deploy_it_came_with() {
     let config = server.config();
     let dav = Dav::new(&config).unwrap();
 
-    // What the instance already logs, today and in its archive.
     server.append(
         &log_file(),
         &record(Duration::hours(3), "old", "TypeError: known"),
@@ -91,7 +86,6 @@ async fn learns_first_then_reports_what_is_new_with_the_deploy_it_came_with() {
     assert!(first.report.is_empty());
     assert_eq!(first.known, 2, "today's log and the archive");
 
-    // Two deploys; the second one breaks something.
     let deploy = |sha: &str, build: u64, ago: Duration| RunOptions {
         sha: Some(sha.to_string()),
         build: Some(build),
@@ -152,7 +146,6 @@ async fn learns_first_then_reports_what_is_new_with_the_deploy_it_came_with() {
     );
     assert_eq!(Report::load(&report_path).unwrap().new.len(), 1);
 
-    // Nothing written since: nothing read twice, nothing new.
     let third = run(&config, &dav, &options(&state)).await.unwrap();
     assert!(third.report.is_empty());
     let ledger = Ledger::load(&state).unwrap();
@@ -220,7 +213,7 @@ async fn signatures_computed_another_way_are_learned_again_without_a_word() {
     );
     run(&config, &dav, &options(&state)).await.unwrap();
 
-    // As if the ledger had been written by a log-diff that signed otherwise.
+    // As if written by a log-diff that signed otherwise.
     let mut ledger = Ledger::load(&state).unwrap();
     ledger.signatures = crate::normalize::SIGNATURES + 1;
     ledger.save(&state).unwrap();

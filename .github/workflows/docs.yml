@@ -1,7 +1,5 @@
 name: Docs
 
-# `cargo doc` is the reference for the language server's internals; publishing
-# it means a reader never has to clone the repository to read one.
 on:
   push:
     branches: [main]
@@ -23,15 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # `-D warnings` keeps a broken intra-doc link from shipping as a dead
-      # link on the published site.
+      # Keeps a broken intra-doc link from shipping.
       - name: Build the documentation
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --lib -p isml-lsp
 
-      # Pages serves the directory root, and rustdoc puts the crate one level
-      # down; without this the site opens on a file listing.
+      # rustdoc puts the crate one level down; without this Pages opens on a file listing.
       - name: Redirect the root to the crate
         run: echo '<meta http-equiv="refresh" content="0;url=isml_lsp/index.html">' > target/doc/index.html
 

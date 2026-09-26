@@ -1,10 +1,4 @@
-//! Which `server.append` actually runs.
-//!
-//! An SFRA route is assembled from every cartridge in the path that declares
-//! it, and nothing in the file says who else touches it. A `replace` three
-//! cartridges to the left silently discards the handler being edited, and a
-//! controller that does not extend its `module.superModule` discards the whole
-//! file to its right. Both are invisible while reading one file.
+//! SFRA route override chains: a `replace` to the left, or a missing `superModule` extend, silently discards handlers.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -13,12 +7,9 @@ use std::path::{Path, PathBuf};
 use crate::cartridgepath::CartridgePath;
 use crate::workspace::Cartridge;
 
-/// How a cartridge touches a route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb {
-    /// Defines the route for a GET.
     Get,
-    /// Defines the route for a POST.
     Post,
     /// Adds middleware to every request for the route.
     Use,
@@ -43,7 +34,6 @@ impl Verb {
         }
     }
 
-    /// The verb as it is written in the source.
     pub fn label(self) -> &'static str {
         match self {
             Verb::Get => "get",
@@ -55,43 +45,33 @@ impl Verb {
         }
     }
 
-    /// `replace` discards whatever the cartridges to its right defined.
     fn discards_the_rest(self) -> bool {
         matches!(self, Verb::Replace)
     }
 }
 
-/// One `server.<verb>('Route', ...)` in a controller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Declaration {
-    /// The route name.
     pub route: String,
-    /// What the call does to it.
     pub verb: Verb,
-    /// Zero-based line of the call.
+    /// Zero-based.
     pub line: u32,
 }
 
-/// One controller, in one cartridge.
 #[derive(Debug, Clone)]
 pub struct ControllerFile {
-    /// The cartridge holding it.
     pub cartridge: String,
-    /// The controller name, which is the file stem.
+    /// The file stem.
     pub controller: String,
-    /// Where the file is.
     pub path: PathBuf,
     /// False when the file never calls `server.extend(module.superModule)`,
     /// which cuts the chain: nothing to its right is loaded at all.
     pub extends: bool,
-    /// Every route the file declares.
     pub declarations: Vec<Declaration>,
 }
 
-/// Whether a request ever reaches a declaration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Effect {
-    /// It is part of the chain a request runs.
     Runs,
     /// Reached by no request: replaced, or in a file the chain never loads.
     Shadowed,
@@ -101,30 +81,23 @@ pub enum Effect {
     Unknown,
 }
 
-/// One declaration, placed in the chain and judged.
 #[derive(Debug, Clone)]
 pub struct Link {
-    /// The cartridge it is in.
     pub cartridge: String,
-    /// What it does to the route.
     pub verb: Verb,
-    /// The controller file.
     pub path: PathBuf,
-    /// Zero-based line of the declaration.
+    /// Zero-based.
     pub line: u32,
-    /// Whether a request reaches it.
     pub effect: Effect,
 }
 
-/// Every controller in the workspace, indexed by nothing in particular —
-/// the questions asked of it are few and the set is small.
+/// Unindexed: the set is small and the questions few.
 #[derive(Debug, Default)]
 pub struct Controllers {
     files: Vec<ControllerFile>,
 }
 
 impl Controllers {
-    /// Read every controller of every cartridge.
     pub fn scan(cartridges: &[Cartridge]) -> Controllers {
         let mut files = Vec::new();
         for cartridge in cartridges {
@@ -145,7 +118,6 @@ impl Controllers {
         Controllers { files }
     }
 
-    /// Every route the index knows for a controller, sorted.
     pub fn routes_of(&self, controller: &str) -> BTreeSet<&str> {
         self.files
             .iter()
@@ -154,8 +126,7 @@ impl Controllers {
             .collect()
     }
 
-    /// The chain for one route, leftmost cartridge first, each link marked
-    /// with whether a request ever reaches it.
+    /// Leftmost cartridge first, each link judged by whether a request reaches it.
     pub fn chain(&self, route: &Route, path: Option<&CartridgePath>) -> Vec<Link> {
         let mut ranked: Vec<(Option<usize>, &ControllerFile)> = self
             .files
@@ -210,17 +181,13 @@ impl ControllerFile {
 }
 
 /// A route, as SFRA names it: `Account-Show`.
-/// A route, as SFRA names it: `Account-Show`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
-    /// The controller half.
     pub controller: String,
-    /// The action half.
     pub name: String,
 }
 
 impl Route {
-    /// The two halves joined the way a URL writes them.
     pub fn endpoint(&self) -> String {
         format!("{}-{}", self.controller, self.name)
     }
@@ -238,18 +205,13 @@ fn read_controller(path: &Path, cartridge: &str) -> Option<ControllerFile> {
     })
 }
 
-/// Both idioms the codebase uses: `server.extend(module.superModule)`, and the
-/// two-step `var page = module.superModule; server.extend(page);` — which is
-/// the more common of the two.
-/// Whether a controller chains to the one to its right. A file that does
-/// not cuts the chain: nothing further right is loaded at all.
+/// Whether a controller chains to the one to its right; a file that does not cuts the chain.
+/// Covers `server.extend(module.superModule)` and the more common `var page = module.superModule; server.extend(page);`.
 pub fn extends_super_module(source: &str) -> bool {
     source.contains("server.extend(") && source.contains("module.superModule")
 }
 
-/// Every `server.<verb>('Route', ...)` in the file. The route often sits on
-/// the line below the call — that is how `app_storefront_base` writes them —
-/// so this scans the source rather than each line on its own.
+/// Scans the whole source, not line by line: the route often sits on the line below the call.
 pub fn declarations(source: &str) -> Vec<Declaration> {
     const CALL: &str = "server.";
     let mut found = Vec::new();

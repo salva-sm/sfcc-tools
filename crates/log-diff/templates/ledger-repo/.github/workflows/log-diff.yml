@@ -1,16 +1,13 @@
-# Read DEV, STG and PRD, keep their ledgers, tell Teams.
-#
-# Every 30 minutes on working days, and by hand. Deploys are learned from each
-# instance's code versions, so nothing has to call this workflow; a
-# repository_dispatch from the pipeline (Jenkins now, GitHub Actions later)
-# is optional and only makes a deploy's commit exact. Setup: README.md.
+# Read DEV, STG and PRD, keep their ledgers, tell Teams. Setup: README.md.
+# Deploys are learned from each instance's code versions; a repository_dispatch
+# from the pipeline is optional and only makes a deploy's commit exact.
 name: log-diff
 
 on:
   schedule:
-    # Every 30 minutes through the working day, Monday to Friday (UTC).
+    # Every 30 minutes, 06:00-19:59 UTC, Monday to Friday.
     - cron: "*/30 6-19 * * 1-5"
-  # Optional: the deploy pipeline announcing a deploy.
+  # Optional, from the deploy pipeline:
   #   { "event_type": "sfcc-deploy",
   #     "client_payload": { "environment": "dev", "sha": "...", "build_number": 4821,
   #                         "deployed_at": "2026-09-25T10:00:00Z" } }

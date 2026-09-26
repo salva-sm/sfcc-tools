@@ -1,6 +1,5 @@
-// Copy into the SFCC project as .zed/tasks.json, then start it from the
-// command palette ("task: spawn" -> "log-diff: watch"). Its output is a
-// terminal like any other: the paths in it open with a click.
+// Copy into the SFCC project as .zed/tasks.json; start it with
+// "task: spawn" -> "log-diff: watch".
 [
   {
     "label": "log-diff: watch",

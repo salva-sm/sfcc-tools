@@ -362,7 +362,7 @@ async fn run(cli: Cli) -> Result<()> {
             };
             start_detached(&config, spawn)
         }
-        // Handled before dw.json was read, above.
+        // Handled above, before dw.json.
         Command::Stop(_) => Ok(()),
         Command::Status => report_status(config, jobs).await,
         Command::Activity(args) => print_logs(&config, &args),
@@ -386,7 +386,7 @@ async fn run(cli: Cli) -> Result<()> {
             };
             tail::follow(&ctx, options).await
         }
-        // Printed before dw.json was read, above.
+        // Handled above, before dw.json.
         Command::Completions(_) => Ok(()),
         Command::Errors(args) => {
             let ctx = Ctx::new(config, jobs)?;
@@ -397,8 +397,7 @@ async fn run(cli: Cli) -> Result<()> {
 
             let options = errors::ReportOptions { levels };
             if errors::report(&ctx, options).await? {
-                // Not a failure of the command, so it cannot travel as an Err:
-                // it is the answer, and it makes the command chainable.
+                // New errors are the answer, not a failure: exit 1 without an Err, so it chains.
                 std::process::exit(1);
             }
             Ok(())
@@ -524,7 +523,6 @@ fn stop(cli: &Cli, all: bool) -> Result<()> {
     Ok(())
 }
 
-/// What a watcher found without its dw.json watches, as far as is known.
 fn name(watcher: &daemon::Running) -> String {
     watcher
         .description

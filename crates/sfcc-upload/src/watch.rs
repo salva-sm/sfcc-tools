@@ -23,8 +23,7 @@ const DRAIN_BURST: Duration = Duration::from_millis(500);
 const DRAIN_CAP: Duration = Duration::from_secs(3);
 const BURST_PATHS: usize = 25;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
-// After a failed upload the sandbox is probed again after this, doubling up
-// to RETRY_MAX while it stays away; a save probes it at once.
+// After a failure: probe after this, doubling up to RETRY_MAX; a save probes at once.
 const RETRY_FIRST: Duration = Duration::from_secs(10);
 const RETRY_MAX: Duration = Duration::from_secs(60);
 
@@ -128,7 +127,6 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
     }
 }
 
-/// When the queued changes are tried again, and how long the wait was.
 #[derive(Clone, Copy)]
 struct Retry {
     at: tokio::time::Instant,
@@ -152,8 +150,6 @@ async fn sleep_until(due: Option<tokio::time::Instant>) {
     }
 }
 
-/// Upload what is pending. On failure it stays pending, the editor and the
-/// console say so, and a retry is scheduled.
 async fn attempt(
     ctx: &Ctx,
     manifest: &mut Manifest,
@@ -178,8 +174,6 @@ async fn attempt(
     }
 }
 
-/// With changes queued behind a failure: probe the sandbox, and upload them
-/// only once it answers.
 async fn retry_queued(
     ctx: &Ctx,
     manifest: &mut Manifest,
@@ -257,14 +251,12 @@ async fn synchronize(
     }
 
     let outcome = transfer(ctx, manifest, work).await;
-    // Saved on failure too, so the files the transfer forgot stay forgotten
-    // when the watcher is stopped before the next sync.
+    // Saved on failure too, so forgotten files stay forgotten if the watcher stops now.
     manifest.save(&ctx.manifest_path)?;
     outcome
 }
 
-/// Send the work; an error when any of it did not reach the sandbox. What
-/// did is recorded either way, so sending the batch again sends only the rest.
+/// What did reach the sandbox is recorded even on error, so a resend sends only the rest.
 async fn transfer(ctx: &Ctx, manifest: &mut Manifest, work: Work) -> Result<Vec<String>> {
     let mut sent = Vec::new();
     let mut failed = 0;

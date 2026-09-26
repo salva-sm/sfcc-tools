@@ -1,9 +1,5 @@
-//! Terminal output: one timestamped line per event, grouped file lists, colour
-//! when a terminal is listening.
-//!
-//! Colour is decided once per process and read from everywhere, so the detached
-//! watcher - whose stdout is a log file - writes plain text without any caller
-//! having to know about it.
+//! Colour is decided once per process, so the detached watcher (stdout is a log
+//! file) writes plain text without any caller knowing.
 
 use chrono::Local;
 use std::io::IsTerminal;
@@ -19,20 +15,15 @@ pub const LINK: &str = "\x1b[1;36m";
 
 /// Width of `[HH:MM:SS] `, where continuation lines start.
 const STAMP_WIDTH: usize = 11;
-/// Indent of the folders under a cartridge.
 const FOLDER_INDENT: usize = STAMP_WIDTH + 2;
 /// Longest folder still worth aligning the file names against.
 const FOLDER_COLUMN: usize = 46;
-/// Room for the file names once the folder column is taken.
 const NAMES_WIDTH: usize = 72;
-/// Folders listed before the rest collapses into a count.
 const MAX_FOLDERS: usize = 15;
-/// File names listed per folder before the rest collapses into a count.
 const MAX_NAMES: usize = 10;
 
 static COLOR: OnceLock<bool> = OnceLock::new();
 
-/// What a batch of paths did, which decides the marker and the tone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Change {
     Uploaded,
@@ -83,8 +74,7 @@ pub fn color_enabled() -> bool {
     *COLOR.get_or_init(|| wants_color("auto"))
 }
 
-/// Pin the output to plain text, so a test of the layout reads the same whether
-/// it runs in a terminal or in a pipe.
+/// Plain text, so layout tests read the same in a terminal or a pipe.
 #[cfg(test)]
 pub fn no_color_in_tests() {
     let _ = COLOR.set(false);
@@ -137,13 +127,11 @@ pub fn error(message: impl AsRef<str>) {
     );
 }
 
-/// A batch of uploads or deletions, grouped by cartridge and folder.
 pub fn changes(change: Change, paths: &[String]) {
     print(change, paths, true);
 }
 
-/// The same grouping without the headline, for a caller that already said what
-/// the list is - `push --dry-run`, which announces the counts and the size.
+/// Without the headline, for `push --dry-run`, which announces the counts itself.
 pub fn listing(change: Change, paths: &[String]) {
     print(change, paths, false);
 }
@@ -168,7 +156,6 @@ fn prefix() -> String {
     paint(DIM, &format!("[{}]", stamp()))
 }
 
-/// The whole block as lines, so the layout can be tested without a terminal.
 fn render(change: Change, paths: &[String], headline: bool) -> Vec<String> {
     if paths.is_empty() {
         return Vec::new();
@@ -343,8 +330,7 @@ fn bundle(paths: &[String]) -> Vec<Bundle> {
     bundles
 }
 
-/// `a/b/c.js` -> (`a/b`, `c.js`). A file sitting at the root of a cartridge
-/// lands in `.`.
+/// `a/b/c.js` -> (`a/b`, `c.js`); a file at the cartridge root lands in `.`.
 fn split_last(path: &str) -> (&str, &str) {
     match path.rsplit_once('/') {
         Some((folder, name)) => (folder, name),

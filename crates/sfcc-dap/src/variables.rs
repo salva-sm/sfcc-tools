@@ -1,12 +1,6 @@
-//! Which variables are worth showing, and how to render one.
-
-/// The globals the platform injects, in the order they are worth reading.
-///
-/// `dw` is left out on purpose: it is the whole API namespace, and expanding
-/// it is never what anyone wanted.
+/// `dw` is left out on purpose: it is the whole API namespace.
 pub const SFCC_GLOBALS: [&str; 6] = ["pdict", "request", "session", "customer", "response", "out"];
 
-/// What the engine puts on every object and nobody ever reads.
 const ENGINE_MEMBERS: [&str; 12] = [
     "constructor",
     "prototype",
@@ -22,14 +16,9 @@ const ENGINE_MEMBERS: [&str; 12] = [
     "class",
 ];
 
-/// Anything longer than this is a wall, not a value.
 const SUMMARY: usize = 240;
 
-/// Whether a member earns its line in the variables pane.
-///
-/// Engine members are hidden everywhere; methods only inside an expanded
-/// object, where a dw class contributes sixty of them. A local that happens
-/// to hold a function is a real local and stays.
+/// Methods are hidden only inside an object; a local holding a function stays.
 pub fn worth_showing(name: &str, kind: Option<&str>, inside_object: bool) -> bool {
     if name.starts_with("__") || ENGINE_MEMBERS.contains(&name) {
         return false;
@@ -37,7 +26,6 @@ pub fn worth_showing(name: &str, kind: Option<&str>, inside_object: bool) -> boo
     !(inside_object && kind.is_some_and(|kind| kind.eq_ignore_ascii_case("function")))
 }
 
-/// Whether a value is worth offering an expand arrow for.
 pub fn looks_like_an_object(value: &str, kind: Option<&str>) -> bool {
     if kind.is_some_and(|kind| kind.eq_ignore_ascii_case("function")) {
         return false;
@@ -45,7 +33,6 @@ pub fn looks_like_an_object(value: &str, kind: Option<&str>) -> bool {
     value.starts_with("[object ") || kind.is_some_and(|kind| kind.contains('.'))
 }
 
-/// Collapse a value onto one line, and cut it where it stops being useful.
 pub fn one_line(text: &str) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= SUMMARY {

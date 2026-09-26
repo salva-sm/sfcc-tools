@@ -1,19 +1,10 @@
-//! Reading `x.custom.y` and `getCustomPreferenceValue('y')` out of a line, and
-//! guessing which object type `x` stands for.
-//!
-//! SFCC script is untyped, so the type is inferred from the variable name. The
-//! table is deliberately conservative in two ways: a receiver it does not
-//! recognise yields nothing at all, and a name that could be either of two
-//! types yields both, because a wrong storefront would report a real attribute as a
-//! typo.
+//! `x.custom.y` and preference reads, with the type of `x` guessed from its name.
+//! Conservative: an unknown receiver yields nothing, an ambiguous one yields every candidate type.
 
 use crate::metadata::SITE_PREFERENCES;
 
-/// The getter that reads a site preference, which names one the way a
-/// `.custom.` access names an attribute.
 pub const PREFERENCE_CALL: &str = "getCustomPreferenceValue";
 
-/// Members of the custom object that are JavaScript, not metadata.
 const NOT_ATTRIBUTES: [&str; 7] = [
     "hasOwnProperty",
     "isPrototypeOf",
@@ -24,9 +15,8 @@ const NOT_ATTRIBUTES: [&str; 7] = [
     "constructor",
 ];
 
-/// Suffixes of a variable name, longest first, and the object types they may
-/// stand for. Several means the name does not decide: `paymentInstrument` is
-/// an order's or a customer's, and only the surrounding code knows which.
+/// Variable-name suffixes, longest first, and the types they may stand for.
+/// Several means the name does not decide: `paymentInstrument` is an order's or a customer's.
 const SUBJECTS: &[(&str, &[&str])] = &[
     ("bonusdiscountlineitem", &["BonusDiscountLineItem"]),
     ("giftcertificatelineitem", &["GiftCertificateLineItem"]),
@@ -74,28 +64,21 @@ const SUBJECTS: &[(&str, &[&str])] = &[
     ("cart", &["Basket"]),
 ];
 
-/// A completed `x.custom.y`, with where `y` sits in the line.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Access {
-    /// The object types the receiver could stand for.
     pub types: &'static [&'static str],
-    /// The attribute named after the dot.
     pub attribute: String,
     /// Character offset of the attribute name.
     pub start: usize,
 }
 
-/// A `.custom.` the cursor is sitting behind, still being typed.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Pending {
-    /// The object types the receiver could stand for.
     pub types: &'static [&'static str],
     /// Characters of the attribute name already typed.
     pub typed: usize,
 }
 
-/// The object types a variable name may stand for, or `None` when the name
-/// decides nothing.
 pub fn types_of(receiver: &str) -> Option<&'static [&'static str]> {
     let lowered = receiver.to_ascii_lowercase();
     SUBJECTS
@@ -104,7 +87,6 @@ pub fn types_of(receiver: &str) -> Option<&'static [&'static str]> {
         .map(|(_, types)| *types)
 }
 
-/// Every resolvable `x.custom.y` in the line.
 pub fn accesses(line: &str) -> Vec<Access> {
     let chars: Vec<char> = line.chars().collect();
     let mut found = Vec::new();
@@ -133,7 +115,6 @@ pub fn accesses(line: &str) -> Vec<Access> {
     found
 }
 
-/// The `.custom.` access being typed at the end of `head`, if any.
 pub fn pending(head: &str) -> Option<Pending> {
     let chars: Vec<char> = head.chars().collect();
     let typed = trailing_identifier_len(&chars);
@@ -147,8 +128,6 @@ pub fn pending(head: &str) -> Option<Pending> {
     Some(Pending { types, typed })
 }
 
-/// Every `getCustomPreferenceValue('id')` in the line, as an access on the
-/// site preferences type.
 pub fn preferences(line: &str) -> Vec<Access> {
     let chars: Vec<char> = line.chars().collect();
     let mut found = Vec::new();
@@ -173,7 +152,6 @@ pub fn preferences(line: &str) -> Vec<Access> {
 
 const SITE_PREFERENCE_TYPES: &[&str] = &[SITE_PREFERENCES];
 
-/// True when the cursor sits inside the string argument of a preference call.
 pub fn is_pending_preference(head: &str) -> bool {
     let Some(quote) = head.rfind(['\'', '"']) else {
         return false;
@@ -184,9 +162,7 @@ pub fn is_pending_preference(head: &str) -> bool {
         .is_some_and(|call| call.trim_end().ends_with(PREFERENCE_CALL))
 }
 
-/// Names that exist at runtime without being declared in the metadata: the
-/// members every JavaScript object carries, and what the platform injects
-/// under a double underscore.
+/// Present at runtime without metadata: plain JS object members and platform `__` injections.
 fn is_not_an_attribute(name: &str) -> bool {
     name.starts_with("__") || NOT_ATTRIBUTES.contains(&name)
 }
@@ -196,9 +172,7 @@ struct Literal {
     start: usize,
 }
 
-/// The quoted literal that is the *whole* argument at or after `from`. A
-/// literal being concatenated — `'logo_' + locale` — names no single
-/// preference, so it is not one.
+/// The quoted literal that is the *whole* argument at `from`; a concatenated one names no single preference.
 fn whole_argument(chars: &[char], from: usize) -> Option<Literal> {
     let mut index = from;
     while index < chars.len() && (chars[index].is_whitespace() || chars[index] == '(') {

@@ -1,9 +1,3 @@
-//! A Jira ticket for a signature, with what the ledger knows about it, so the
-//! person picking it up starts from the failure rather than from a link.
-//!
-//! Jira Cloud's REST API, authenticated with an account's email and an API
-//! token: `JIRA_URL`, `JIRA_EMAIL` and `JIRA_API_TOKEN`.
-
 use crate::ledger::Known;
 use crate::notify::headline;
 use crate::team::Ticket;
@@ -11,22 +5,16 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::time::Duration;
 
-/// Where the ticket goes.
+/// Jira Cloud: basic auth with an account's email and API token.
 pub struct Target {
-    /// `https://acme.atlassian.net`.
     pub url: String,
-    /// The account creating it.
     pub email: String,
-    /// Its API token.
     pub token: String,
-    /// The project key.
     pub project: String,
-    /// The issue type: Bug, Task...
     pub kind: String,
 }
 
 impl Target {
-    /// The site and credentials from the environment; the project and type as given.
     pub fn from_env(project: String, kind: String) -> Result<Target> {
         let var = |name: &str| {
             std::env::var(name)
@@ -44,8 +32,7 @@ impl Target {
     }
 }
 
-/// The issue to create: a summary line, and a description in Atlassian
-/// Document Format - the failure, where, how often, and the scrubbed example.
+/// The description is in Atlassian Document Format.
 pub fn issue(
     target: &Target,
     id: &str,
@@ -87,7 +74,6 @@ pub fn issue(
     }})
 }
 
-/// Create the issue, and return what to remember of it.
 pub async fn create(target: &Target, issue: &Value) -> Result<Ticket> {
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))

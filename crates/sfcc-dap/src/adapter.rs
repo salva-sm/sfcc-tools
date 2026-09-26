@@ -1,8 +1,4 @@
-//! The adapter: what the editor asks for, turned into API calls.
-//!
-//! Two things run at once. The main loop answers requests; a background
-//! thread polls the instance, because nothing there tells us a breakpoint
-//! was hit — see [`sdapi`](crate::sdapi).
+//! Requests are answered on the main loop; a background thread polls for halts.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -18,41 +14,33 @@ use crate::protocol::{Request, Writer};
 use crate::sdapi::{Breakpoint, Session, Variable};
 use crate::variables;
 
-/// How often to ask the instance whether anything halted.
 const POLL: Duration = Duration::from_millis(600);
-/// Frame ids have to be one number; this packs a thread and a frame index.
+/// Frame ids are one number: thread * stride + frame index.
 const FRAME_STRIDE: i64 = 1000;
 
-/// What a `variablesReference` stands for.
 #[derive(Debug, Clone)]
 struct Handle {
     thread: u32,
     frame: usize,
-    /// `None` for the frame's own variables, otherwise the object to expand.
     object: Option<String>,
-    /// The synthetic scope holding the platform globals.
     globals: bool,
 }
 
-/// One editor session.
 pub struct Adapter {
     session: Arc<Session>,
     paths: Paths,
     writer: Writer,
     handles: Mutex<BTreeMap<i64, Handle>>,
     next_handle: Mutex<i64>,
-    /// Breakpoints by source file, so one file's edit replaces only its own.
+    /// So one file's edit replaces only its own breakpoints.
     by_source: Mutex<BTreeMap<String, Vec<Breakpoint>>>,
     raw_variables: AtomicBool,
     stop: Arc<AtomicBool>,
-    /// The `dw.json` this session was given, for the log follower.
     config: PathBuf,
-    /// Held for as long as the session lasts; dropping it stops the follower.
     logs: Mutex<Option<Logs>>,
 }
 
 impl Adapter {
-    /// Attach to an instance the configuration already resolved.
     pub fn new(session: Session, cartridges: PathBuf, config: PathBuf, writer: Writer) -> Adapter {
         Adapter {
             session: Arc::new(session),
@@ -68,7 +56,7 @@ impl Adapter {
         }
     }
 
-    /// Answer one request. `false` means the session is over.
+    /// `false` means the session is over.
     pub fn handle(&self, request: &Request) -> bool {
         match request.command.as_str() {
             "initialize" => self.initialize(request),
@@ -120,8 +108,6 @@ impl Adapter {
         self.watch();
     }
 
-    /// The error that did *not* stop at a breakpoint shows up in the sandbox
-    /// log, so it belongs in the same window.
     fn follow_logs(&self, request: &Request) {
         if request.argument("logs") == &Value::Bool(false) {
             return;
@@ -133,7 +119,6 @@ impl Adapter {
         }
     }
 
-    /// Poll for a halted thread and announce it once, until disconnect.
     fn watch(&self) {
         let session = Arc::clone(&self.session);
         let writer = self.writer.clone();
@@ -204,8 +189,7 @@ impl Adapter {
             })
             .unwrap_or_default();
 
-        // The API replaces the whole set at once, so every file's points go
-        // up together or the others would be dropped.
+        // The API replaces the whole set, so every file's points go up together.
         let all = {
             let Ok(mut by_source) = self.by_source.lock() else {
                 return self.writer.fail(request, "internal state is poisoned");
@@ -294,8 +278,7 @@ impl Adapter {
         );
     }
 
-    /// A stack crossing four cartridges reads as four unrelated files unless
-    /// each frame says which one it is in, and which others hold the same.
+    /// Names the cartridge, and others holding the same file, or a stack reads as unrelated files.
     fn frame_name(&self, function: Option<&str>, script: &str) -> String {
         let name = function.unwrap_or("(anonymous)");
         let Some(cartridge) = Paths::cartridge_of(script) else {
@@ -311,9 +294,7 @@ impl Adapter {
         let Some((thread, frame)) = request.number("frameId").map(split_frame) else {
             return self.writer.respond(request, json!({ "scopes": [] }));
         };
-        // SFCC first: `pdict`, `request` and `session` are platform globals,
-        // in neither the local nor the closure scope, so without this they
-        // mean typing into the watch box at every breakpoint.
+        // `pdict`, `request` and `session` are in neither the local nor the closure scope.
         self.writer.respond(
             request,
             json!({
@@ -357,8 +338,7 @@ impl Adapter {
             .collect()
     }
 
-    /// The platform globals, probed one by one: a frame that does not have
-    /// one simply does not list it.
+    /// Probed one by one: a frame without one simply does not list it.
     fn globals(&self, handle: &Handle) -> Vec<Value> {
         variables::SFCC_GLOBALS
             .iter()
@@ -485,7 +465,6 @@ impl Adapter {
         self.handles.lock().ok()?.get(&reference).cloned()
     }
 
-    /// Once execution moves, every reference into the old stack is stale.
     fn forget_handles(&self) {
         if let Ok(mut handles) = self.handles.lock() {
             handles.clear();
@@ -493,7 +472,6 @@ impl Adapter {
     }
 }
 
-/// The inverse of the packing [`Adapter::stack_trace`] does.
 fn split_frame(id: i64) -> (u32, usize) {
     ((id / FRAME_STRIDE) as u32, (id % FRAME_STRIDE) as usize)
 }

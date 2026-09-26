@@ -1,5 +1,3 @@
-//! The language server itself: the request loop and every handler.
-
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -23,7 +21,6 @@ use crate::metadata::Metadata;
 use crate::workspace::Workspace;
 use crate::{diagnose, errors, hover, reference, resolve, sync, validate};
 
-/// Serve one editor session over stdio, until it disconnects.
 pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
 
@@ -55,7 +52,6 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
     Ok(())
 }
 
-/// One editor session: the open documents, and the indexes answers come from.
 pub struct Server {
     workspace: Workspace,
     metadata: Metadata,
@@ -151,8 +147,6 @@ impl Server {
         })
     }
 
-    /// What a reference under the cursor is worth saying: the override chain
-    /// of a route, or what an API class is for.
     fn reference_hover(&self, uri: &Url, position: Position, file: &Path) -> Option<String> {
         let reference = self.reference_at(uri, position)?;
         if let Some(text) = hover::module_markdown(&reference) {
@@ -163,7 +157,6 @@ impl Server {
         hover::markdown(&route, &chains, file)
     }
 
-    /// The SFCC reference under a position, shared by hover and definition.
     fn reference_at(&self, uri: &Url, position: Position) -> Option<reference::Reference> {
         let text = self.documents.get(uri)?;
         let line = text.lines().nth(position.line as usize)?;
@@ -187,8 +180,7 @@ impl Server {
         ))
     }
 
-    /// Each check answers for the file types it recognises and stays quiet
-    /// for the rest, so a document only ever gets the one that applies.
+    /// Each check answers only for the file types it recognises.
     fn check(&self, uri: &Url, text: &str) -> Vec<lsp_types::Diagnostic> {
         // `.custom.` is script, so a JSON description that happens to mention
         // one is prose, not an access.
@@ -221,8 +213,7 @@ impl Server {
         (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
     }
 
-    /// The document whose diagnostics are now stale, if the notification
-    /// changed one.
+    /// The document whose diagnostics are now stale, if any.
     fn apply(&mut self, notification: lsp_server::Notification) -> Option<Url> {
         match notification.method.as_str() {
             DidOpenTextDocument::METHOD => {
@@ -284,9 +275,7 @@ fn char_offset(line: &str, utf16_column: usize) -> usize {
     line.chars().count()
 }
 
-/// Character offset of a line/column position into the whole document.
-/// Split on `\n` rather than `lines()`, so a CRLF file does not drift by one
-/// character per line.
+/// Split on `\n` rather than `lines()`, so a CRLF file does not drift by one char per line.
 fn char_offset_at(text: &str, position: Position) -> Option<usize> {
     let mut offset = 0;
     for (number, line) in text.split('\n').enumerate() {

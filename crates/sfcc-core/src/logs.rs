@@ -1,10 +1,4 @@
-//! The instance log, read over WebDAV: records, a mark, and what was written
-//! since it.
-//!
-//! The uploader follows the log and answers "what did my change throw?"; the
-//! log differ compares it against what is already known. Both need the same
-//! two things - remember where the log ends right now, and later read only
-//! what came after - so that lives here, and neither runs the other.
+//! The instance log over WebDAV: a mark, and the records written since.
 
 use crate::webdav::{Dav, encode_path};
 use anyhow::{Context, Result};
@@ -13,29 +7,21 @@ use futures::stream::{self, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// The levels worth reading when nobody says otherwise.
 pub const DEFAULT_LEVELS: &str = "error,customerror,custom";
 
-/// How many log files are read at once. An instance keeps one file per level
-/// and app server a day, and reading them one after another is most of the
-/// time a read takes; more at once would only be the instance's to throttle.
+/// One file per level, app server and day; more at once would only be throttled.
 const READS_AT_ONCE: usize = 6;
 
-/// One record of a log file: the line carrying its timestamp, and every line
-/// after it up to the next one - a stack trace, a request dump.
+/// A timestamped line and every line up to the next one: a stack trace, a request dump.
 #[derive(Debug, Clone)]
 pub struct Entry {
-    /// The level, as the file name spells it: `error`, `customerror`...
     pub label: String,
-    /// The record's timestamp as written, `2026-09-09 07:26:29.103 GMT`, or
-    /// empty for lines that arrived without one.
+    /// `2026-09-09 07:26:29.103 GMT`, or empty for lines that arrived without one.
     pub moment: String,
-    /// Every line of the record, the first one included.
     pub lines: Vec<String>,
 }
 
 impl Entry {
-    /// The record's timestamp, when it has one that parses.
     pub fn moment_utc(&self) -> Option<chrono::DateTime<Utc>> {
         let bare = self.moment.trim_end_matches(" GMT");
         NaiveDateTime::parse_from_str(bare, "%Y-%m-%d %H:%M:%S%.f")
@@ -44,30 +30,23 @@ impl Entry {
     }
 }
 
-/// Where the log ended at some moment: the length of every file of the
-/// wanted levels. Reading from here on is reading what came after.
+/// Where the log ended at some moment: the length of every file of the wanted levels.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Mark {
-    /// When the mark was taken, RFC 3339 in UTC.
     pub taken: String,
-    /// The day the offsets belong to, `YYYYMMDD`. Files of this day and the
-    /// days after it are read; the ones before are finished history.
+    /// `YYYYMMDD`; files of earlier days are finished history and not read.
     #[serde(default)]
     pub day: String,
-    /// Log file name -> its length in bytes at that moment. Sorted, so a mark
-    /// kept under version control changes only where the log did.
+    /// Sorted, so a mark kept under version control changes only where the log did.
     pub offsets: BTreeMap<String, u64>,
 }
 
 impl Mark {
-    /// The start of today: every record written today counts as new.
     pub fn start_of_today() -> Mark {
         Mark::days_back(0)
     }
 
-    /// The start of the day `days` before today: every record the instance
-    /// still keeps from then on counts as new. Older files may be gone, or
-    /// moved to `log_archive`, which is not read.
+    /// Older files may be gone, or moved to `log_archive`, which is not read.
     pub fn days_back(days: u32) -> Mark {
         let day = Utc::now() - Duration::days(i64::from(days));
         Mark {
@@ -78,16 +57,12 @@ impl Mark {
     }
 }
 
-/// What [`since`] found, and where the next read should start.
 #[derive(Debug)]
 pub struct Since {
-    /// The records written after the mark, oldest first.
     pub entries: Vec<Entry>,
-    /// A mark just past everything read.
     pub next: Mark,
 }
 
-/// Remember how long each of today's log files of the wanted levels is.
 pub async fn mark(dav: &Dav, levels: &[String]) -> Result<Mark> {
     let day = today();
     let offsets = listing(dav)
@@ -103,12 +78,8 @@ pub async fn mark(dav: &Dav, levels: &[String]) -> Result<Mark> {
     })
 }
 
-/// Everything written after `mark` to the files of the wanted levels, and a
-/// mark past it.
-///
-/// A file the mark does not know was opened after it, so all of it counts;
-/// one shorter than its offset was rotated, and is read from its start. A
-/// trailing line still being written is left for the next read.
+/// A file the mark does not know counts whole; one shorter than its offset was
+/// rotated. A trailing line still being written is left for the next read.
 pub async fn since(dav: &Dav, mark: &Mark, levels: &[String]) -> Result<Since> {
     let today = today();
     let first_day = match mark.day.is_empty() {
@@ -173,11 +144,8 @@ pub async fn since(dav: &Dav, mark: &Mark, levels: &[String]) -> Result<Since> {
     })
 }
 
-/// The records of the wanted levels in `log_archive`, from `first_day` on -
-/// the days the instance has already compressed and moved out of the log
-/// folder. A day still in the log folder is left to [`since`], so nothing is
-/// read twice. The archive is read whole, which is only worth it once: for a
-/// baseline, not on every run.
+/// Days still in the log folder are left to [`since`]. Reads the archive whole:
+/// for a baseline, not every run.
 pub async fn archived(dav: &Dav, first_day: &str, levels: &[String]) -> Result<Vec<Entry>> {
     let live: std::collections::HashSet<String> = listing(dav)
         .await?
@@ -243,7 +211,7 @@ async fn listing(dav: &Dav) -> Result<Vec<crate::webdav::DavEntry>> {
     Ok(files.into_iter().filter(|file| !file.is_dir).collect())
 }
 
-/// The day the instance is on. It runs on GMT, and so do its file names.
+/// The instance runs on GMT, and so do its file names.
 pub fn today() -> String {
     Utc::now().format("%Y%m%d").to_string()
 }
@@ -252,14 +220,13 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-/// The `YYYYMMDD` a log file is named after: `error-blade1-4-appserver-20260905.log`.
+/// `error-blade1-4-appserver-20260905.log` -> `20260905`.
 pub fn file_day(name: &str) -> Option<&str> {
     let stem = name.strip_suffix(".log")?;
     let day = stem.rsplit('-').next()?;
     (day.len() == 8 && day.bytes().all(|byte| byte.is_ascii_digit())).then_some(day)
 }
 
-/// A comma-separated level list, lowercased.
 pub fn parse_levels(raw: &str) -> Vec<String> {
     raw.split(',')
         .map(|level| level.trim().to_lowercase())
@@ -267,7 +234,6 @@ pub fn parse_levels(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// Whether a file is a log of `day` at one of the levels, or `all`.
 pub fn is_wanted(name: &str, levels: &[String], day: &str) -> bool {
     if !name.ends_with(".log") || !name.contains(day) {
         return false;
@@ -277,7 +243,6 @@ pub fn is_wanted(name: &str, levels: &[String], day: &str) -> bool {
         .any(|level| level == "all" || name.starts_with(level.as_str()))
 }
 
-/// Split the text of a log file into records.
 pub fn parse_entries(file: &str, text: &str) -> Vec<Entry> {
     let label = file.split('-').next().unwrap_or(file).to_string();
     let mut entries: Vec<Entry> = Vec::new();
@@ -295,13 +260,12 @@ pub fn parse_entries(file: &str, text: &str) -> Vec<Entry> {
     entries
 }
 
-/// Records of several files, in the order they were written. Leftovers from
-/// an entry of an earlier read carry no moment and stay in front.
+/// Leftovers of an entry from an earlier read carry no moment and stay in front.
 pub fn order(batch: &mut [Entry]) {
     batch.sort_by(|left, right| left.moment.cmp(&right.moment));
 }
 
-/// The timestamp every record opens with: `[2026-09-09 07:26:29.103 GMT]`.
+/// `[2026-09-09 07:26:29.103 GMT]`
 fn moment(line: &str) -> Option<String> {
     let inner = line.strip_prefix('[')?.split_once(']')?.0;
     let shape = inner.as_bytes();

@@ -1,8 +1,4 @@
-//! Custom attributes that the metadata in the repository does not define.
-//!
-//! A typo in `product.custom.season` costs a deploy and a page load to
-//! find, because SFCC returns `undefined` rather than failing. The metadata
-//! says which names exist, so the typo can be shown while it is being typed.
+//! Unknown custom attributes: SFCC returns `undefined` for a typo rather than failing.
 
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
@@ -11,11 +7,8 @@ use crate::metadata::{Metadata, SITE_PREFERENCES};
 
 const SOURCE: &str = "sfcc-metadata";
 
-/// Every `.custom.` access and site preference in the document that the
-/// metadata does not define. Empty when no metadata was found.
 pub fn diagnostics(text: &str, metadata: &Metadata) -> Vec<Diagnostic> {
-    // No metadata checked out means every attribute is unknown, which would
-    // paint the whole file. Say nothing instead.
+    // Without metadata every attribute is unknown; say nothing rather than paint the file.
     if !metadata.is_loaded() {
         return Vec::new();
     }
@@ -107,8 +100,7 @@ mod tests {
 </metadata>
 "#;
 
-    /// Tests run in parallel: sharing one directory means one test can scan
-    /// the file another is still writing.
+    /// Tests run in parallel, so each gets its own directory.
     fn metadata(test: &str) -> Metadata {
         let directory = std::env::temp_dir().join(format!("isml-lsp-diagnose-{test}"));
         let _ = fs::create_dir_all(&directory);
