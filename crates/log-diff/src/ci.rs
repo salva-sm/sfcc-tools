@@ -36,6 +36,8 @@ pub struct Outcome {
     pub baseline: bool,
     /// `YYYYMMDD`.
     pub baseline_from: String,
+    /// `YYYY-MM-DD` of the oldest record read: how far back the instance still kept its log.
+    pub oldest: Option<String>,
     /// The ledger was signed another way: learned again instead of reporting.
     pub resigned: bool,
     pub known: usize,
@@ -74,6 +76,10 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
     let read = logs::since(dav, &from, &options.levels).await?;
     entries.extend(read.entries);
     logs::order(&mut entries);
+    let oldest = entries
+        .iter()
+        .find_map(|entry| entry.moment_utc())
+        .map(|moment| moment.format("%Y-%m-%d").to_string());
 
     let mut report = Report {
         instance: options.environment.clone().unwrap_or_else(|| host.clone()),
@@ -168,6 +174,7 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
         report,
         baseline,
         baseline_from,
+        oldest,
         resigned,
         known: ledger.known_signatures.len(),
     })

@@ -351,7 +351,9 @@ though `sfcc-upload` refuses to push to one.
 The first read of an environment has nothing to compare against. It learns instead of
 reporting: `--baseline-days` of log before today (the *baseline_days* input when the
 workflow is run by hand, 14 unless changed), plus today's. The days the instance has already
-compressed into `log_archive` are read too, so asking for two weeks gets two weeks.
+moved into `log_archive` are read too - gzipped or, as it leaves the custom levels, not - so
+asking for two weeks gets two weeks; an instance keeps about six. The run says how far back
+the oldest record it found goes.
 Those signatures have no deploy: none was recorded then. The option is ignored once the
 ledger has a cursor; delete the ledger to take the baseline again.
 

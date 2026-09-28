@@ -651,8 +651,11 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
         status(
             Tone::Ok,
             &format!(
-                "first run on {}: {} signature(s) learned from the log since {}, nothing reported",
-                config.hostname, outcome.known, outcome.baseline_from
+                "first run on {}: {} signature(s) learned from the log since {} (oldest record kept: {}), nothing reported",
+                config.hostname,
+                outcome.known,
+                outcome.baseline_from,
+                outcome.oldest.as_deref().unwrap_or("none")
             ),
         );
         return Ok(0);

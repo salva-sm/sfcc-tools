@@ -163,6 +163,12 @@ async fn the_archive_holds_the_days_the_log_folder_no_longer_does() {
         &format!("Logs/error-blade1-{live}.log"),
         record(&live, "10:00:00", "twice"),
     );
+    // Custom levels are archived as they were, not gzipped.
+    let custom = day(4);
+    server.put(
+        &format!("Logs/log_archive/customerror-blade1-{custom}.log"),
+        record(&custom, "10:00:00", "not gzipped"),
+    );
     // Before the first day asked for.
     server.put(
         &format!("Logs/log_archive/error-blade1-{}.log.gz", day(30)),
@@ -175,9 +181,10 @@ async fn the_archive_holds_the_days_the_log_folder_no_longer_does() {
         .iter()
         .map(|entry| entry.lines[0].as_str())
         .collect();
-    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert_eq!(messages.len(), 3, "{messages:?}");
     assert!(messages[0].contains("in a folder"));
-    assert!(messages[1].contains("archived"));
+    assert!(messages[1].contains("not gzipped"));
+    assert!(messages[2].contains("archived"));
 }
 
 #[tokio::test]
