@@ -245,6 +245,10 @@ impl Ledger {
             if finding.last > known.last_seen {
                 known.last_seen = finding.last.clone();
             }
+            // A baseline reads the archive a file at a time, not in the order it was logged.
+            if finding.first < known.first_seen {
+                known.first_seen = finding.first.clone();
+            }
             return false;
         }
 

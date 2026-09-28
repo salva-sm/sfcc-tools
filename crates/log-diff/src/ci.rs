@@ -68,18 +68,29 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
     let baseline_from = from.day.clone();
     // Signatures computed another way are the same failures under new ids: learn them again.
     let resigned = !baseline && ledger.resigned();
-    let mut entries = Vec::new();
+    let first_day = |entries: &[logs::Entry]| {
+        entries
+            .iter()
+            .filter_map(|entry| entry.moment_utc())
+            .min()
+            .map(|moment| moment.format("%Y-%m-%d").to_string())
+    };
+    let mut oldest: Option<String> = None;
     if baseline && options.baseline_days > 0 {
-        // Days the instance already archived are only in log_archive.
-        entries.extend(logs::archived(dav, &from.day, &options.levels).await?);
+        // Days the instance already archived are only in log_archive, learned one file at a time.
+        for file in logs::archive_files(dav, &from.day, &options.levels).await? {
+            let archived = logs::read_archived(dav, &file).await?;
+            oldest = oldest.into_iter().chain(first_day(&archived)).min();
+            for finding in findings(&archived) {
+                ledger.record_daily(&finding);
+                ledger.observe(&finding, None, false);
+            }
+        }
     }
     let read = logs::since(dav, &from, &options.levels).await?;
-    entries.extend(read.entries);
+    let mut entries = read.entries;
     logs::order(&mut entries);
-    let oldest = entries
-        .iter()
-        .find_map(|entry| entry.moment_utc())
-        .map(|moment| moment.format("%Y-%m-%d").to_string());
+    oldest = oldest.into_iter().chain(first_day(&entries)).min();
 
     let mut report = Report {
         instance: options.environment.clone().unwrap_or_else(|| host.clone()),

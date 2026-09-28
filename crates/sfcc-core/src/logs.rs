@@ -144,10 +144,30 @@ pub async fn since(dav: &Dav, mark: &Mark, levels: &[String]) -> Result<Since> {
     })
 }
 
+/// A file in log_archive, as [`archive_files`] lists it and [`read_archived`] reads it.
+#[derive(Debug, Clone)]
+pub struct Archived {
+    pub url: String,
+    pub name: String,
+}
+
 /// Days still in the log folder are left to [`since`]. Reads the archive whole:
 /// for a baseline, not every run. Instances gzip some levels there and leave others
 /// (customerror, customwarn) as they were.
 pub async fn archived(dav: &Dav, first_day: &str, levels: &[String]) -> Result<Vec<Entry>> {
+    let files = archive_files(dav, first_day, levels).await?;
+    let read: Vec<Vec<Entry>> = stream::iter(files.iter().map(|file| read_archived(dav, file)))
+        .buffered(READS_AT_ONCE)
+        .try_collect()
+        .await?;
+    let mut entries: Vec<Entry> = read.into_iter().flatten().collect();
+    order(&mut entries);
+    Ok(entries)
+}
+
+/// The files of log_archive from `first_day` on, oldest day first, for reading one at a time:
+/// a month of an instance's archive does not fit in memory at once.
+pub async fn archive_files(dav: &Dav, first_day: &str, levels: &[String]) -> Result<Vec<Archived>> {
     let live: std::collections::HashSet<String> = listing(dav)
         .await?
         .into_iter()
@@ -183,40 +203,48 @@ pub async fn archived(dav: &Dav, first_day: &str, levels: &[String]) -> Result<V
         }
     }
 
-    let wanted = files.into_iter().filter(|(_, name)| {
-        let plain = name.strip_suffix(".gz").unwrap_or(name);
-        file_day(plain).is_some_and(|day| {
-            day >= first_day && !live.contains(plain) && is_wanted(plain, levels, day)
+    let mut wanted: Vec<Archived> = files
+        .into_iter()
+        .filter(|(_, name)| {
+            let plain = name.strip_suffix(".gz").unwrap_or(name);
+            file_day(plain).is_some_and(|day| {
+                day >= first_day && !live.contains(plain) && is_wanted(plain, levels, day)
+            })
         })
+        .map(|(url, name)| Archived { url, name })
+        .collect();
+    let day_of = |file: &Archived| {
+        file_day(file.name.strip_suffix(".gz").unwrap_or(&file.name)).map(str::to_string)
+    };
+    wanted.sort_by(|left, right| {
+        day_of(left)
+            .cmp(&day_of(right))
+            .then(left.name.cmp(&right.name))
     });
-    let reads = wanted.map(|(url, name)| async move {
-        let bytes = dav
-            .read_bytes(&url)
-            .await
-            .with_context(|| format!("cannot read {name}"))?;
-        let (plain, text) = match name.strip_suffix(".gz") {
-            Some(plain) => {
-                let mut raw = Vec::new();
-                use std::io::Read;
-                // SFCC leaves an archive cut short now and then: what it holds still counts.
-                if let Err(error) =
-                    flate2::read::MultiGzDecoder::new(bytes.as_slice()).read_to_end(&mut raw)
-                {
-                    eprintln!("warning: {name} is cut short ({error}): read as far as it goes");
-                }
-                (plain, String::from_utf8_lossy(&raw).into_owned())
+    Ok(wanted)
+}
+
+pub async fn read_archived(dav: &Dav, file: &Archived) -> Result<Vec<Entry>> {
+    let name = &file.name;
+    let bytes = dav
+        .read_bytes(&file.url)
+        .await
+        .with_context(|| format!("cannot read {name}"))?;
+    let (plain, text) = match name.strip_suffix(".gz") {
+        Some(plain) => {
+            let mut raw = Vec::new();
+            use std::io::Read;
+            // SFCC leaves an archive cut short now and then: what it holds still counts.
+            if let Err(error) =
+                flate2::read::MultiGzDecoder::new(bytes.as_slice()).read_to_end(&mut raw)
+            {
+                eprintln!("warning: {name} is cut short ({error}): read as far as it goes");
             }
-            None => (name.as_str(), String::from_utf8_lossy(&bytes).into_owned()),
-        };
-        Ok::<_, anyhow::Error>(parse_entries(plain, &text))
-    });
-    let read: Vec<Vec<Entry>> = stream::iter(reads)
-        .buffered(READS_AT_ONCE)
-        .try_collect()
-        .await?;
-    let mut entries: Vec<Entry> = read.into_iter().flatten().collect();
-    order(&mut entries);
-    Ok(entries)
+            (plain, String::from_utf8_lossy(&raw).into_owned())
+        }
+        None => (name.as_str(), String::from_utf8_lossy(&bytes).into_owned()),
+    };
+    Ok(parse_entries(plain, &text))
 }
 
 async fn listing(dav: &Dav) -> Result<Vec<crate::webdav::DavEntry>> {

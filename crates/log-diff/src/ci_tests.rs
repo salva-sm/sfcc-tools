@@ -99,6 +99,74 @@ async fn keeps_the_levels_it_does_not_report() {
 }
 
 #[tokio::test]
+async fn learns_the_archive_a_file_at_a_time_as_if_read_whole() {
+    let scratch = Scratch::new("by-file");
+    let state = scratch.path("dev.json");
+    let server = MockDav::start().await;
+    let config = server.config();
+    let dav = Dav::new(&config).unwrap();
+    let gzip = |text: String| {
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, text.as_bytes()).unwrap();
+        gz.finish().unwrap()
+    };
+    let day = |back: i64| {
+        (Utc::now() - Duration::days(back))
+            .format("%Y%m%d")
+            .to_string()
+    };
+
+    server.append(
+        &log_file(),
+        &record(Duration::hours(3), "cart", "TypeError: broken"),
+    );
+    // The same failure on two app servers: the file read second holds its first record.
+    server.put(
+        &format!("Logs/log_archive/error-blade1-{}.log.gz", day(3)),
+        gzip(record(Duration::days(3), "cart", "TypeError: broken")),
+    );
+    server.put(
+        &format!("Logs/log_archive/error-blade2-{}.log.gz", day(3)),
+        gzip(record(
+            Duration::days(3) + Duration::hours(2),
+            "cart",
+            "TypeError: broken",
+        )),
+    );
+    server.put(
+        &format!("Logs/log_archive/error-blade1-{}.log.gz", day(5)),
+        gzip(record(Duration::days(5), "other", "TypeError: other")),
+    );
+
+    let first = run(&config, &dav, &options(&state)).await.unwrap();
+    assert!(first.baseline && first.report.is_empty());
+    assert_eq!(first.known, 2);
+    let ledger = Ledger::load(&state).unwrap();
+    let broken = ledger
+        .known_signatures
+        .values()
+        .find(|known| known.example.contains("broken"))
+        .unwrap();
+    assert_eq!(broken.count, 3, "two archived and today's");
+    // Earlier than the file read first, an hour after the one read second.
+    let between = (Utc::now() - Duration::days(3) - Duration::hours(1))
+        .to_rfc3339_opts(SecondsFormat::Secs, true);
+    assert!(
+        broken.first_seen < between,
+        "the earliest of the two files: {}",
+        broken.first_seen
+    );
+    assert_eq!(
+        first.oldest,
+        Some(
+            (Utc::now() - Duration::days(5))
+                .format("%Y-%m-%d")
+                .to_string()
+        )
+    );
+}
+
+#[tokio::test]
 async fn reads_an_archive_cut_short_as_far_as_it_goes() {
     let scratch = Scratch::new("cut-short");
     let state = scratch.path("stg.json");
