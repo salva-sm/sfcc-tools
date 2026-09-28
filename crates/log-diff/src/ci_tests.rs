@@ -99,6 +99,38 @@ async fn keeps_the_levels_it_does_not_report() {
 }
 
 #[tokio::test]
+async fn reads_an_archive_cut_short_as_far_as_it_goes() {
+    let scratch = Scratch::new("cut-short");
+    let state = scratch.path("stg.json");
+    let server = MockDav::start().await;
+    let config = server.config();
+    let dav = Dav::new(&config).unwrap();
+
+    server.append(
+        &log_file(),
+        &record(Duration::hours(3), "today", "TypeError: today"),
+    );
+    let archived_day = (Utc::now() - Duration::days(3)).format("%Y%m%d");
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    std::io::Write::write_all(
+        &mut gz,
+        record(Duration::days(3), "archived", "TypeError: archived").as_bytes(),
+    )
+    .unwrap();
+    let mut bytes = gz.finish().unwrap();
+    // No trailer: the stream ends before its checksum, as an archive cut short does.
+    bytes.truncate(bytes.len() - 8);
+    server.put(
+        &format!("Logs/log_archive/error-blade2-{archived_day}.log.gz"),
+        bytes,
+    );
+
+    let first = run(&config, &dav, &options(&state)).await.unwrap();
+    assert!(first.baseline);
+    assert_eq!(first.known, 2, "today's log and what the archive holds");
+}
+
+#[tokio::test]
 async fn learns_first_then_reports_what_is_new_with_the_deploy_it_came_with() {
     let scratch = Scratch::new("flow");
     let state = scratch.path("dev.json");
