@@ -145,7 +145,8 @@ pub async fn since(dav: &Dav, mark: &Mark, levels: &[String]) -> Result<Since> {
 }
 
 /// Days still in the log folder are left to [`since`]. Reads the archive whole:
-/// for a baseline, not every run.
+/// for a baseline, not every run. Instances gzip some levels there and leave others
+/// (customerror, customwarn) as they were.
 pub async fn archived(dav: &Dav, first_day: &str, levels: &[String]) -> Result<Vec<Entry>> {
     let live: std::collections::HashSet<String> = listing(dav)
         .await?
@@ -155,12 +156,21 @@ pub async fn archived(dav: &Dav, first_day: &str, levels: &[String]) -> Result<V
 
     let archive = format!("{}/log_archive", dav.logs_url());
     let mut files = Vec::new();
-    for entry in dav.list(&archive).await.unwrap_or_default() {
+    // No archive is a 404, and an empty list; any other failure would quietly shorten the history.
+    let listed = dav
+        .list(&archive)
+        .await
+        .context("cannot list log_archive")?;
+    for entry in listed {
         match entry.is_dir {
             // Some instances keep a folder per day or per month inside.
             true => {
                 let folder = format!("{archive}/{}", encode_path(&entry.name));
-                for file in dav.list(&folder).await.unwrap_or_default() {
+                let inside = dav
+                    .list(&folder)
+                    .await
+                    .with_context(|| format!("cannot list log_archive/{}", entry.name))?;
+                for file in inside {
                     if !file.is_dir {
                         files.push((format!("{folder}/{}", encode_path(&file.name)), file.name));
                     }
@@ -174,24 +184,27 @@ pub async fn archived(dav: &Dav, first_day: &str, levels: &[String]) -> Result<V
     }
 
     let wanted = files.into_iter().filter(|(_, name)| {
-        let Some(plain) = name.strip_suffix(".gz") else {
-            return false;
-        };
+        let plain = name.strip_suffix(".gz").unwrap_or(name);
         file_day(plain).is_some_and(|day| {
             day >= first_day && !live.contains(plain) && is_wanted(plain, levels, day)
         })
     });
     let reads = wanted.map(|(url, name)| async move {
-        let compressed = dav
+        let bytes = dav
             .read_bytes(&url)
             .await
             .with_context(|| format!("cannot read {name}"))?;
-        let plain = name.strip_suffix(".gz").unwrap_or(&name);
-        let mut text = String::new();
-        use std::io::Read;
-        flate2::read::MultiGzDecoder::new(compressed.as_slice())
-            .read_to_string(&mut text)
-            .with_context(|| format!("{name} is not a readable gzip file"))?;
+        let (plain, text) = match name.strip_suffix(".gz") {
+            Some(plain) => {
+                let mut text = String::new();
+                use std::io::Read;
+                flate2::read::MultiGzDecoder::new(bytes.as_slice())
+                    .read_to_string(&mut text)
+                    .with_context(|| format!("{name} is not a readable gzip file"))?;
+                (plain, text)
+            }
+            None => (name.as_str(), String::from_utf8_lossy(&bytes).into_owned()),
+        };
         Ok::<_, anyhow::Error>(parse_entries(plain, &text))
     });
     let read: Vec<Vec<Entry>> = stream::iter(reads)
