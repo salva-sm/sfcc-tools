@@ -11,6 +11,8 @@ pub const DEFAULT_LEVELS: &str = "error,customerror,custom";
 
 /// One file per level, app server and day; more at once would only be throttled.
 const READS_AT_ONCE: usize = 6;
+/// What one request of the log folder reads at most.
+const SLICE: u64 = 16 * 1024 * 1024;
 
 /// A timestamped line and every line up to the next one: a stack trace, a request dump.
 #[derive(Debug, Clone)]
@@ -81,6 +83,20 @@ pub async fn mark(dav: &Dav, levels: &[String]) -> Result<Mark> {
 /// A file the mark does not know counts whole; one shorter than its offset was
 /// rotated. A trailing line still being written is left for the next read.
 pub async fn since(dav: &Dav, mark: &Mark, levels: &[String]) -> Result<Since> {
+    let mut entries = Vec::new();
+    let next = since_each(dav, mark, levels, |entry| entries.push(entry)).await?;
+    order(&mut entries);
+    Ok(Since { entries, next })
+}
+
+/// [`since`] an entry at a time, a file after another, each read in slices of [`SLICE`]: a
+/// day of an instance's log - what a first read or a Monday takes in - never has to fit in memory.
+pub async fn since_each(
+    dav: &Dav,
+    mark: &Mark,
+    levels: &[String],
+    mut each: impl FnMut(Entry),
+) -> Result<Mark> {
     let today = today();
     let first_day = match mark.day.is_empty() {
         true => today.as_str(),
@@ -97,50 +113,51 @@ pub async fn since(dav: &Dav, mark: &Mark, levels: &[String]) -> Result<Since> {
         })
         .collect();
 
-    let reads = wanted.into_iter().map(|(file, day)| async move {
+    let mut offsets = BTreeMap::new();
+    for (file, day) in wanted {
         let mut offset = mark.offsets.get(&file.name).copied().unwrap_or(0);
         if file.size < offset {
             offset = 0;
         }
-        let mut read = Vec::new();
-        if file.size > offset {
-            let url = format!("{}/{}", dav.logs_url(), encode_path(&file.name));
-            let text = dav
-                .read_from(&url, offset)
+        let url = format!("{}/{}", dav.logs_url(), encode_path(&file.name));
+        let mut parser = EntryParser::new(&file.name);
+        // Bytes past the last complete line: the start of the next slice's first line.
+        let mut carry: Vec<u8> = Vec::new();
+        let mut fetched = offset;
+        while fetched < file.size {
+            let last = (fetched + SLICE).min(file.size) - 1;
+            let bytes = dav
+                .read_range(&url, fetched, last)
                 .await
                 .with_context(|| format!("cannot read {}", file.name))?;
-            let complete = match text.rfind('\n') {
-                Some(end) => &text[..=end],
-                None => "",
-            };
-            offset += complete.len() as u64;
-            read = parse_entries(&file.name, complete);
+            if bytes.is_empty() {
+                break;
+            }
+            fetched += bytes.len() as u64;
+            carry.extend_from_slice(&bytes);
+            if let Some(end) = carry.iter().rposition(|byte| *byte == b'\n') {
+                let complete: Vec<u8> = carry.drain(..=end).collect();
+                offset += complete.len() as u64;
+                for line in String::from_utf8_lossy(&complete).lines() {
+                    if let Some(entry) = parser.line(line) {
+                        each(entry);
+                    }
+                }
+            }
         }
-        Ok::<_, anyhow::Error>((file.name, day, offset, read))
-    });
-    let read: Vec<_> = stream::iter(reads)
-        .buffered(READS_AT_ONCE)
-        .try_collect()
-        .await?;
-
-    let mut entries = Vec::new();
-    let mut offsets = BTreeMap::new();
-    for (name, day, offset, read) in read {
-        entries.extend(read);
+        if let Some(entry) = parser.finish() {
+            each(entry);
+        }
         // Yesterday's files are done; keeping their offsets would only grow the mark.
         if day == today {
-            offsets.insert(name, offset);
+            offsets.insert(file.name, offset);
         }
     }
 
-    order(&mut entries);
-    Ok(Since {
-        entries,
-        next: Mark {
-            taken: now(),
-            day: today,
-            offsets,
-        },
+    Ok(Mark {
+        taken: now(),
+        day: today,
+        offsets,
     })
 }
 
@@ -225,26 +242,58 @@ pub async fn archive_files(dav: &Dav, first_day: &str, levels: &[String]) -> Res
 }
 
 pub async fn read_archived(dav: &Dav, file: &Archived) -> Result<Vec<Entry>> {
+    let mut entries = Vec::new();
+    read_archived_each(dav, file, |entry| entries.push(entry)).await?;
+    Ok(entries)
+}
+
+/// Each entry of an archived file in turn, never the file whole: a day of an instance's
+/// warnings can take more memory than there is once uncompressed.
+pub async fn read_archived_each(
+    dav: &Dav,
+    file: &Archived,
+    mut each: impl FnMut(Entry),
+) -> Result<()> {
+    use std::io::BufRead;
     let name = &file.name;
     let bytes = dav
         .read_bytes(&file.url)
         .await
         .with_context(|| format!("cannot read {name}"))?;
-    let (plain, text) = match name.strip_suffix(".gz") {
-        Some(plain) => {
-            let mut raw = Vec::new();
-            use std::io::Read;
-            // SFCC leaves an archive cut short now and then: what it holds still counts.
-            if let Err(error) =
-                flate2::read::MultiGzDecoder::new(bytes.as_slice()).read_to_end(&mut raw)
-            {
-                eprintln!("warning: {name} is cut short ({error}): read as far as it goes");
-            }
-            (plain, String::from_utf8_lossy(&raw).into_owned())
-        }
-        None => (name.as_str(), String::from_utf8_lossy(&bytes).into_owned()),
+    let (plain, mut reader): (&str, Box<dyn BufRead>) = match name.strip_suffix(".gz") {
+        Some(plain) => (
+            plain,
+            Box::new(std::io::BufReader::new(flate2::read::MultiGzDecoder::new(
+                bytes.as_slice(),
+            ))),
+        ),
+        None => (name.as_str(), Box::new(bytes.as_slice())),
     };
-    Ok(parse_entries(plain, &text))
+    let mut parser = EntryParser::new(plain);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read = reader.read_until(b'\n', &mut line);
+        if !line.is_empty() {
+            let text = String::from_utf8_lossy(&line);
+            if let Some(entry) = parser.line(text.trim_end_matches(['\n', '\r'])) {
+                each(entry);
+            }
+        }
+        match read {
+            Ok(0) => break,
+            Ok(_) => {}
+            // SFCC leaves an archive cut short now and then: what it holds still counts.
+            Err(error) => {
+                eprintln!("warning: {name} is cut short ({error}): read as far as it goes");
+                break;
+            }
+        }
+    }
+    if let Some(entry) = parser.finish() {
+        each(entry);
+    }
+    Ok(())
 }
 
 async fn listing(dav: &Dav) -> Result<Vec<crate::webdav::DavEntry>> {
@@ -292,20 +341,47 @@ pub fn is_wanted(name: &str, levels: &[String], day: &str) -> bool {
 }
 
 pub fn parse_entries(file: &str, text: &str) -> Vec<Entry> {
-    let label = file.split('-').next().unwrap_or(file).to_string();
-    let mut entries: Vec<Entry> = Vec::new();
+    let mut parser = EntryParser::new(file);
+    let mut entries: Vec<Entry> = text.lines().filter_map(|line| parser.line(line)).collect();
+    entries.extend(parser.finish());
+    entries
+}
 
-    for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        match (moment(line), entries.last_mut()) {
-            (None, Some(entry)) => entry.lines.push(line.to_string()),
-            (moment, _) => entries.push(Entry {
-                label: label.clone(),
+/// Lines into entries as they come: each entry is handed over once the next one starts.
+pub struct EntryParser {
+    label: String,
+    current: Option<Entry>,
+}
+
+impl EntryParser {
+    pub fn new(file: &str) -> EntryParser {
+        EntryParser {
+            label: file.split('-').next().unwrap_or(file).to_string(),
+            current: None,
+        }
+    }
+
+    /// The entry this line closes, when it starts the next one.
+    pub fn line(&mut self, line: &str) -> Option<Entry> {
+        if line.trim().is_empty() {
+            return None;
+        }
+        match (moment(line), self.current.as_mut()) {
+            (None, Some(entry)) => {
+                entry.lines.push(line.to_string());
+                None
+            }
+            (moment, _) => self.current.replace(Entry {
+                label: self.label.clone(),
                 moment: moment.unwrap_or_default(),
                 lines: vec![line.to_string()],
             }),
         }
     }
-    entries
+
+    pub fn finish(self) -> Option<Entry> {
+        self.current
+    }
 }
 
 /// Leftovers of an entry from an earlier read carry no moment and stay in front.

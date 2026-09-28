@@ -204,6 +204,30 @@ impl Dav {
             .to_vec())
     }
 
+    /// `start..=end` of a file - all of it from `start` when the server ignores the end - and
+    /// empty when there is nothing there.
+    pub async fn read_range(&self, url: &str, start: u64, end: u64) -> Result<Vec<u8>> {
+        let response = self
+            .send(|| {
+                self.client
+                    .get(url)
+                    .header("Range", format!("bytes={start}-{end}"))
+            })
+            .await?;
+        let status = response.status();
+        if status == StatusCode::RANGE_NOT_SATISFIABLE || status == StatusCode::NOT_FOUND {
+            return Ok(Vec::new());
+        }
+        if !status.is_success() {
+            bail!("GET {url} failed with HTTP {status}");
+        }
+        let body = response.bytes().await.context("cannot read the response")?;
+        if status == StatusCode::PARTIAL_CONTENT {
+            return Ok(body.to_vec());
+        }
+        Ok(body.get(start as usize..).unwrap_or_default().to_vec())
+    }
+
     /// Empty when there is nothing past `offset`.
     pub async fn read_from(&self, url: &str, offset: u64) -> Result<String> {
         let response = self

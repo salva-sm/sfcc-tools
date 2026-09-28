@@ -177,27 +177,28 @@ async fn answer(mut stream: TcpStream, tree: &Mutex<Tree>) -> std::io::Result<()
             (true, "GET") => match tree.files.get(&path) {
                 None => ("404 Not Found", String::new(), Vec::new()),
                 Some(contents) => {
-                    let from = header("range")
-                        .and_then(|range| {
-                            range
-                                .strip_prefix("bytes=")?
-                                .trim_end_matches('-')
-                                .parse::<usize>()
-                                .ok()
-                        })
-                        .unwrap_or(0);
-                    match (from, contents.len()) {
-                        (0, _) => ("200 OK", String::new(), contents.clone()),
-                        (from, size) if from >= size => (
+                    // `bytes=from-` or `bytes=from-to`, as a WebDAV server takes them.
+                    let range = header("range").and_then(|range| {
+                        let (from, to) = range.strip_prefix("bytes=")?.split_once('-')?;
+                        Some((from.parse::<usize>().ok()?, to.parse::<usize>().ok()))
+                    });
+                    match (range, contents.len()) {
+                        (None, _) | (Some((0, None)), _) => {
+                            ("200 OK", String::new(), contents.clone())
+                        }
+                        (Some((from, _)), size) if from >= size => (
                             "416 Range Not Satisfiable",
                             format!("Content-Range: bytes */{size}\r\n"),
                             Vec::new(),
                         ),
-                        (from, size) => (
-                            "206 Partial Content",
-                            format!("Content-Range: bytes {from}-{}/{size}\r\n", size - 1),
-                            contents[from..].to_vec(),
-                        ),
+                        (Some((from, to)), size) => {
+                            let last = to.map_or(size - 1, |to| to.min(size - 1));
+                            (
+                                "206 Partial Content",
+                                format!("Content-Range: bytes {from}-{last}/{size}\r\n"),
+                                contents[from..=last].to_vec(),
+                            )
+                        }
                     }
                 }
             },

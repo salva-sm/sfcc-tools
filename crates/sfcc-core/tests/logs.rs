@@ -199,3 +199,85 @@ async fn an_instance_without_an_archive_has_nothing_archived() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn an_archived_file_is_read_an_entry_at_a_time_as_if_read_whole() {
+    let server = MockDav::start().await;
+    let archived = day(3);
+    // A leftover from the day before, a blank line, CRLF endings, a trace on two lines.
+    let text = format!(
+        "\tat app_x/cartridge/scripts/leftover.js:1 (f)\r\n\r\n{}{}",
+        record(&archived, "08:00:00", "first").replace('\n', "\r\n"),
+        record(&archived, "09:00:00", "second"),
+    );
+    server.put(
+        &format!("Logs/log_archive/error-blade1-{archived}.log.gz"),
+        gzip(&text),
+    );
+    let dav = Dav::new(&server.config()).unwrap();
+
+    let files = logs::archive_files(&dav, &day(14), &levels())
+        .await
+        .unwrap();
+    assert_eq!(files.len(), 1);
+    let mut streamed = Vec::new();
+    logs::read_archived_each(&dav, &files[0], |entry| streamed.push(entry))
+        .await
+        .unwrap();
+    let whole = logs::parse_entries(&format!("error-blade1-{archived}.log"), &text);
+
+    assert_eq!(streamed.len(), 3, "the leftover, then the two records");
+    assert!(streamed[0].moment.is_empty());
+    assert_eq!(streamed[1].lines.len(), 2, "a record keeps its trace");
+    assert!(streamed[1].lines.iter().all(|line| !line.ends_with('\r')));
+    let lines = |entries: &[logs::Entry]| -> Vec<Vec<String>> {
+        entries.iter().map(|entry| entry.lines.clone()).collect()
+    };
+    assert_eq!(lines(&streamed), lines(&whole));
+}
+
+#[tokio::test]
+async fn an_archive_cut_short_hands_over_every_entry_before_the_cut() {
+    let server = MockDav::start().await;
+    let archived = day(3);
+    let mut bytes = gzip(&format!(
+        "{}{}",
+        record(&archived, "08:00:00", "first"),
+        record(&archived, "09:00:00", "second"),
+    ));
+    bytes.truncate(bytes.len() - 8);
+    server.put(
+        &format!("Logs/log_archive/error-blade1-{archived}.log.gz"),
+        bytes,
+    );
+    let dav = Dav::new(&server.config()).unwrap();
+
+    let entries = logs::archived(&dav, &day(14), &levels()).await.unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries[1].lines[0].contains("second"));
+}
+
+#[tokio::test]
+async fn a_file_larger_than_a_slice_is_read_across_slices_line_by_line() {
+    let server = MockDav::start().await;
+    let today = day(0);
+    let one = record(&today, "08:00:00", "repeated");
+    let count = 17 * 1024 * 1024 / one.len() + 1;
+    let mut text = one.repeat(count);
+    // Still being written: left for the next read.
+    text.push_str("[unfinished");
+    let name = format!("error-blade1-{today}.log");
+    server.put(&format!("Logs/{name}"), text.clone());
+    let dav = Dav::new(&server.config()).unwrap();
+
+    let since = logs::since(&dav, &Mark::start_of_today(), &levels())
+        .await
+        .unwrap();
+
+    assert_eq!(since.entries.len(), count);
+    assert!(since.entries.iter().all(|entry| entry.lines.len() == 2));
+    assert_eq!(
+        since.next.offsets[&name] as usize,
+        text.len() - "[unfinished".len()
+    );
+}
