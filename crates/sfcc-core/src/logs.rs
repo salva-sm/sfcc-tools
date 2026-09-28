@@ -196,12 +196,15 @@ pub async fn archived(dav: &Dav, first_day: &str, levels: &[String]) -> Result<V
             .with_context(|| format!("cannot read {name}"))?;
         let (plain, text) = match name.strip_suffix(".gz") {
             Some(plain) => {
-                let mut text = String::new();
+                let mut raw = Vec::new();
                 use std::io::Read;
-                flate2::read::MultiGzDecoder::new(bytes.as_slice())
-                    .read_to_string(&mut text)
-                    .with_context(|| format!("{name} is not a readable gzip file"))?;
-                (plain, text)
+                // SFCC leaves an archive cut short now and then: what it holds still counts.
+                if let Err(error) =
+                    flate2::read::MultiGzDecoder::new(bytes.as_slice()).read_to_end(&mut raw)
+                {
+                    eprintln!("warning: {name} is cut short ({error}): read as far as it goes");
+                }
+                (plain, String::from_utf8_lossy(&raw).into_owned())
             }
             None => (name.as_str(), String::from_utf8_lossy(&bytes).into_owned()),
         };
