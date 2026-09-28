@@ -37,7 +37,8 @@ fn record(ago: Duration, script: &str, message: &str) -> String {
 
 fn options(state: &Path) -> RunOptions {
     RunOptions {
-        levels: logs::parse_levels("error"),
+        levels: logs::parse_levels("error,warn"),
+        notify_levels: logs::parse_levels("error"),
         state: state.to_path_buf(),
         sha: None,
         build: None,
@@ -55,6 +56,46 @@ fn options(state: &Path) -> RunOptions {
 
 fn at(ago: Duration) -> Option<String> {
     Some((Utc::now() - ago).to_rfc3339_opts(SecondsFormat::Secs, true))
+}
+
+#[tokio::test]
+async fn keeps_the_levels_it_does_not_report() {
+    let scratch = Scratch::new("levels");
+    let state = scratch.path("dev.json");
+    let server = MockDav::start().await;
+    let config = server.config();
+    let dav = Dav::new(&config).unwrap();
+    let warnings = format!("Logs/warn-blade1-{}.log", logs::today());
+
+    server.append(
+        &log_file(),
+        &record(Duration::hours(3), "old", "TypeError: known"),
+    );
+    assert!(run(&config, &dav, &options(&state)).await.unwrap().baseline);
+
+    server.append(
+        &warnings,
+        &record(Duration::minutes(30), "slow", "Slow query"),
+    );
+    server.append(
+        &log_file(),
+        &record(Duration::minutes(20), "cart", "TypeError: broken"),
+    );
+    server.append(
+        &warnings,
+        &record(Duration::minutes(10), "slow", "Slow query"),
+    );
+    let second = run(&config, &dav, &options(&state)).await.unwrap();
+
+    assert_eq!(second.report.new.len(), 1, "a warning is kept, not news");
+    assert_eq!(second.report.new[0].label, "error");
+    let ledger = Ledger::load(&state).unwrap();
+    assert!(
+        ledger
+            .known_signatures
+            .values()
+            .any(|known| known.label == "warn" && known.count == 2)
+    );
 }
 
 #[tokio::test]

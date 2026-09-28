@@ -115,6 +115,9 @@ log-diff completions <shell>      the tab completion script for zsh or PowerShel
 
 Every command takes `--config` for `dw.json` (the nearest one by default, as everywhere
 else here) and `--level` for the log files to read, `error,customerror,fatal` by default.
+`run`, `check` and `watch` also take `--notify-level`, the levels worth telling anyone about -
+Teams, the desktop, the editor - with the same default: a level read and not in it, say
+`--level error,customerror,fatal,warn,customwarn`, is kept in the ledger and never notified.
 
 The team's ledger comes from `--shared` or `LOG_DIFF_SHARED`: a path to a clone of the
 ledger repository, or a raw URL. A URL to a private repository is fetched with

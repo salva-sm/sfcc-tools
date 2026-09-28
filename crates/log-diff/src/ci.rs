@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 pub struct RunOptions {
     pub levels: Vec<String>,
+    pub notify_levels: Vec<String>,
     pub state: PathBuf,
     pub sha: Option<String>,
     pub build: Option<u64>,
@@ -112,6 +113,10 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
             }
         });
         let signature = &finding.signature;
+        // Still laid at its deploy, only not reported.
+        if !logs::has_level(&options.notify_levels, &signature.label) {
+            continue;
+        }
         report.new.push(ReportItem {
             id: signature.id.clone(),
             label: signature.label.clone(),
@@ -134,6 +139,9 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
         let quiet = team.muted_ids();
         for spike in ledger.spikes(&today, options.spike_min, options.spike_factor, &quiet) {
             let known = &ledger.known_signatures[&spike.id];
+            if !logs::has_level(&options.notify_levels, &known.label) {
+                continue;
+            }
             report.spikes.push(ReportSpike {
                 id: spike.id.clone(),
                 label: known.label.clone(),

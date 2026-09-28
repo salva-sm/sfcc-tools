@@ -20,6 +20,7 @@ const PROBLEM_CHARS: usize = 200;
 pub struct Local {
     pub config: Config,
     pub levels: Vec<String>,
+    pub notify_levels: Vec<String>,
     pub state: PathBuf,
     /// A path or a URL.
     pub shared: Option<String>,
@@ -94,7 +95,9 @@ impl Local {
         let baseline = baseline || mine.resigned();
         let (mut new, mut back) = (Vec::new(), Vec::new());
         for finding in findings(&read.entries) {
-            if team.knows(&finding.signature.id) {
+            if team.knows(&finding.signature.id)
+                || !logs::has_level(&self.notify_levels, &finding.signature.label)
+            {
                 continue;
             }
             match mine.observe_local(&finding, baseline) {
