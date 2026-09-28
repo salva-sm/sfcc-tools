@@ -1,7 +1,7 @@
 //! A deploy's errors show up once someone uses what it shipped, often after the next deploy,
 //! so a signature is blamed on the deploy live at its first timestamp, not the one that ran.
 
-use crate::finding::findings;
+use crate::finding::Findings;
 use crate::ledger::{Ledger, serious};
 use crate::notify::{Report, ReportDeploy, ReportItem, ReportSpike};
 use crate::team::Team;
@@ -68,29 +68,36 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
     let baseline_from = from.day.clone();
     // Signatures computed another way are the same failures under new ids: learn them again.
     let resigned = !baseline && ledger.resigned();
-    let first_day = |entries: &[logs::Entry]| {
-        entries
-            .iter()
-            .filter_map(|entry| entry.moment_utc())
-            .min()
-            .map(|moment| moment.format("%Y-%m-%d").to_string())
-    };
+    let day_of = |moment: Option<DateTime<Utc>>| moment.map(|at| at.format("%Y-%m-%d").to_string());
     let mut oldest: Option<String> = None;
     if baseline && options.baseline_days > 0 {
         // Days the instance already archived are only in log_archive, learned one file at a time.
         for file in logs::archive_files(dav, &from.day, &options.levels).await? {
-            let archived = logs::read_archived(dav, &file).await?;
-            oldest = oldest.into_iter().chain(first_day(&archived)).min();
-            for finding in findings(&archived) {
+            let mut found = Findings::new();
+            let mut first: Option<DateTime<Utc>> = None;
+            logs::read_archived_each(dav, &file, |entry| {
+                first = first.into_iter().chain(entry.moment_utc()).min();
+                found.add(&entry);
+            })
+            .await?;
+            oldest = oldest.into_iter().chain(day_of(first)).min();
+            for finding in found.done() {
                 ledger.record_daily(&finding);
                 ledger.observe(&finding, None, false);
             }
         }
     }
-    let read = logs::since(dav, &from, &options.levels).await?;
-    let mut entries = read.entries;
-    logs::order(&mut entries);
-    oldest = oldest.into_iter().chain(first_day(&entries)).min();
+    let mut live = Findings::new();
+    let mut first: Option<DateTime<Utc>> = None;
+    let next = logs::since_each(dav, &from, &options.levels, |entry| {
+        first = first.into_iter().chain(entry.moment_utc()).min();
+        live.add(&entry);
+    })
+    .await?;
+    oldest = oldest.into_iter().chain(day_of(first)).min();
+    // Read a file after another: in the order each first happened, as the report lists them.
+    let mut live = live.done();
+    live.sort_by(|left, right| left.first.cmp(&right.first));
 
     let mut report = Report {
         instance: options.environment.clone().unwrap_or_else(|| host.clone()),
@@ -98,7 +105,7 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
         new: Vec::new(),
         spikes: Vec::new(),
     };
-    for finding in findings(&entries) {
+    for finding in live {
         ledger.record_daily(&finding);
         let live = match baseline {
             true => None,
@@ -174,9 +181,9 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
     }
 
     if baseline {
-        ledger.baseline = Some(read.next.taken.clone());
+        ledger.baseline = Some(next.taken.clone());
     }
-    ledger.advance(host, read.next);
+    ledger.advance(host, next);
     ledger.save(&options.state)?;
     if let Some(path) = &options.report {
         report.save(path)?;

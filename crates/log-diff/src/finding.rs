@@ -16,11 +16,41 @@ pub struct Finding {
 
 /// In the order each signature first appeared.
 pub fn findings(entries: &[Entry]) -> Vec<Finding> {
-    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
-    let mut found: Vec<Finding> = Vec::new();
-    let mut index: HashMap<String, usize> = HashMap::new();
-
+    let mut found = Findings::new();
     for entry in entries {
+        found.add(entry);
+    }
+    found.done()
+}
+
+/// [`findings`] an entry at a time, for a log too large to hold whole.
+pub struct Findings {
+    now: String,
+    found: Vec<Finding>,
+    index: HashMap<String, usize>,
+}
+
+impl Default for Findings {
+    fn default() -> Findings {
+        Findings::new()
+    }
+}
+
+impl Findings {
+    pub fn new() -> Findings {
+        Findings {
+            now: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+            found: Vec::new(),
+            index: HashMap::new(),
+        }
+    }
+
+    pub fn done(self) -> Vec<Finding> {
+        self.found
+    }
+
+    pub fn add(&mut self, entry: &Entry) {
+        let (now, found, index) = (&self.now, &mut self.found, &mut self.index);
         let signature = signature(entry);
         // A leftover with no timestamp of its own was logged just before this read.
         let moment = entry
@@ -53,5 +83,4 @@ pub fn findings(entries: &[Entry]) -> Vec<Finding> {
             }
         }
     }
-    found
 }
