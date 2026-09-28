@@ -5,6 +5,7 @@ use crate::output::message;
 use crate::team::Team;
 use chrono::{Duration, Utc};
 use serde_json::{Value, json};
+use sfcc_core::logs::has_level;
 use std::collections::BTreeMap;
 
 const TOP: usize = 5;
@@ -30,8 +31,8 @@ pub struct Line {
     pub ticket: Option<String>,
 }
 
-/// Leaves out what is muted.
-pub fn weeks(environments: &[Environment], team: &Team, days: i64) -> Vec<Week> {
+/// Leaves out what is muted, and the levels not in `levels`.
+pub fn weeks(environments: &[Environment], team: &Team, days: i64, levels: &[String]) -> Vec<Week> {
     let today = Utc::now().date_naive();
     let day = |back: i64| {
         (today - Duration::days(back))
@@ -46,10 +47,19 @@ pub fn weeks(environments: &[Environment], team: &Team, days: i64) -> Vec<Week> 
         .iter()
         .map(|environment| {
             let ledger = &environment.ledger;
+            let wanted = |id: &str| {
+                ledger
+                    .known_signatures
+                    .get(id)
+                    .is_none_or(|known| has_level(levels, &known.label))
+            };
             let sum = |days: &[String]| -> BTreeMap<&str, u64> {
                 let mut counts = BTreeMap::new();
                 for day in days {
                     for (id, count) in ledger.daily.get(day).into_iter().flatten() {
+                        if !wanted(id) {
+                            continue;
+                        }
                         *counts.entry(id.as_str()).or_default() += count;
                     }
                 }
@@ -68,7 +78,7 @@ pub fn weeks(environments: &[Environment], team: &Team, days: i64) -> Vec<Week> 
                 ledger
                     .known_signatures
                     .iter()
-                    .filter(|(id, _)| !team.mutes(id))
+                    .filter(|(id, known)| !team.mutes(id) && has_level(levels, &known.label))
             };
 
             let mut new: Vec<Line> = visible()
@@ -126,10 +136,11 @@ pub fn weeks(environments: &[Environment], team: &Team, days: i64) -> Vec<Week> 
                     .known_signatures
                     .values()
                     .filter(|known| {
-                        known
-                            .spiked_on
-                            .as_deref()
-                            .is_some_and(|on| on >= since.as_str())
+                        has_level(levels, &known.label)
+                            && known
+                                .spiked_on
+                                .as_deref()
+                                .is_some_and(|on| on >= since.as_str())
                     })
                     .count(),
                 new: new.into_iter().take(TOP).collect(),

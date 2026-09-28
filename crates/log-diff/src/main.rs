@@ -23,6 +23,8 @@ use std::time::Duration;
 
 // Warnings and custom info logs change too often to be news.
 const DEFAULT_LEVELS: &str = "error,customerror,fatal";
+// Only these reach Teams, the desktop and the editor.
+const DEFAULT_NOTIFY_LEVELS: &str = "error,customerror,fatal";
 
 const EXIT_NEW: i32 = 1;
 const EXIT_FAILED: i32 = 2;
@@ -170,6 +172,9 @@ struct InstanceArgs {
 struct LocalArgs {
     #[command(flatten)]
     instance: InstanceArgs,
+    /// Levels worth a pending signature and a notification, comma separated, or "all"
+    #[arg(long, value_name = "LIST", default_value = DEFAULT_NOTIFY_LEVELS)]
+    notify_level: String,
     /// Your own ledger (default: log-diff/local-ledger.json in the user config directory)
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
     state: Option<PathBuf>,
@@ -219,6 +224,10 @@ struct WatchArgs {
 struct RunArgs {
     #[command(flatten)]
     instance: InstanceArgs,
+    /// Levels reported as new or spiking, comma separated, or "all"; the others read are
+    /// only kept in the ledger
+    #[arg(long, value_name = "LIST", default_value = DEFAULT_NOTIFY_LEVELS)]
+    notify_level: String,
     /// The team's ledger: ledger.json in a checkout of its repository on CI (default:
     /// log-diff/dev-ledger.json in the user config directory, which check and watch read)
     #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
@@ -279,6 +288,9 @@ struct SummaryArgs {
     /// Days summarised, compared with as many days before them
     #[arg(long, value_name = "N", default_value_t = 7)]
     days: i64,
+    /// Levels summarised, comma separated, or "all"; the others in the ledgers are left out
+    #[arg(long, value_name = "LIST", default_value = DEFAULT_NOTIFY_LEVELS)]
+    notify_level: String,
     /// Teams webhook to post it to; without one it is only printed
     #[arg(
         long,
@@ -462,7 +474,12 @@ async fn run(cli: Cli) -> Result<i32> {
         Command::Summary(args) => {
             let (environments, team) =
                 ledgers(&args.from, &args.ledgers, args.team.as_deref()).await?;
-            let weeks = summary::weeks(&environments, &team, args.days);
+            let weeks = summary::weeks(
+                &environments,
+                &team,
+                args.days,
+                &parse_levels(&args.notify_level),
+            );
             for week in &weeks {
                 status(
                     Tone::Info,
@@ -602,6 +619,7 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
 
     let options = ci::RunOptions {
         levels: parse_levels(&args.instance.level),
+        notify_levels: parse_levels(&args.notify_level),
         state: args.state.unwrap_or_else(team_on_this_machine),
         sha: args.sha,
         build: args.build,
@@ -733,6 +751,7 @@ fn local(args: LocalArgs) -> Result<(Local, Dav)> {
     let local = Local {
         config,
         levels: parse_levels(&args.instance.level),
+        notify_levels: parse_levels(&args.notify_level),
         state: args.state.unwrap_or_else(default_state),
         shared: args
             .shared

@@ -234,6 +234,10 @@ pub fn parse_levels(raw: &str) -> Vec<String> {
         .collect()
 }
 
+pub fn has_level(levels: &[String], label: &str) -> bool {
+    levels.iter().any(|level| level == "all" || level == label)
+}
+
 pub fn is_wanted(name: &str, levels: &[String], day: &str) -> bool {
     if !name.ends_with(".log") || !name.contains(day) {
         return false;
