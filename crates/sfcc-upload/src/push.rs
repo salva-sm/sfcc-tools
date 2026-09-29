@@ -1,3 +1,4 @@
+use crate::guard::{self, Overwrite};
 use crate::logging::{self, Change};
 use crate::manifest::{Entry, Manifest, hash_file, manifest_path};
 use crate::scan::{Ignore, LocalFile, cartridge_directories, scan};
@@ -46,6 +47,7 @@ pub struct PushOptions {
     pub full: bool,
     pub dry_run: bool,
     pub show_progress: bool,
+    pub overwrite: Overwrite,
 }
 
 #[derive(Debug, Default)]
@@ -54,6 +56,7 @@ pub struct Stats {
     pub deleted: usize,
     pub bytes: u64,
     pub elapsed: Duration,
+    pub held: usize,
 }
 
 pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
@@ -65,8 +68,8 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
     };
     let files = scan(&ctx.config, &ctx.ignore)?;
 
-    let changed = select_changed(&files, &manifest);
-    let removed = if options.full {
+    let mut changed = select_changed(&files, &manifest);
+    let mut removed = if options.full {
         Vec::new()
     } else {
         select_removed(&files, &manifest)
@@ -97,6 +100,7 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
             deleted: removed.len(),
             bytes,
             elapsed: started.elapsed(),
+            held: 0,
         });
     }
 
@@ -104,6 +108,13 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
         .wait_until_ready(Some(Duration::from_secs(600)))
         .await?;
     ctx.dav.mkcol(ctx.dav.base_url()).await?;
+
+    let mut held = Vec::new();
+    if !options.full {
+        let settled = guard::settle(ctx, &manifest, changed, removed, options.overwrite).await?;
+        (changed, removed, held) = (settled.upserts, settled.removals, settled.held);
+    }
+    let bytes: u64 = changed.iter().map(|file| file.size).sum();
 
     if options.full {
         clear_remote_cartridges(ctx).await?;
@@ -121,8 +132,15 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
         Err(error) => (Vec::new(), Some(error)),
     };
     let uploaded = recorded.len();
+    let sent: Vec<String> = recorded
+        .iter()
+        .map(|(relative, _)| relative.clone())
+        .collect();
     for (relative, entry) in recorded {
         manifest.record(relative, entry);
+    }
+    if !options.full {
+        guard::remember(ctx, &mut manifest, &sent).await;
     }
 
     let mut deleted = 0;
@@ -147,6 +165,7 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
         deleted,
         bytes,
         elapsed: started.elapsed(),
+        held: held.len(),
     };
     logging::ok(format!(
         "{} uploaded, {} deleted, {} in {:.1}s",
@@ -155,6 +174,12 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
         human_bytes(stats.bytes),
         stats.elapsed.as_secs_f64()
     ));
+    if stats.held > 0 {
+        logging::warn(format!(
+            "{} file(s) left as the sandbox has them - `sfcc-upload push --overwrite` replaces them",
+            stats.held
+        ));
+    }
     Ok(stats)
 }
 
@@ -302,6 +327,7 @@ async fn upload_individually(
                     hash,
                     size: file.size,
                     modified_millis: file.modified_millis,
+                    ..Entry::default()
                 },
             )),
             Err(error) => failure = Some(error),
@@ -382,6 +408,7 @@ fn build_archive(files: Vec<LocalFile>) -> Result<Archive> {
                 hash,
                 size: file.size,
                 modified_millis: file.modified_millis,
+                ..Entry::default()
             },
         ));
     }
@@ -509,6 +536,7 @@ mod tests {
                 hash: hash_file(&path).unwrap(),
                 size: file.size,
                 modified_millis: file.modified_millis - 1,
+                ..Entry::default()
             },
         );
         assert!(select_changed(std::slice::from_ref(&file), &manifest).is_empty());
