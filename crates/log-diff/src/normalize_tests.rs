@@ -311,3 +311,34 @@ fn a_system_record_loses_its_site_and_session_columns_too() {
     );
     assert_ne!(storefront.id, other.id);
 }
+
+#[test]
+fn a_doubled_at_is_still_an_email() {
+    let scrubbed = scrub("custom object ID: -- jane.doe@@gmail.com 7 error: boom");
+    assert!(!scrubbed.contains("jane"), "{scrubbed}");
+    assert!(scrubbed.contains("<email>"), "{scrubbed}");
+}
+
+#[test]
+fn the_locale_and_the_template_line_are_not_the_failure() {
+    let warning = |locale: &str, line: u32| {
+        one(
+            "warn-blade1-20260929.log",
+            &format!(
+                "[2026-09-29 10:00:00.000 GMT] WARN PipelineCallServlet|1|Sites-acme-Site|Search-Show|PipelineCall|x com.demandware.X Sites-acme-Site STOREFRONT s r 1 - core.ISML_CustomTagNotDeclared (isitem, org.apache.jsp.a.default_.header, {line}) context id={locale}\n"
+            ),
+        )
+    };
+    assert_eq!(warning("en_FR", 46).id, warning("en_US", 47).id);
+}
+
+#[test]
+fn a_compiled_template_names_its_cartridge() {
+    let scrubbed = scrub(
+        "org.apache.jsp._005fapp_005fcommon_005feu_005facme.cartridges.app_005fcommon_005feu_005facme.default_.common.layout.page_jsp",
+    );
+    assert!(
+        scrubbed.contains("cartridges.app_common_eu_acme.default_"),
+        "{scrubbed}"
+    );
+}

@@ -8,7 +8,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 /// Raise it with any change that gives a failure a different id, so old ledgers relearn quietly
 /// instead of reporting everything as new.
-pub const SIGNATURES: u32 = 3;
+pub const SIGNATURES: u32 = 4;
 /// Below this the stack is the framework's, the same for every failure.
 const FRAMES: usize = 8;
 const EXAMPLE_FRAMES: usize = 3;
@@ -71,7 +71,12 @@ regex!(
     UUID,
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 );
-regex!(EMAIL, r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+");
+// `@@` too: some integrations double it, and the address is still someone's.
+regex!(EMAIL, r"[\w.+-]+@+[\w-]+(?:\.[\w-]+)+");
+// `en_FR`: the locale a request came in, like the site - where, not what.
+regex!(LOCALE, r"\b[a-z]{2}_[A-Z]{2}\b");
+// `core.ISML_CustomTagNotDeclared (tag, template, 46)`: the line inside the template.
+regex!(ISML_LINE, r"(ISML_\w+ \([^()]*), \d+\)");
 regex!(URL, r#"https?://[^\s"'<>()]+"#);
 regex!(IP, r"\b\d{1,3}(?:\.\d{1,3}){3}\b");
 regex!(
@@ -221,12 +226,17 @@ fn strip_header(head: &str) -> (String, Option<String>) {
 }
 
 pub fn scrub(text: &str) -> String {
-    let text = TIMESTAMP.replace_all(text, "<time>");
+    // A compiled template's class spells `_` as `_005f`: `app_005fcommon` is the cartridge
+    // app_common, which reads as an id otherwise.
+    let text = text.replace("_005f", "_").replace("_002d", "-");
+    let text = TIMESTAMP.replace_all(&text, "<time>");
     let text = UUID.replace_all(&text, "<uuid>");
     // Before the email rule, which would cut a query string in two.
     let text = URL.replace_all(&text, |found: &Captures| scrub_url(&found[0]));
     let text = EMAIL.replace_all(&text, "<email>");
     let text = IP.replace_all(&text, "<ip>");
+    let text = LOCALE.replace_all(&text, "<locale>");
+    let text = ISML_LINE.replace_all(&text, "$1, <n>)");
     let text = SECRET.replace_all(&text, "$1$2<redacted>");
     let text = BEARER.replace_all(&text, "$1 <redacted>");
     let text = DECIMAL.replace_all(&text, "<n>");
