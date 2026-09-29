@@ -223,7 +223,8 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> (std::path::PathBuf, Daemon) {
-        let dir = std::env::temp_dir().join(format!("sfcc-core-daemon-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("sfcc-core-daemon-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let daemon = Daemon::named(&dir.join("daemons"), &dir.join("logs"), "sbx__v1");
         (dir, daemon)

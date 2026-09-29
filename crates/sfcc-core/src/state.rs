@@ -93,8 +93,7 @@ impl Daemon {
     }
 
     pub fn is_beating(&self) -> bool {
-        self.heartbeat_age()
-            .is_some_and(|age| age <= STALE_SECONDS)
+        self.heartbeat_age().is_some_and(|age| age <= STALE_SECONDS)
     }
 
     pub fn tail(&self, lines: usize) -> Vec<String> {
@@ -168,7 +167,6 @@ pub mod upload {
             .join("marks")
             .join(format!("{identity}.json"))
     }
-
 }
 
 /// What log-diff last found pending on a sandbox.
