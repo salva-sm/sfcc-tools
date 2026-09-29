@@ -4,6 +4,7 @@
 #   ./install-all.sh                    into ~/.local/bin
 #   DIR=/usr/local/bin ./install-all.sh somewhere else
 #   ./install-all.sh log-diff           just the ones named
+#   ./install-all.sh sfcc-tui           the terminal screen, which is not installed by default
 #
 # Each tool installs on its own as well - this only saves typing the curls.
 set -eu

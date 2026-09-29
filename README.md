@@ -34,6 +34,7 @@ These are the pieces that close those gaps. No instance, no network, no `node_mo
 | 🔎 | **[`crates/log-diff`](crates/log-diff)** | Tells the errors a deploy or a change introduced from the ones already known: DEV, STG and PRD for the team, with spikes and a weekly digest; and each sandbox for its developer |
 | 🧠 | **[`crates/isml-lsp`](crates/isml-lsp)** | Language server: ISML and `dw.*` completion, metadata-backed checks, route override chains, go-to-definition |
 | 🐞 | **[`crates/sfcc-dap`](crates/sfcc-dap)** | Debug adapter for server-side scripts: DAP to the editor, the instance's own debugger API on the other side |
+| 🖥️ | **[`crates/sfcc-tui`](crates/sfcc-tui)** | Optional: one terminal screen for the watchers, the errors `log-diff` has pending and the debug sessions |
 
 **Grammar and Zed extensions** — outside the workspace:
 
@@ -48,7 +49,7 @@ Each has its own README. This one only says how they fit together.
 ## Install
 
 **Binaries** — `sfcc-upload`, `log-diff`, `isml-lsp` and `sfcc-dap`, no toolchain needed, each
-on its own. Grab them from the [latest release](https://github.com/salva-sm/sfcc-tools/releases/latest):
+on its own, and `sfcc-tui` if you want it. Grab them from the [latest release](https://github.com/salva-sm/sfcc-tools/releases/latest):
 
 ```powershell
 # Windows
@@ -76,6 +77,7 @@ cargo install --path crates/sfcc-upload
 cargo install --path crates/log-diff
 cargo install --path crates/isml-lsp
 cargo install --path crates/sfcc-dap
+cargo install --path crates/sfcc-tui     # optional
 ```
 
 ## Suggested tasks
@@ -162,7 +164,7 @@ cargo doc --no-deps --lib --open  # the language server's reference
 
 ## Releasing
 
-One tag, one release, everything on it: the four binaries for five platforms each, and
+One tag, one release, everything on it: the five binaries for five platforms each, and
 both Zed extension zips. The extension can only ask GitHub for the *latest* release, so a
 per-component tag would leave it looking for an asset that release does not carry.
 

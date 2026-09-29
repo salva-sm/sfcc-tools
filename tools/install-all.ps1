@@ -3,6 +3,7 @@
 #   .\install-all.ps1                        into %LOCALAPPDATA%\sfcc-tools\bin
 #   .\install-all.ps1 -Dir C:\tools          somewhere else
 #   .\install-all.ps1 -Only log-diff         just the ones named
+#   .\install-all.ps1 -Only sfcc-tui         the terminal screen, which is not installed by default
 #
 # Each tool installs on its own as well - this only saves typing the curls.
 # The folder is added to the user PATH when it is not there yet.
@@ -18,9 +19,9 @@ $base = 'https://github.com/salva-sm/sfcc-tools/releases/latest/download'
 New-Item -ItemType Directory -Force $Dir | Out-Null
 
 foreach ($tool in $Only) {
-    # The two that are installed by hand ship as a bare .exe; the other two
-    # are zipped for the Zed extensions, which unpack them.
-    if ($tool -in @('sfcc-upload', 'log-diff')) {
+    # What is installed by hand ships as a bare .exe; the language server and
+    # the debug adapter are zipped for the Zed extensions, which unpack them.
+    if ($tool -in @('sfcc-upload', 'log-diff', 'sfcc-tui')) {
         Invoke-WebRequest "$base/$tool-x86_64-windows.exe" -OutFile "$Dir\$tool.exe"
         # A first run puts the tab completion where Git Bash looks for it.
         & "$Dir\$tool.exe" --version | Out-Null
