@@ -98,3 +98,73 @@ fn the_wait_between_retries_doubles_up_to_a_minute() {
     }
     assert_eq!(delays, vec![10, 20, 40, 60, 60]);
 }
+
+const A_JS: &str = "Cartridges/version1/app_x/cartridge/a.js";
+const B_JS: &str = "Cartridges/version1/app_x/cartridge/b.js";
+
+fn on_server(server: &MockDav, path: &str) -> Option<String> {
+    server
+        .file(path)
+        .map(|bytes| String::from_utf8(bytes).unwrap())
+}
+
+#[tokio::test]
+async fn a_file_someone_else_wrote_since_is_neither_overwritten_nor_deleted() {
+    let server = MockDav::start().await;
+    let checkout = Checkout::new("overwritten", &server);
+    let ctx = &checkout.ctx;
+    let mut manifest = Manifest::load(&ctx.manifest_path);
+    let mut retry = None;
+
+    let mut pending = BTreeSet::from([
+        checkout.save("app_x/cartridge/a.js", "mine"),
+        checkout.save("app_x/cartridge/b.js", "mine"),
+    ]);
+    attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+    assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine"));
+
+    // Ours again, with nobody in between: sent as always.
+    pending.insert(checkout.save("app_x/cartridge/a.js", "mine, second"));
+    attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+    assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine, second"));
+    assert_eq!(checkout.status().state, State::Synced);
+
+    server.put(A_JS, "theirs");
+    server.put(B_JS, "theirs");
+    pending.insert(checkout.save("app_x/cartridge/a.js", "mine, third"));
+    let b = ctx.config.cartridges_dir.join("app_x/cartridge/b.js");
+    std::fs::remove_file(&b).unwrap();
+    pending.insert(b);
+    attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+
+    assert_eq!(on_server(&server, A_JS).as_deref(), Some("theirs"));
+    assert_eq!(on_server(&server, B_JS).as_deref(), Some("theirs"));
+    assert!(pending.is_empty() && retry.is_none(), "held, not retried");
+    let status = checkout.status();
+    assert_eq!(status.state, State::Failed);
+    assert!(
+        status
+            .detail
+            .unwrap()
+            .contains("2 file(s) changed on the sandbox")
+    );
+
+    let options = PushOptions {
+        full: false,
+        dry_run: false,
+        show_progress: false,
+        overwrite: Overwrite::Never,
+    };
+    let stats = push(ctx, options).await.unwrap();
+    assert_eq!((stats.uploaded, stats.deleted, stats.held), (0, 0, 2));
+    assert_eq!(on_server(&server, A_JS).as_deref(), Some("theirs"));
+
+    let options = PushOptions {
+        overwrite: Overwrite::Always,
+        ..options
+    };
+    let stats = push(ctx, options).await.unwrap();
+    assert_eq!((stats.uploaded, stats.deleted, stats.held), (1, 1, 0));
+    assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine, third"));
+    assert_eq!(on_server(&server, B_JS), None);
+}

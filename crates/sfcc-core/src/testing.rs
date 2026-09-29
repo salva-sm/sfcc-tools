@@ -15,6 +15,9 @@ const MODIFIED: &str = "Tue, 22 Sep 2026 08:00:00 GMT";
 struct Tree {
     files: BTreeMap<String, Vec<u8>>,
     modified: BTreeMap<String, String>,
+    /// Bumped on every write, the way the instance's `getetag` changes.
+    etags: BTreeMap<String, u64>,
+    writes: u64,
     requests: Vec<String>,
     /// 503 to everything, the way a stopped sandbox answers.
     down: bool,
@@ -63,9 +66,10 @@ impl MockDav {
         }
     }
 
+    /// A write from outside: another developer, another tool.
     pub fn put(&self, path: &str, contents: impl Into<Vec<u8>>) {
         let mut tree = self.tree.lock().unwrap();
-        tree.files.insert(path.to_string(), contents.into());
+        tree.write(path, contents.into());
     }
 
     pub fn append(&self, path: &str, contents: &str) {
@@ -153,7 +157,7 @@ async fn answer(mut stream: TcpStream, tree: &Mutex<Tree>) -> std::io::Result<()
             _ if tree.down => ("503 Service Unavailable", String::new(), Vec::new()),
             (false, _) => ("401 Unauthorized", String::new(), Vec::new()),
             (true, "PUT") => {
-                tree.files.insert(path.clone(), body);
+                tree.write(&path, body);
                 ("201 Created", String::new(), Vec::new())
             }
             (true, "MKCOL") if exists(&tree, &path) => {
@@ -215,6 +219,15 @@ async fn answer(mut stream: TcpStream, tree: &Mutex<Tree>) -> std::io::Result<()
     stream.shutdown().await
 }
 
+impl Tree {
+    fn write(&mut self, path: &str, contents: Vec<u8>) {
+        self.writes += 1;
+        let version = self.writes;
+        self.etags.insert(path.to_string(), version);
+        self.files.insert(path.to_string(), contents);
+    }
+}
+
 /// The folder itself first, then its direct members.
 fn listing(tree: &Tree, folder: &str) -> Option<String> {
     let prefix = format!("{folder}/");
@@ -249,6 +262,7 @@ fn listing(tree: &Tree, folder: &str) -> Option<String> {
         &format!("{SITES}{folder}/"),
         None,
         &modified(folder),
+        None,
     ));
     for (name, size) in members {
         let path = format!("{folder}/{name}");
@@ -256,19 +270,23 @@ fn listing(tree: &Tree, folder: &str) -> Option<String> {
             Some(_) => format!("{SITES}{}", crate::webdav::encode_path(&path)),
             None => format!("{SITES}{}/", crate::webdav::encode_path(&path)),
         };
-        xml.push_str(&response(&href, size, &modified(&path)));
+        let etag = tree.etags.get(&path).copied();
+        xml.push_str(&response(&href, size, &modified(&path), etag));
     }
     xml.push_str("</D:multistatus>");
     Some(xml)
 }
 
-fn response(href: &str, size: Option<usize>, modified: &str) -> String {
+fn response(href: &str, size: Option<usize>, modified: &str, etag: Option<u64>) -> String {
     let kind = match size {
         Some(size) => format!("<D:resourcetype/><D:getcontentlength>{size}</D:getcontentlength>"),
         None => "<D:resourcetype><D:collection/></D:resourcetype>".to_string(),
     };
+    let etag = etag
+        .map(|etag| format!("<D:getetag>{etag:032x}</D:getetag>"))
+        .unwrap_or_default();
     format!(
-        "<D:response><D:href>{href}</D:href><D:propstat><D:prop>{kind}<D:getlastmodified>{modified}</D:getlastmodified></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>"
+        "<D:response><D:href>{href}</D:href><D:propstat><D:prop>{kind}<D:getlastmodified>{modified}</D:getlastmodified>{etag}</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>"
     )
 }
 

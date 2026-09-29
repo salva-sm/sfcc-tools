@@ -1,6 +1,7 @@
 mod daemon;
 mod errors;
 mod githook;
+mod guard;
 mod logging;
 mod manifest;
 mod ocapi;
@@ -232,6 +233,9 @@ struct PushArgs {
     /// List what would be uploaded without touching the sandbox
     #[arg(long)]
     dry_run: bool,
+    /// Replace files someone else changed on the sandbox without asking
+    #[arg(long)]
+    overwrite: bool,
     /// Make the code version active once the upload finishes
     #[arg(long)]
     activate: bool,
@@ -348,6 +352,10 @@ async fn run(cli: Cli) -> Result<()> {
                 full: args.full,
                 dry_run: args.dry_run,
                 show_progress: true,
+                overwrite: match args.overwrite {
+                    true => guard::Overwrite::Always,
+                    false => guard::Overwrite::Ask,
+                },
             };
             push::push(&ctx, options).await?;
             if args.activate && !args.dry_run {

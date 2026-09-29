@@ -8,11 +8,17 @@ use xxhash_rust::xxh3::Xxh3;
 
 const HASH_BUFFER_BYTES: usize = 256 * 1024;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Entry {
     pub hash: u64,
     pub size: u64,
     pub modified_millis: i64,
+    /// The sandbox's `getetag` right after this checkout wrote the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    /// Epoch seconds, for files sent in bulk, whose etag is never read back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_at: Option<i64>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -49,8 +55,20 @@ impl Manifest {
         self.files.get(relative).map(|entry| entry.hash) == Some(hash)
     }
 
-    pub fn record(&mut self, relative: String, entry: Entry) {
+    pub fn record(&mut self, relative: String, mut entry: Entry) {
+        entry
+            .sent_at
+            .get_or_insert_with(|| chrono::Utc::now().timestamp());
         self.files.insert(relative, entry);
+    }
+
+    /// The file itself, or every file under it when it is a folder.
+    pub fn under<'a>(&'a self, path: &str) -> impl Iterator<Item = (&'a String, &'a Entry)> {
+        let folder = format!("{path}/");
+        let path = path.to_string();
+        self.files
+            .iter()
+            .filter(move |(key, _)| **key == path || key.starts_with(&folder))
     }
 
     pub fn forget(&mut self, relative: &str) {

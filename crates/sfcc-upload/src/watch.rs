@@ -1,4 +1,5 @@
 use crate::daemon;
+use crate::guard::{self, Overwrite};
 use crate::logging::{self, Change};
 use crate::manifest::Manifest;
 use crate::problems;
@@ -139,6 +140,7 @@ async fn initial_sync(ctx: &Ctx, options: WatchOptions) -> Result<()> {
                 full: options.full,
                 dry_run: false,
                 show_progress: !options.problems,
+                overwrite: Overwrite::Never,
             },
         )
         .await?;
@@ -180,19 +182,39 @@ async fn attempt(
     sync_status::publish_uploading(&ctx.config, touched.len());
     problems::begin(&format!("uploading {} change(s)", touched.len()));
     match synchronize(ctx, manifest, &touched).await {
-        Ok(sent) => {
+        Ok(synced) => {
             if retry.take().is_some() {
                 logging::ok("sandbox is back - the queued changes are uploaded");
             }
-            problems::synced();
-            sync_status::publish(&ctx.config, sync_status::State::Synced);
-            refresh_browser(browser, &sent).await;
+            match synced.held.is_empty() {
+                true => {
+                    problems::synced();
+                    sync_status::publish(&ctx.config, sync_status::State::Synced);
+                }
+                false => hold(ctx, &synced.held),
+            }
+            refresh_browser(browser, &synced.sent).await;
         }
         Err(error) => {
             pending.extend(touched);
             fail(ctx, pending, format!("{error:#}"), retry);
         }
     }
+}
+
+/// Not retried: waiting will not make someone else's change ours.
+fn hold(ctx: &Ctx, held: &[String]) {
+    let detail = format!(
+        "{} file(s) changed on the sandbox by someone else, not overwritten - `sfcc-upload push --overwrite` replaces them",
+        held.len()
+    );
+    logging::warn(&detail);
+    let files: Vec<PathBuf> = held
+        .iter()
+        .map(|relative| ctx.config.cartridges_dir.join(relative))
+        .collect();
+    problems::failed(&files, &ctx.config.dw_json, &detail);
+    sync_status::publish_failure(&ctx.config, detail);
 }
 
 async fn retry_queued(
@@ -262,24 +284,35 @@ struct Work {
     removals: Vec<String>,
 }
 
+struct Synced {
+    sent: Vec<String>,
+    held: Vec<String>,
+}
+
 async fn synchronize(
     ctx: &Ctx,
     manifest: &mut Manifest,
     touched: &BTreeSet<PathBuf>,
-) -> Result<Vec<String>> {
+) -> Result<Synced> {
     let (candidates, removals) = classify(ctx, touched);
+    let upserts = select_changed(&candidates, manifest);
+    let settled = guard::settle(ctx, manifest, upserts, removals, Overwrite::Never).await?;
     let work = Work {
-        upserts: select_changed(&candidates, manifest),
-        removals,
+        upserts: settled.upserts,
+        removals: settled.removals,
     };
+    let held = settled.held;
     if work.upserts.is_empty() && work.removals.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Synced {
+            sent: Vec::new(),
+            held,
+        });
     }
 
     let outcome = transfer(ctx, manifest, work).await;
     // Saved on failure too, so forgotten files stay forgotten if the watcher stops now.
     manifest.save(&ctx.manifest_path)?;
-    outcome
+    outcome.map(|sent| Synced { sent, held })
 }
 
 /// What did reach the sandbox is recorded even on error, so a resend sends only the rest.
@@ -313,6 +346,7 @@ async fn transfer(ctx: &Ctx, manifest: &mut Manifest, work: Work) -> Result<Vec<
             manifest.record(relative, entry);
         }
         logging::changes(Change::Uploaded, &names);
+        guard::remember(ctx, manifest, &names).await;
         sent.extend(names);
     }
 

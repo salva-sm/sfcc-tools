@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 
 const MAX_ATTEMPTS: u32 = 4;
 const OAUTH_URL: &str = "https://account.demandware.com/dwsso/oauth2/access_token";
-const PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>"#;
+const PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/></d:prop></d:propfind>"#;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Availability {
@@ -27,6 +27,8 @@ pub struct DavEntry {
     pub size: u64,
     /// `getlastmodified`, as the server wrote it.
     pub modified: String,
+    /// `getetag`: changes on every write, even of the same bytes. Empty when not sent.
+    pub etag: String,
 }
 
 struct Token {
@@ -454,6 +456,11 @@ fn parse_multistatus(body: &str, requested_url: &str) -> Vec<DavEntry> {
                 .unwrap_or_default()
                 .trim()
                 .to_string(),
+            etag: inner_text(block, "getetag")
+                .unwrap_or_default()
+                .trim()
+                .trim_matches('"')
+                .to_string(),
         });
     }
     entries
@@ -478,7 +485,7 @@ mod tests {
         "<D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype>",
         "<D:getlastmodified>Fri, 05 Sep 2026 10:00:00 GMT</D:getlastmodified></D:prop></D:propstat></D:response>",
         "<D:response><D:href>/webdav/Sites/Cartridges/version1/readme.txt</D:href>",
-        "<D:propstat><D:prop><D:resourcetype/><D:getcontentlength>42</D:getcontentlength></D:prop></D:propstat></D:response>",
+        "<D:propstat><D:prop><D:resourcetype/><D:getcontentlength>42</D:getcontentlength><D:getetag>fe95ef2b</D:getetag></D:prop></D:propstat></D:response>",
         "</D:multistatus>"
     );
 
@@ -502,5 +509,7 @@ mod tests {
         assert_eq!(names, vec!["app one", "readme.txt"]);
         assert!(entries[0].is_dir);
         assert!(!entries[1].is_dir);
+        assert_eq!(entries[1].etag, "fe95ef2b");
+        assert_eq!(entries[0].etag, "");
     }
 }

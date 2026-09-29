@@ -62,6 +62,7 @@ Run it anywhere inside the repository; `dw.json` is found by walking up.
 sfcc-upload push                # upload what changed since the last sync
 sfcc-upload push --full         # start over: replace every cartridge on the sandbox
 sfcc-upload push --dry-run      # list what would go up, without touching the sandbox
+sfcc-upload push --overwrite    # replace what someone else changed up there, without asking
 sfcc-upload watch               # push, then upload on every save (foreground)
 sfcc-upload start               # same, detached: survives closing the editor
 sfcc-upload start --reload      # same, and reload the storefront tab after each upload
@@ -307,6 +308,20 @@ many changes are queued. They are retried after 10 s, then 20, 40 and every minu
 straight away on the next save; what did arrive is not sent twice. The watcher does not
 hang in a wait meanwhile: its heartbeat, `stop` and `status` keep working.
 
+**Someone else's change.** Before replacing or deleting a file, sfcc-upload checks that the
+sandbox still holds the version this checkout sent. WebDAV's `getetag` changes on every write,
+so after an upload the new etag goes in the manifest. If the etag up there is a different one,
+someone else has written the file since: a colleague on the same code version, Prophet,
+another checkout. `push` lists those files and asks before overwriting them; with no terminal
+to ask at, or with `n`, it leaves them as they are and sends the rest. The watcher never asks.
+It leaves them too, and reports `failed` with how many it held, without retrying. `push
+--overwrite` replaces them. `push --full` does not check: starting over replaces everything.
+
+Files sent in bulk (a full deploy, a large batch) get no etag, because reading one back would
+cost a listing per folder. For those the check uses the date instead: a write more than two
+minutes after ours counts. The instance ignores `If-Match`, so this is a check just before
+the write, not a lock. A write that lands in between still gets through.
+
 **Watching.** Events are debounced 300 ms and coalesced, so a save, a branch switch or a
 webpack rebuild becomes one batch. `start` detaches the process, and keeps a log, pid and
 heartbeat per sandbox and code version.
@@ -361,7 +376,8 @@ path the linker sees may contain non-ASCII characters. On this machine that mean
 
 ## Limitations
 
-- The delta trusts the manifest: if the code version is changed from elsewhere, use `--full`.
+- The delta trusts the manifest. A file someone else changes is only noticed when you change or
+  delete it too. Until then, their version stays on the sandbox. `--full` puts yours back.
 - `cartridge/static/` is uploaded, not built — the webpack build still has to run.
 - `activate` depends on a BM configuration step per sandbox, so it fails until someone does it.
 - Version 0.1.0: exercised end to end against one sandbox, by one person.
