@@ -51,7 +51,7 @@ pub fn report(roots: Vec<PathBuf>, options: Options, sender: Sender<Message>) {
             return;
         }
         if options.autostart && current(&roots).is_none() {
-            for (level, text) in autostart(&roots) {
+            for (level, text) in autostart(&roots, "sfcc-upload", "upload") {
                 if show(&sender, level, text).is_err() {
                     return;
                 }
@@ -104,15 +104,15 @@ fn toast(status: Option<&Status>, failing: &mut bool) -> Option<(MessageType, St
     }
 }
 
-/// `sfcc-upload start` in every root with a dw.json where the uploader looks for one.
-/// Says nothing when it started, or was already running.
-fn autostart(roots: &[PathBuf]) -> Vec<(MessageType, String)> {
+/// `<program> start` in every root with a dw.json where the tools look for one. Says nothing
+/// when it started, or was already running. `setting` is the option that asked for it.
+pub fn autostart(roots: &[PathBuf], program: &str, setting: &str) -> Vec<(MessageType, String)> {
     let mut said = Vec::new();
     for root in roots {
         if !root.join("dw.json").is_file() && !root.join("source").join("dw.json").is_file() {
             continue;
         }
-        let mut command = std::process::Command::new("sfcc-upload");
+        let mut command = std::process::Command::new(program);
         command
             .arg("start")
             .current_dir(root)
@@ -129,13 +129,13 @@ fn autostart(roots: &[PathBuf]) -> Vec<(MessageType, String)> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 said.push((
                     MessageType::WARNING,
-                    "SFCC: upload.autostart is on, but sfcc-upload is not installed".to_string(),
+                    format!("SFCC: {setting}.autostart is on, but {program} is not installed"),
                 ));
                 break;
             }
             Err(error) => said.push((
                 MessageType::WARNING,
-                format!("SFCC: could not start sfcc-upload: {error}"),
+                format!("SFCC: could not start {program}: {error}"),
             )),
             Ok(output) if !output.status.success() => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -147,7 +147,7 @@ fn autostart(roots: &[PathBuf]) -> Vec<(MessageType, String)> {
                         .unwrap_or("it exited with an error");
                     said.push((
                         MessageType::WARNING,
-                        format!("SFCC: sfcc-upload did not start: {}", reason.trim()),
+                        format!("SFCC: {program} did not start: {}", reason.trim()),
                     ));
                 }
             }
@@ -157,7 +157,7 @@ fn autostart(roots: &[PathBuf]) -> Vec<(MessageType, String)> {
     said
 }
 
-fn show(
+pub fn show(
     sender: &Sender<Message>,
     level: MessageType,
     text: String,
@@ -190,7 +190,7 @@ fn covers(status: &Status, roots: &[PathBuf]) -> bool {
 }
 
 fn is_stale(status: &Status) -> bool {
-    now_seconds() - status.at > upload::STALE_SECONDS
+    now_seconds() - status.at > sfcc_core::state::STALE_SECONDS
 }
 
 fn describe(status: &Status) -> String {

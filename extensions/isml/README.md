@@ -318,7 +318,9 @@ when Zed opens it. Not installed, or unable to start, it says so in a notificati
 }
 ```
 
-`autostart` is off by default; `notify` is on.
+`autostart` is off by default; `notify` is on. `"errors": { "autostart": true }` does the
+same for `log-diff start`, so what a change breaks on the sandbox shows in the status bar
+without a terminal open for it.
 
 The file is keyed by the cartridges directory, so a workspace finds its own watcher
 without having to reproduce how the sandbox identity is derived. A watcher that stops

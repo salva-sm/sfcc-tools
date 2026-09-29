@@ -3,6 +3,8 @@
 #[cfg(feature = "completions")]
 pub mod completions;
 pub mod config;
+#[cfg(feature = "daemon")]
+pub mod daemon;
 #[cfg(feature = "webdav")]
 pub mod logs;
 pub mod state;

@@ -18,8 +18,34 @@ const POLL: Duration = Duration::from_secs(5);
 pub use sfcc_core::state::errors::Status;
 use sfcc_core::state::{errors, is_within, now_seconds};
 
-pub fn report(roots: Vec<PathBuf>, sender: Sender<Message>) {
+/// `errors` in the initialization options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Options {
+    /// `log-diff start` for a workspace with a dw.json. Off by default.
+    pub autostart: bool,
+}
+
+impl Options {
+    pub fn from_settings(settings: Option<&serde_json::Value>) -> Options {
+        Options {
+            autostart: settings
+                .and_then(|settings| settings.get("errors"))
+                .and_then(|errors| errors.get("autostart"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        }
+    }
+}
+
+pub fn report(roots: Vec<PathBuf>, options: Options, sender: Sender<Message>) {
     std::thread::spawn(move || {
+        if options.autostart {
+            for (level, text) in crate::sync::autostart(&roots, "log-diff", "errors") {
+                if crate::sync::show(&sender, level, text).is_err() {
+                    return;
+                }
+            }
+        }
         if create_token(&sender).is_err() {
             return;
         }
@@ -118,6 +144,15 @@ mod tests {
             new,
             at: 0,
         }
+    }
+
+    #[test]
+    fn starts_log_diff_only_when_asked() {
+        let on = serde_json::json!({ "errors": { "autostart": true } });
+        assert!(Options::from_settings(Some(&on)).autostart);
+        let off = serde_json::json!({ "upload": { "autostart": true } });
+        assert!(!Options::from_settings(Some(&off)).autostart);
+        assert!(!Options::from_settings(None).autostart);
     }
 
     #[test]

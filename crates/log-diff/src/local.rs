@@ -301,8 +301,10 @@ impl Local {
         let mut team: Option<(Instant, Ledger)> = None;
         let mut shown: Option<Vec<String>> = None;
         let mut offline = false;
+        let daemon = errors::daemon(&self.config.identity());
 
         loop {
+            daemon.beat();
             match reachable(dav).await? {
                 Some(reason) => {
                     if !offline {
@@ -340,7 +342,11 @@ impl Local {
                     }
                 }
             }
-            tokio::time::sleep(interval).await;
+            let next = Instant::now() + interval;
+            while Instant::now() < next {
+                tokio::time::sleep(state::HEARTBEAT_EVERY.min(next - Instant::now())).await;
+                daemon.beat();
+            }
         }
     }
 }

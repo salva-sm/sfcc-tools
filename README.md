@@ -83,25 +83,33 @@ cargo install --path crates/sfcc-dap
 Few, because most of it starts on its own. The watcher starts with the editor, its state
 shows in the editor's status, and debugging has its own configuration. What is left to run
 by hand is a `push` (in a terminal, where it can ask before overwriting a colleague's
-change), the sandbox log, and `log-diff watch` where the editor cannot start it itself.
+change) and the sandbox log.
 
 **The team's ledger (optional).** `log-diff` compares your sandbox with what the team already
 knows when `LOG_DIFF_SHARED` points at the ledger. It can be a raw URL, a clone of the ledger
 repository (its `ledgers/dev.json` is read) or a ledger file. Set it once in your user
-environment, and the tasks below need nothing:
+environment, and nothing below needs it:
 
 ```bash
 setx LOG_DIFF_SHARED "https://raw.githubusercontent.com/<owner>/sfcc-log-ledger/main/ledgers/dev.json"
 ```
 
-To keep it per project instead, add `"env": { "LOG_DIFF_SHARED": "…" }` to the `log-diff`
-task. A path that is not there is said on every check. With no ledger at all, `log-diff`
+In VS Code it can also go in the `log-diff` task's `"env"`, per project. A path that is not
+there is said on every check. With no ledger at all, `log-diff`
 still works and compares only against what you have seen.
 
-**Zed.** Start the watcher with the workspace, in `.zed/settings.json`:
+**Zed.** Start both watchers with the workspace, in `.zed/settings.json`: the uploader, and
+`log-diff`. Both run detached (`sfcc-upload start`, `log-diff start`), outlive Zed, and show
+in its status bar:
 
 ```json
-{ "lsp": { "isml-lsp": { "initialization_options": { "upload": { "autostart": true } } } } }
+{
+  "lsp": {
+    "isml-lsp": {
+      "initialization_options": { "upload": { "autostart": true }, "errors": { "autostart": true } }
+    }
+  }
+}
 ```
 
 and `.zed/tasks.json`, run with `task: spawn`:
@@ -109,8 +117,7 @@ and `.zed/tasks.json`, run with `task: spawn`:
 ```json
 [
   { "label": "SFCC: push", "command": "sfcc-upload", "args": ["push"], "allow_concurrent_runs": false },
-  { "label": "SFCC: sandbox log", "command": "sfcc-upload", "args": ["logger"], "use_new_terminal": true, "allow_concurrent_runs": false },
-  { "label": "log-diff: watch", "command": "log-diff", "args": ["watch"], "reveal": "no_focus", "allow_concurrent_runs": false }
+  { "label": "SFCC: sandbox log", "command": "sfcc-upload", "args": ["logger"], "use_new_terminal": true, "allow_concurrent_runs": false }
 ]
 ```
 
