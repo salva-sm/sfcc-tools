@@ -491,3 +491,32 @@ fn a_ledger_path_that_is_not_there_is_said() {
     assert!(ledger.cursor_for("dev.example.com").is_none());
     assert!(warning.unwrap().contains("no team ledger at"));
 }
+
+#[test]
+fn counts_where_a_failure_happened_under_one_signature() {
+    let on = |site: &str, controller: &str| {
+        format!(
+            "[2026-09-22 21:38:04.112 GMT] ERROR PipelineCallServlet|1|Sites-{site}-Site|{controller}|PipelineCall|x c [] TypeError: boom\n\tat app_x/cartridge/scripts/a.js:10 (f)\n"
+        )
+    };
+    let first = found(&format!(
+        "{}{}",
+        on("guess_na", "Cart-Show"),
+        on("guess_na", "Product-Show")
+    ));
+    let later = found(&on("rag_bone", "Cart-Show"));
+    assert_eq!(first.signature.id, later.signature.id);
+
+    let mut ledger = Ledger::default();
+    ledger.observe(&first, None, false);
+    ledger.observe(&later, None, false);
+    let known = &ledger.known_signatures[&first.signature.id];
+
+    assert_eq!(known.count, 3);
+    assert_eq!(
+        known.sites,
+        BTreeMap::from([("guess_na".to_string(), 2), ("rag_bone".to_string(), 1)])
+    );
+    assert_eq!(known.controllers["Cart-Show"], 2);
+    assert_eq!(known.controllers["Product-Show"], 1);
+}

@@ -218,6 +218,7 @@ async fn throughput() {
         spike_min: 20,
         spike_factor: 5.0,
         environment: Some("prd".to_string()),
+        skip_sites: Vec::new(),
     };
     for (name, _) in &files {
         server.put(&format!("Logs/{name}"), Vec::new());

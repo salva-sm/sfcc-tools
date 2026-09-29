@@ -168,6 +168,13 @@ known failure should not turn new because of that. A different function, file or
 a different signature. The line numbers are still kept in what is shown, where they are the
 thing you need.
 
+Where it happened is not what failed: the thread (servlet, site, controller), the site and
+session columns of a system log, and the "generated more than 10 times... suppressed" the
+instance puts in front of a repeated record all stay out of the hash. The same failure on
+`Cart-Show` of one site and `Product-Show` of another is one signature; the ledger counts its
+records per site and per controller (`sites`, `controllers`) instead. `--skip-sites` leaves a
+switched-off site's records out altogether.
+
 The ledger keeps one scrubbed example per signature, never raw log lines. Scrubbing is
 pattern matching, not understanding: a message that spells out a customer's name in plain
 words keeps it. Keep the ledger repository private.

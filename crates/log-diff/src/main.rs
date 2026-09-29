@@ -283,6 +283,9 @@ struct RunArgs {
     /// Call the instance this in reports - dev, stg, prd - rather than by its host
     #[arg(long, value_name = "NAME")]
     environment: Option<String>,
+    /// Sites switched off, comma separated: their records are neither counted nor reported
+    #[arg(long, value_name = "LIST", value_delimiter = ',')]
+    skip_sites: Vec<String>,
 }
 
 #[derive(Args)]
@@ -649,6 +652,7 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
         spike_min: args.spike_min,
         spike_factor: args.spike_factor,
         environment: args.environment,
+        skip_sites: args.skip_sites,
     };
     let had_cursor = ledger::Ledger::load(&options.state)?
         .cursor_for(&config.hostname)

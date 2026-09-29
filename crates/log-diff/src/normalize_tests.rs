@@ -244,3 +244,70 @@ fn an_expression_in_a_template_is_placed_at_the_template_not_at_render_js() {
         Some("search/searchResultsNoDecorator.isml")
     );
 }
+
+fn in_template(thread: &str) -> String {
+    format!(
+        "[2026-09-29 10:00:00.000 GMT] ERROR {thread} custom.isml [] TypeError: Cannot read property \"ID\" from null ([Template:common/layout/page:${{pdict.category.ID}}]#1)\n\tat [Template:common/layout/page:${{pdict.category.ID}}]:1\n\tat modules/server/render.js:22 (template)\n"
+    )
+}
+
+#[test]
+fn one_failure_is_one_signature_on_every_site_and_controller() {
+    let cart = one(
+        "customerror-blade1-20260929.log",
+        &in_template("PipelineCallServlet|12|Sites-guess_na-Site|Cart-Show|PipelineCall|abc"),
+    );
+    let product = one(
+        "customerror-blade2-20260929.log",
+        &in_template("PipelineCallServlet|98|Sites-rag_bone-Site|Product-Show|PipelineCall|xyz"),
+    );
+
+    assert_eq!(cart.id, product.id);
+    assert_eq!(cart.site.as_deref(), Some("guess_na"));
+    assert_eq!(cart.controller.as_deref(), Some("Cart-Show"));
+    assert_eq!(product.site.as_deref(), Some("rag_bone"));
+    assert_eq!(product.controller.as_deref(), Some("Product-Show"));
+}
+
+#[test]
+fn the_filter_repeating_a_failure_is_the_same_failure() {
+    let first = one(
+        "customerror-blade1-20260929.log",
+        &in_template("PipelineCallServlet|12|Sites-guess_na-Site|Cart-Show|PipelineCall|abc"),
+    );
+    let repeated = one(
+        "customerror-blade1-20260929.log",
+        &in_template("RepeatedMessageSuppressingFilter-Thread").replace(
+            "[] TypeError",
+            "[] The following message was generated more than 10 times within the last 180 seconds. It will be suppressed for 180 seconds: TypeError",
+        ),
+    );
+
+    assert_eq!(first.id, repeated.id);
+    assert_eq!(repeated.controller, None);
+}
+
+#[test]
+fn a_system_record_loses_its_site_and_session_columns_too() {
+    let system = |thread: &str, context: &str| {
+        one(
+            "error-blade1-20260929.log",
+            &format!(
+                "[2026-09-29 10:00:00.000 GMT] ERROR {thread} org.apache.jsp.x.default_.common.layout.page {context} - Error in template script.\n"
+            ),
+        )
+    };
+    let storefront = system(
+        "PipelineCallServlet|12|Sites-guess_na-Site|Cart-Show|PipelineCall|abc",
+        "Sites-guess_na-Site STOREFRONT sessionid123abc requestid456def 5361824311231047680",
+    );
+    let repeated = system("RepeatedMessageSuppressingFilter-Thread", "- - - - -");
+
+    assert_eq!(storefront.id, repeated.id);
+    // Another template is another failure.
+    let other = one(
+        "error-blade1-20260929.log",
+        "[2026-09-29 10:00:00.000 GMT] ERROR PipelineCallServlet|12|Sites-guess_na-Site|Cart-Show|PipelineCall|abc org.apache.jsp.x.default_.cart.cart Sites-guess_na-Site STOREFRONT s r 1 - Error in template script.\n",
+    );
+    assert_ne!(storefront.id, other.id);
+}

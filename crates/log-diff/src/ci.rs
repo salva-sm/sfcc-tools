@@ -28,6 +28,8 @@ pub struct RunOptions {
     pub spike_min: u64,
     pub spike_factor: f64,
     pub environment: Option<String>,
+    /// A disabled site still logs - jobs, stray requests - but nobody will fix it.
+    pub skip_sites: Vec<String>,
 }
 
 pub struct Outcome {
@@ -75,7 +77,7 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
     if baseline && options.baseline_days > 0 {
         // Days the instance already archived are only in log_archive, learned one file at a time.
         for file in logs::archive_files(dav, &from.day, &options.levels).await? {
-            let mut found = Findings::new();
+            let mut found = Findings::skipping(&options.skip_sites);
             let mut first: Option<DateTime<Utc>> = None;
             logs::read_archived_each(dav, &file, |entry| {
                 first = first.into_iter().chain(entry.moment_utc()).min();
@@ -89,7 +91,7 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
             }
         }
     }
-    let mut live = Findings::new();
+    let mut live = Findings::skipping(&options.skip_sites);
     let mut first: Option<DateTime<Utc>> = None;
     let (next, reading) = logs::since_each(dav, &from, &options.levels, |entry| {
         first = first.into_iter().chain(entry.moment_utc()).min();
