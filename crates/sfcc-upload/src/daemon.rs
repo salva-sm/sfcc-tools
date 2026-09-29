@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use sfcc_core::config::Config;
-use sfcc_core::state::{now_seconds, uploader_dir};
+use sfcc_core::state::upload;
+pub use sfcc_core::state::upload::{heartbeat_age, write_heartbeat};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -8,7 +9,6 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
-const STALE_HEARTBEAT: i64 = 90;
 
 #[derive(Debug, Clone)]
 pub struct SpawnArgs {
@@ -18,34 +18,15 @@ pub struct SpawnArgs {
 }
 
 pub fn pid_path(config: &Config) -> PathBuf {
-    uploader_dir()
-        .join("daemons")
-        .join(format!("{}.pid", config.identity()))
+    upload::pid_path(&config.identity())
 }
 
 pub fn log_path(config: &Config) -> PathBuf {
-    uploader_dir()
-        .join("logs")
-        .join(format!("{}.log", config.identity()))
+    upload::log_path(&config.identity())
 }
 
 pub fn heartbeat_path(config: &Config) -> PathBuf {
-    uploader_dir()
-        .join("daemons")
-        .join(format!("{}.beat", config.identity()))
-}
-
-pub fn write_heartbeat(path: &Path) {
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(path, now_seconds().to_string());
-}
-
-pub fn heartbeat_age(path: &Path) -> Option<i64> {
-    let raw = std::fs::read_to_string(path).ok()?;
-    let stamp: i64 = raw.trim().parse().ok()?;
-    Some(now_seconds() - stamp)
+    upload::heartbeat_path(&config.identity())
 }
 
 pub fn running_pid(config: &Config) -> Option<u32> {
@@ -149,7 +130,7 @@ pub struct Running {
 
 /// Pid files of watchers that died are cleared on the way.
 pub fn running_anywhere() -> Vec<Running> {
-    let Ok(entries) = std::fs::read_dir(uploader_dir().join("daemons")) else {
+    let Ok(entries) = std::fs::read_dir(upload::daemons_dir()) else {
         return Vec::new();
     };
     let mut running = Vec::new();
@@ -191,9 +172,8 @@ fn describe_identity(identity: &str) -> Option<String> {
 
 pub fn stop_running(watcher: &Running) -> Result<()> {
     terminate(watcher.pid)?;
-    let daemons = uploader_dir().join("daemons");
-    let _ = std::fs::remove_file(daemons.join(format!("{}.pid", watcher.identity)));
-    let _ = std::fs::remove_file(daemons.join(format!("{}.beat", watcher.identity)));
+    let _ = std::fs::remove_file(upload::pid_path(&watcher.identity));
+    let _ = std::fs::remove_file(upload::heartbeat_path(&watcher.identity));
     let _ = std::fs::remove_file(sfcc_core::state::upload::path(&watcher.identity));
     Ok(())
 }
@@ -242,7 +222,7 @@ pub fn describe_state(config: &Config) -> String {
     match running_pid(config) {
         None => "stopped".to_string(),
         Some(pid) => match heartbeat_age(&heartbeat_path(config)) {
-            Some(age) if age > STALE_HEARTBEAT => {
+            Some(age) if age > upload::STALE_SECONDS => {
                 format!("running (pid {pid}), last heartbeat {age}s ago")
             }
             Some(age) => format!("running (pid {pid}), heartbeat {age}s ago"),

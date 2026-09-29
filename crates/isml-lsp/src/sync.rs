@@ -16,9 +16,6 @@ use lsp_types::{
 
 const TOKEN: &str = "sfcc/sync";
 const POLL: Duration = Duration::from_millis(1500);
-/// A watcher writes on every transition and beats every 20 s; past a minute
-/// with no word, it is gone rather than quiet.
-const STALE_SECONDS: i64 = 90;
 
 pub use sfcc_core::state::upload::{State, Status};
 use sfcc_core::state::{is_within, now_seconds, upload};
@@ -193,7 +190,7 @@ fn covers(status: &Status, roots: &[PathBuf]) -> bool {
 }
 
 fn is_stale(status: &Status) -> bool {
-    now_seconds() - status.at > STALE_SECONDS
+    now_seconds() - status.at > upload::STALE_SECONDS
 }
 
 fn describe(status: &Status) -> String {

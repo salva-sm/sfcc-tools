@@ -84,6 +84,9 @@ pub mod upload {
         pub at: i64,
     }
 
+    /// A watcher beats every 20 s; past this with no word it is gone, not quiet.
+    pub const STALE_SECONDS: i64 = 90;
+
     pub fn dir() -> PathBuf {
         uploader_dir().join("status")
     }
@@ -94,6 +97,46 @@ pub mod upload {
 
     pub fn all() -> Vec<Status> {
         read_all(&dir())
+    }
+
+    pub fn daemons_dir() -> PathBuf {
+        uploader_dir().join("daemons")
+    }
+
+    pub fn pid_path(identity: &str) -> PathBuf {
+        daemons_dir().join(format!("{identity}.pid"))
+    }
+
+    pub fn heartbeat_path(identity: &str) -> PathBuf {
+        daemons_dir().join(format!("{identity}.beat"))
+    }
+
+    pub fn log_path(identity: &str) -> PathBuf {
+        uploader_dir().join("logs").join(format!("{identity}.log"))
+    }
+
+    pub fn manifest_path(identity: &str) -> PathBuf {
+        uploader_dir()
+            .join("manifests")
+            .join(format!("{identity}.json"))
+    }
+
+    pub fn mark_path(identity: &str) -> PathBuf {
+        uploader_dir()
+            .join("marks")
+            .join(format!("{identity}.json"))
+    }
+
+    pub fn write_heartbeat(path: &Path) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, now_seconds().to_string());
+    }
+
+    pub fn heartbeat_age(path: &Path) -> Option<i64> {
+        let stamp: i64 = std::fs::read_to_string(path).ok()?.trim().parse().ok()?;
+        Some(now_seconds() - stamp)
     }
 }
 
@@ -111,6 +154,9 @@ pub mod errors {
         pub new: usize,
         pub at: i64,
     }
+
+    /// A check a day old says nothing about now; `watch` writes every few seconds.
+    pub const STALE_SECONDS: i64 = 24 * 60 * 60;
 
     pub fn dir() -> PathBuf {
         log_diff_dir().join("status")
