@@ -1,6 +1,5 @@
 //! Uploader state via LSP progress, Zed's only status channel for an extension.
 //! Only uploading and failed are shown: a progress item that never ends reads as a stuck spinner.
-//! Reads one JSON file per watcher under the uploader's state directory: the layout both programs must agree on.
 
 use crossbeam_channel::{SendError, Sender};
 use std::path::{Path, PathBuf};
@@ -21,30 +20,8 @@ const POLL: Duration = Duration::from_millis(1500);
 /// with no word, it is gone rather than quiet.
 const STALE_SECONDS: i64 = 90;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum State {
-    Synced,
-    Uploading,
-    /// The last upload failed; the changes are still queued.
-    Failed,
-    Stopped,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct Status {
-    pub state: State,
-    /// How a workspace recognises its own watcher.
-    pub cartridges: String,
-    pub hostname: String,
-    /// Files in the batch the state refers to.
-    #[serde(default)]
-    pub files: usize,
-    #[serde(default)]
-    pub detail: Option<String>,
-    /// Seconds since the epoch.
-    pub at: i64,
-}
+pub use sfcc_core::state::upload::{State, Status};
+use sfcc_core::state::{is_within, now_seconds, upload};
 
 /// `upload` in the initialization options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,12 +175,8 @@ fn show(
 }
 
 pub fn current(roots: &[PathBuf]) -> Option<Status> {
-    let directory = status_dir()?;
     let mut best: Option<Status> = None;
-    for entry in std::fs::read_dir(directory).ok()?.flatten() {
-        let Some(status) = read(&entry.path()) else {
-            continue;
-        };
+    for status in upload::all() {
         if !covers(&status, roots) || is_stale(&status) {
             continue;
         }
@@ -214,29 +187,13 @@ pub fn current(roots: &[PathBuf]) -> Option<Status> {
     best
 }
 
-fn read(path: &Path) -> Option<Status> {
-    if path.extension().is_none_or(|extension| extension != "json") {
-        return None;
-    }
-    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
-}
-
 fn covers(status: &Status, roots: &[PathBuf]) -> bool {
-    let watched = PathBuf::from(&status.cartridges);
-    roots.iter().any(|root| watched.starts_with(root))
+    let watched = Path::new(&status.cartridges);
+    roots.iter().any(|root| is_within(watched, root))
 }
 
 fn is_stale(status: &Status) -> bool {
     now_seconds() - status.at > STALE_SECONDS
-}
-
-/// The uploader's state directory, as it derives it.
-fn status_dir() -> Option<PathBuf> {
-    let root = match std::env::var("LOCALAPPDATA") {
-        Ok(local) if cfg!(windows) => PathBuf::from(local),
-        _ => PathBuf::from(std::env::var("XDG_STATE_HOME").ok()?),
-    };
-    Some(root.join("sfcc-upload").join("status"))
 }
 
 fn describe(status: &Status) -> String {
@@ -296,13 +253,6 @@ fn create_token(sender: &Sender<Message>) -> Result<(), SendError<Message>> {
     )))
 }
 
-fn now_seconds() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,6 +262,7 @@ mod tests {
             state,
             cartridges: "/repo/source/cartridges".into(),
             hostname: "sbx-001.example.com".into(),
+            code_version: "version1".into(),
             files: 7,
             detail: None,
             at,

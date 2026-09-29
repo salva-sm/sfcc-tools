@@ -2,13 +2,14 @@
 //! notification, never a missed one.
 
 use crate::finding::{Finding, findings};
-use crate::ledger::{Known, Ledger, Seen, Standing, by_importance, load_shared, local_dir};
+use crate::ledger::{Known, Ledger, Seen, Standing, by_importance, load_shared};
 use crate::notify::{self, headline};
 use crate::output::{self, Badge, Card, Tone, status};
 use anyhow::{Result, bail};
 use chrono::{SecondsFormat, Utc};
 use sfcc_core::config::Config;
 use sfcc_core::logs::{self, Mark};
+use sfcc_core::state::{self, errors, log_diff_dir};
 use sfcc_core::webdav::{Availability, Dav};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -61,19 +62,13 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-/// The one layout the ISML language server has to share.
-fn status_path(config: &Config) -> PathBuf {
-    local_dir()
-        .join("status")
-        .join(format!("{}.json", config.identity()))
-}
-
 impl Local {
     pub async fn team(&self) -> Result<Ledger> {
         let Some(source) = &self.shared else {
             return Ok(Ledger::default());
         };
-        let (ledger, warning) = load_shared(source, &local_dir().join("shared-cache.json")).await?;
+        let (ledger, warning) =
+            load_shared(source, &log_diff_dir().join("shared-cache.json")).await?;
         if let Some(warning) = warning {
             status(Tone::Warn, &warning);
         }
@@ -140,20 +135,16 @@ impl Local {
         })
     }
 
-    /// Read by the ISML language server for Zed's status bar. Never fails a pass.
+    /// Read by the ISML language server for Zed's status bar.
     fn write_status(&self, pending: usize, fresh: usize) {
-        let path = status_path(&self.config);
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let status = serde_json::json!({
-            "cartridges": self.config.cartridges_dir.to_string_lossy(),
-            "hostname": self.config.hostname,
-            "pending": pending,
-            "new": fresh,
-            "at": Utc::now().timestamp(),
-        });
-        let _ = std::fs::write(path, status.to_string());
+        let status = errors::Status {
+            cartridges: self.config.cartridges_dir.to_string_lossy().into_owned(),
+            hostname: self.config.hostname.clone(),
+            pending,
+            new: fresh,
+            at: Utc::now().timestamp(),
+        };
+        state::write(&errors::path(&self.config.identity()), &status);
     }
 
     pub fn report(&self, outcome: &Outcome) {

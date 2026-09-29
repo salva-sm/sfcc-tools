@@ -1,7 +1,6 @@
 //! What the sandbox logged between a mark and now.
 
 use crate::logging;
-use crate::manifest::state_dir;
 use crate::push::Ctx;
 use crate::tail::{Entry, Printer};
 use crate::webdav::Ready;
@@ -9,6 +8,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use sfcc_core::config::Config;
 use sfcc_core::logs::{self, Mark};
+use sfcc_core::state::uploader_dir;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -21,7 +21,7 @@ pub struct ReportOptions {
 }
 
 fn mark_path(config: &Config) -> PathBuf {
-    state_dir()
+    uploader_dir()
         .join("marks")
         .join(format!("{}.json", config.identity()))
 }

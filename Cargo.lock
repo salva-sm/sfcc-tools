@@ -1139,6 +1139,7 @@ dependencies = [
  "roxmltree",
  "serde",
  "serde_json",
+ "sfcc-core",
 ]
 
 [[package]]

@@ -7,7 +7,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use sfcc_core::logs::Mark;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 /// A newer format is refused rather than rewritten without the fields this build does not know.
@@ -505,21 +505,6 @@ pub async fn fetch(url: &str) -> Result<String> {
         bail!("HTTP {}", response.status());
     }
     Ok(response.text().await?)
-}
-
-pub fn local_dir() -> PathBuf {
-    if cfg!(windows)
-        && let Ok(appdata) = std::env::var("APPDATA")
-    {
-        return PathBuf::from(appdata).join("log-diff");
-    }
-    if let Ok(config) = std::env::var("XDG_CONFIG_HOME")
-        && !config.is_empty()
-    {
-        return PathBuf::from(config).join("log-diff");
-    }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".config").join("log-diff")
 }
 
 #[cfg(test)]

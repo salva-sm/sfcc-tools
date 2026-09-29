@@ -860,12 +860,12 @@ fn short(sha: &str) -> &str {
 }
 
 fn default_state() -> PathBuf {
-    ledger::local_dir().join("local-ledger.json")
+    sfcc_core::state::log_diff_dir().join("local-ledger.json")
 }
 
 /// Where `run` keeps the team's ledger without a ledger repository; `check` and `watch` read it.
 fn team_on_this_machine() -> PathBuf {
-    ledger::local_dir().join("dev-ledger.json")
+    sfcc_core::state::log_diff_dir().join("dev-ledger.json")
 }
 
 fn parse_interval(raw: &str) -> Result<Duration> {
