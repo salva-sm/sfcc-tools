@@ -331,17 +331,17 @@ production is refused outright, with no override; anything else that is not a sa
 
 ## Measured
 
-A full storefront checkout, `--jobs 4`. The Prophet column was timed with the same
-instrument wherever an equivalent operation exists:
+A full storefront checkout, `--jobs 4`, on 29 September 2026. The Prophet column is from 5
+September, timed with the same instrument wherever an equivalent operation exists:
 
 | Scenario | sfcc-upload | Prophet 1.4.81 |
 | -------- | --------- | -------------- |
-| Cold full deploy of everything | 23,7 s | ~60 s |
-| Redeploy with nothing changed | 0,4 s | ~60 s |
-| 200 files created at once, watcher | 2,4 s | 6,6 s |
-| 200 files deleted at once, watcher | 3,2 s | 2,2 s |
-| Save to uploaded, watcher | 0,90 s | 1,05 s |
-| One changed file via `push` | 1,3 s | no equivalent |
+| Cold full deploy of everything | 21–35 s | ~60 s |
+| Redeploy with nothing changed | 0,2 s | ~60 s |
+| 200 files created at once, watcher | 2,5 s | 6,6 s |
+| 200 files deleted at once, watcher | 4,8 s | 2,2 s |
+| Save to uploaded, watcher | 0,79 s | 1,05 s |
+| One changed file via `push` | 0,8 s | no equivalent |
 
 Method and raw samples: [BENCHMARK.md](BENCHMARK.md).
 
