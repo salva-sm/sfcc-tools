@@ -132,6 +132,9 @@ export GITHUB_TOKEN=<fine-grained token, this repository, Contents: read-only>
 ```
 
 Without access to this repository they still work, comparing against what you have seen.
+`log-diff start` keeps watching in the background, surviving the terminal (`log-diff stop` ends
+it), and the ISML extension for Zed starts it with the workspace, with
+`"errors": { "autostart": true }` in its initialization options.
 
 ## Keep it private
 
