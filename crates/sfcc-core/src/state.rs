@@ -148,6 +148,11 @@ pub mod upload {
         read_all(&dir())
     }
 
+    /// With the identity each one's other files are named by.
+    pub fn named() -> Vec<(String, Status)> {
+        read_named(&dir())
+    }
+
     pub fn daemons_dir() -> PathBuf {
         uploader_dir().join("daemons")
     }
@@ -197,6 +202,11 @@ pub mod errors {
 
     pub fn all() -> Vec<Status> {
         read_all(&dir())
+    }
+
+    /// With the identity its daemon's files are named by.
+    pub fn named() -> Vec<(String, Status)> {
+        read_named(&dir())
     }
 
     pub fn daemons_dir() -> PathBuf {
@@ -251,13 +261,26 @@ pub fn read<T: DeserializeOwned>(path: &Path) -> Option<T> {
 }
 
 fn read_all<T: DeserializeOwned>(dir: &Path) -> Vec<T> {
+    read_named(dir)
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect()
+}
+
+fn read_named<T: DeserializeOwned>(dir: &Path) -> Vec<(String, T)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    entries
+    let mut found: Vec<(String, T)> = entries
         .flatten()
-        .filter_map(|entry| read(&entry.path()))
-        .collect()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_stem()?.to_str()?.to_string();
+            Some((name, read(&path)?))
+        })
+        .collect();
+    found.sort_by(|left, right| left.0.cmp(&right.0));
+    found
 }
 
 /// Separators, and on Windows case, aside: `dw.json` and an editor rarely spell a path alike.
