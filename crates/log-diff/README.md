@@ -119,8 +119,9 @@ else here) and `--level` for the log files to read, `error,customerror,fatal` by
 Teams, the desktop, the editor - with the same default: a level read and not in it, say
 `--level error,customerror,fatal,warn,customwarn`, is kept in the ledger and never notified.
 
-The team's ledger comes from `--shared` or `LOG_DIFF_SHARED`: a path to a clone of the
-ledger repository, or a raw URL. A URL to a private repository is fetched with
+The team's ledger comes from `--shared` or `LOG_DIFF_SHARED`: a clone of the ledger
+repository (its `ledgers/dev.json` is read), a ledger file, or a raw URL. A path that is not
+there is said on every check rather than read as an empty ledger. A URL to a private repository is fetched with
 `LOG_DIFF_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` or the token of your `gh` login - sent to GitHub
 only, whatever the URL; when it cannot be fetched the last copy is used, so an outage does
 not turn everything the team knows into news.

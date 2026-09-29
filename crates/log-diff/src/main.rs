@@ -43,8 +43,9 @@ Examples:
                                        CI: record a deploy and update the team's ledger
   log-diff notify --report new.json    CI: post what `run --report` found to Teams
 
-The team's ledger comes from --shared or LOG_DIFF_SHARED: a path to a clone of the
-ledger repository, or a raw URL (with LOG_DIFF_TOKEN or GITHUB_TOKEN when it is private).
+The team's ledger comes from --shared or LOG_DIFF_SHARED: a clone of the ledger repository
+(its ledgers/dev.json), a ledger file, or a raw URL (with LOG_DIFF_TOKEN or GITHUB_TOKEN
+when it is private).
 With neither, the one `run` keeps on this machine is used, if there is one; with none at
 all, check and watch still work, comparing against what you have seen.";
 
