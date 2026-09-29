@@ -41,6 +41,8 @@ pub struct Outcome {
     /// The ledger was signed another way: learned again instead of reporting.
     pub resigned: bool,
     pub known: usize,
+    /// The live log's read, archive left out.
+    pub reading: logs::Reading,
 }
 pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Outcome> {
     let host = &config.hostname;
@@ -89,7 +91,7 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
     }
     let mut live = Findings::new();
     let mut first: Option<DateTime<Utc>> = None;
-    let next = logs::since_each(dav, &from, &options.levels, |entry| {
+    let (next, reading) = logs::since_each(dav, &from, &options.levels, |entry| {
         first = first.into_iter().chain(entry.moment_utc()).min();
         live.add(&entry);
     })
@@ -196,6 +198,7 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
         oldest,
         resigned,
         known: ledger.known_signatures.len(),
+        reading,
     })
 }
 
@@ -274,3 +277,7 @@ mod tests {
 #[cfg(test)]
 #[path = "ci_tests.rs"]
 mod run_tests;
+
+#[cfg(test)]
+#[path = "throughput_tests.rs"]
+mod throughput_tests;

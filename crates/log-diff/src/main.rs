@@ -663,6 +663,10 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
         );
     }
     let outcome = ci::run(&config, &dav, &options).await?;
+    status(
+        Tone::Info,
+        &format!("{}: {}", config.hostname, outcome.reading),
+    );
 
     if outcome.baseline {
         status(

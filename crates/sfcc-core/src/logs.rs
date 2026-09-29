@@ -84,19 +84,48 @@ pub async fn mark(dav: &Dav, levels: &[String]) -> Result<Mark> {
 /// rotated. A trailing line still being written is left for the next read.
 pub async fn since(dav: &Dav, mark: &Mark, levels: &[String]) -> Result<Since> {
     let mut entries = Vec::new();
-    let next = since_each(dav, mark, levels, |entry| entries.push(entry)).await?;
+    let (next, _) = since_each(dav, mark, levels, |entry| entries.push(entry)).await?;
     order(&mut entries);
     Ok(Since { entries, next })
 }
 
-/// [`since`] an entry at a time, a file after another, each read in slices of [`SLICE`]: a
-/// day of an instance's log - what a first read or a Monday takes in - never has to fit in memory.
+/// What a read took: to tell a slow instance from a log read again from the start.
+#[derive(Debug, Clone, Default)]
+pub struct Reading {
+    pub files: usize,
+    /// Files the mark did not know, or that were rotated: read from their first byte.
+    pub whole: usize,
+    pub bytes: u64,
+    pub requests: usize,
+    pub elapsed: std::time::Duration,
+}
+
+impl std::fmt::Display for Reading {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let megabytes = self.bytes as f64 / 1_048_576.0;
+        let seconds = self.elapsed.as_secs_f64().max(0.001);
+        write!(
+            out,
+            "read {megabytes:.1} MB from {} file(s) ({} from the start) in {} request(s), {seconds:.1}s, {:.1} MB/s",
+            self.files,
+            self.whole,
+            self.requests,
+            megabytes / seconds
+        )
+    }
+}
+
+/// [`since`] an entry at a time, each file read in slices of [`SLICE`]: a day of an
+/// instance's log - what a first read or a Monday takes in - never has to fit in memory.
+/// [`READS_AT_ONCE`] files download at once; their entries come a slice at a time, in order
+/// within each file.
 pub async fn since_each(
     dav: &Dav,
     mark: &Mark,
     levels: &[String],
     mut each: impl FnMut(Entry),
-) -> Result<Mark> {
+) -> Result<(Mark, Reading)> {
+    let started = std::time::Instant::now();
     let today = today();
     let first_day = match mark.day.is_empty() {
         true => today.as_str(),
@@ -113,52 +142,113 @@ pub async fn since_each(
         })
         .collect();
 
-    let mut offsets = BTreeMap::new();
-    for (file, day) in wanted {
+    struct Open {
+        name: String,
+        day: String,
+        parser: EntryParser,
+        /// Bytes past the last complete line: the start of the next slice's first line.
+        carry: Vec<u8>,
+        offset: u64,
+    }
+    let mut reading = Reading {
+        files: wanted.len(),
+        ..Reading::default()
+    };
+    let mut open: Vec<Option<Open>> = Vec::new();
+    let mut plan = Vec::new();
+    for (index, (file, day)) in wanted.into_iter().enumerate() {
         let mut offset = mark.offsets.get(&file.name).copied().unwrap_or(0);
         if file.size < offset {
             offset = 0;
         }
+        if offset == 0 && file.size > 0 {
+            reading.whole += 1;
+        }
         let url = format!("{}/{}", dav.logs_url(), encode_path(&file.name));
-        let mut parser = EntryParser::new(&file.name);
-        // Bytes past the last complete line: the start of the next slice's first line.
-        let mut carry: Vec<u8> = Vec::new();
-        let mut fetched = offset;
-        while fetched < file.size {
-            let last = (fetched + SLICE).min(file.size) - 1;
-            let bytes = dav
-                .read_range(&url, fetched, last)
-                .await
-                .with_context(|| format!("cannot read {}", file.name))?;
-            if bytes.is_empty() {
-                break;
-            }
-            fetched += bytes.len() as u64;
-            carry.extend_from_slice(&bytes);
-            if let Some(end) = carry.iter().rposition(|byte| *byte == b'\n') {
-                let complete: Vec<u8> = carry.drain(..=end).collect();
-                offset += complete.len() as u64;
+        plan.push((index, url, file.name.clone(), offset, file.size));
+        open.push(Some(Open {
+            parser: EntryParser::new(&file.name),
+            name: file.name,
+            day,
+            carry: Vec::new(),
+            offset,
+        }));
+    }
+
+    // A slice of a file, or `None` once the file is done.
+    let (sender, mut received) =
+        tokio::sync::mpsc::channel::<(usize, Option<Vec<u8>>)>(READS_AT_ONCE * 2);
+    let download = async move {
+        stream::iter(plan.into_iter().map(Ok::<_, anyhow::Error>))
+            .try_for_each_concurrent(READS_AT_ONCE, |(index, url, name, offset, size)| {
+                let sender = sender.clone();
+                async move {
+                    let mut fetched = offset;
+                    while fetched < size {
+                        let last = (fetched + SLICE).min(size) - 1;
+                        let bytes = dav
+                            .read_range(&url, fetched, last)
+                            .await
+                            .with_context(|| format!("cannot read {name}"))?;
+                        if bytes.is_empty() {
+                            break;
+                        }
+                        fetched += bytes.len() as u64;
+                        // Nobody listens only once the reading below failed, which it cannot.
+                        let _ = sender.send((index, Some(bytes))).await;
+                    }
+                    let _ = sender.send((index, None)).await;
+                    Ok(())
+                }
+            })
+            .await
+    };
+    let parse = async {
+        let mut offsets = BTreeMap::new();
+        while let Some((index, slice)) = received.recv().await {
+            let Some(bytes) = slice else {
+                let Some(file) = open[index].take() else {
+                    continue;
+                };
+                if let Some(entry) = file.parser.finish() {
+                    each(entry);
+                }
+                // Yesterday's files are done; keeping their offsets would only grow the mark.
+                if file.day == today {
+                    offsets.insert(file.name, file.offset);
+                }
+                continue;
+            };
+            reading.requests += 1;
+            reading.bytes += bytes.len() as u64;
+            let Some(file) = open[index].as_mut() else {
+                continue;
+            };
+            file.carry.extend_from_slice(&bytes);
+            if let Some(end) = file.carry.iter().rposition(|byte| *byte == b'\n') {
+                let complete: Vec<u8> = file.carry.drain(..=end).collect();
+                file.offset += complete.len() as u64;
                 for line in String::from_utf8_lossy(&complete).lines() {
-                    if let Some(entry) = parser.line(line) {
+                    if let Some(entry) = file.parser.line(line) {
                         each(entry);
                     }
                 }
             }
         }
-        if let Some(entry) = parser.finish() {
-            each(entry);
-        }
-        // Yesterday's files are done; keeping their offsets would only grow the mark.
-        if day == today {
-            offsets.insert(file.name, offset);
-        }
-    }
+        offsets
+    };
+    let (downloaded, offsets) = futures::join!(download, parse);
+    downloaded?;
+    reading.elapsed = started.elapsed();
 
-    Ok(Mark {
-        taken: now(),
-        day: today,
-        offsets,
-    })
+    Ok((
+        Mark {
+            taken: now(),
+            day: today,
+            offsets,
+        },
+        reading,
+    ))
 }
 
 /// A file in log_archive, as [`archive_files`] lists it and [`read_archived`] reads it.
