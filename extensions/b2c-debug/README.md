@@ -155,6 +155,30 @@ Expanding a dw object otherwise buries the two fields you want under sixty metho
 The SFCC scope costs one round trip per name to the instance, plus one per object to
 summarise it — about ten, once, each time you expand it.
 
+## Hovering a value
+
+While a request is halted, hovering a name in a script shows what it holds, with one level of
+its properties under it — `order`, `order.totalGrossPrice`, `order.totalGrossPrice.value`,
+each on its own word:
+
+```
+order.totalGrossPrice · dw.value.Money
+  EUR 125.00
+
+  value          Number    125
+  currencyCode   String    EUR
+  available      Boolean   true
+```
+
+Zed asks a debug adapter nothing on hover, so the hover comes from the ISML extension's
+language server, which asks this adapter on a localhost port while the session lasts. It needs
+both extensions installed. The name is read up to the word under the cursor and never past a
+call or an index: `basket.getTotalGrossPrice().value` shows only the docs. The frame read is
+the one selected in the stack; the same filter as the Variables view applies.
+
+The same lookup answers the console and *editor: evaluate selected text*, now with an arrow to
+expand whatever object comes back.
+
 ## Reading a stack that crosses cartridges
 
 A stack that goes through four cartridges looks like four unrelated `Account.js` files.

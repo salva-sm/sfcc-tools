@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::inspect::{self, Published, Selected};
 use crate::logs::Logs;
 use crate::paths::Paths;
 use crate::protocol::{Request, Writer};
@@ -29,6 +30,7 @@ struct Handle {
 pub struct Adapter {
     session: Arc<Session>,
     paths: Paths,
+    cartridges: PathBuf,
     writer: Writer,
     handles: Mutex<BTreeMap<i64, Handle>>,
     next_handle: Mutex<i64>,
@@ -38,13 +40,16 @@ pub struct Adapter {
     stop: Arc<AtomicBool>,
     config: PathBuf,
     logs: Mutex<Option<Logs>>,
+    selected: Selected,
+    published: Mutex<Option<Published>>,
 }
 
 impl Adapter {
     pub fn new(session: Session, cartridges: PathBuf, config: PathBuf, writer: Writer) -> Adapter {
         Adapter {
             session: Arc::new(session),
-            paths: Paths::new(cartridges),
+            paths: Paths::new(cartridges.clone()),
+            cartridges,
             config,
             logs: Mutex::new(None),
             writer,
@@ -53,6 +58,8 @@ impl Adapter {
             by_source: Mutex::new(BTreeMap::new()),
             raw_variables: AtomicBool::new(false),
             stop: Arc::new(AtomicBool::new(false)),
+            selected: Arc::new(Mutex::new(None)),
+            published: Mutex::new(None),
         }
     }
 
@@ -103,6 +110,7 @@ impl Adapter {
             self.raw_variables.store(true, Ordering::Relaxed);
         }
         self.follow_logs(request);
+        self.publish();
         self.writer.respond(request, json!({}));
         self.writer.event("initialized", json!({}));
         self.watch();
@@ -116,6 +124,22 @@ impl Adapter {
         let following = Logs::follow(&self.config, levels.as_deref(), &self.writer);
         if let Ok(mut logs) = self.logs.lock() {
             *logs = Some(following);
+        }
+    }
+
+    fn publish(&self) {
+        let published = inspect::publish(
+            Arc::clone(&self.session),
+            &self.cartridges,
+            Arc::clone(&self.selected),
+            self.raw_variables.load(Ordering::Relaxed),
+        );
+        if published.is_none() {
+            self.writer
+                .log("cannot offer values to the hover; the Variables view still has them");
+        }
+        if let Ok(mut slot) = self.published.lock() {
+            *slot = published;
         }
     }
 
@@ -294,6 +318,9 @@ impl Adapter {
         let Some((thread, frame)) = request.number("frameId").map(split_frame) else {
             return self.writer.respond(request, json!({ "scopes": [] }));
         };
+        if let Ok(mut selected) = self.selected.lock() {
+            *selected = Some((thread, frame));
+        }
         // `pdict`, `request` and `session` are in neither the local nor the closure scope.
         self.writer.respond(
             request,
@@ -393,20 +420,25 @@ impl Adapter {
             .argument("expression")
             .as_str()
             .unwrap_or_default()
+            .trim()
             .to_string();
         let Some((thread, frame)) = request.number("frameId").map(split_frame) else {
             return self
                 .writer
                 .fail(request, "nothing is halted to evaluate in");
         };
-        match self.session.evaluate(thread, frame, &expression) {
-            Ok(value) if value.starts_with("ReferenceError") || value.starts_with("TypeError") => {
-                self.writer.fail(request, value)
+        match inspect::read(&self.session, thread, frame, &expression) {
+            Ok(found) => {
+                let reference = match found.object {
+                    true => self.handle_for(thread, frame, Some(expression), false),
+                    false => 0,
+                };
+                self.writer.respond(
+                    request,
+                    json!({ "result": found.value, "type": found.type_, "variablesReference": reference }),
+                )
             }
-            Ok(value) => self
-                .writer
-                .respond(request, json!({ "result": value, "variablesReference": 0 })),
-            Err(error) => self.writer.fail(request, format!("{error:#}")),
+            Err(message) => self.writer.fail(request, message),
         }
     }
 
@@ -439,6 +471,9 @@ impl Adapter {
         if let Ok(mut logs) = self.logs.lock() {
             *logs = None;
         }
+        if let Ok(mut published) = self.published.lock() {
+            *published = None;
+        }
         self.session.close();
         self.writer.event("terminated", json!({}));
     }
@@ -468,6 +503,9 @@ impl Adapter {
     fn forget_handles(&self) {
         if let Ok(mut handles) = self.handles.lock() {
             handles.clear();
+        }
+        if let Ok(mut selected) = self.selected.lock() {
+            *selected = None;
         }
     }
 }
