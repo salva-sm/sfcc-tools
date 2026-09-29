@@ -24,6 +24,8 @@ struct DwJson {
     sfcc_ci: Option<SfccCi>,
     #[serde(rename = "self-signed")]
     self_signed: Option<bool>,
+    #[serde(rename = "ensure-active")]
+    ensure_active: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,6 +68,8 @@ pub struct Config {
     pub cartridge_filter: Option<Vec<String>>,
     pub accept_invalid_certs: bool,
     pub api_client: Option<ApiClient>,
+    /// Make the synced code version the active one when it is not, where the API client may.
+    pub ensure_active: bool,
     /// For a local test server only; never taken from dw.json.
     pub plain_http: bool,
 }
@@ -133,6 +137,7 @@ impl Config {
             cartridge_filter,
             accept_invalid_certs: parsed.self_signed.unwrap_or(false),
             api_client,
+            ensure_active: parsed.ensure_active.unwrap_or(false),
             plain_http: false,
         })
     }

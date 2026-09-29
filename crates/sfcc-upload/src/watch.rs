@@ -1,3 +1,4 @@
+use crate::active;
 use crate::daemon;
 use crate::guard::{self, Overwrite};
 use crate::logging::{self, Change};
@@ -144,6 +145,7 @@ async fn initial_sync(ctx: &Ctx, options: WatchOptions) -> Result<()> {
         )
         .await?;
     }
+    active::ensure(&ctx.config).await;
     Ok(())
 }
 

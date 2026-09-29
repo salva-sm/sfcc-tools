@@ -64,6 +64,37 @@ impl Ocapi {
         }
     }
 
+    /// The code version the sandbox serves, if any is active.
+    pub async fn active_code_version(&self) -> Result<Option<String>> {
+        let url = format!(
+            "https://{}/s/-/dw/data/{DATA_API_VERSION}/code_versions",
+            self.hostname
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .bearer_auth(self.token().await?)
+            .send()
+            .await
+            .with_context(|| format!("cannot reach the Data API on {}", self.hostname))?;
+
+        match response.status() {
+            status if status.is_success() => {}
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => bail!(
+                "the API client is not allowed to read code versions on {} - add                  /code_versions to its OCAPI Data settings",
+                self.hostname
+            ),
+            status => bail!("listing the code versions failed with HTTP {status}"),
+        }
+
+        let body = response
+            .text()
+            .await
+            .context("cannot read the code version list")?;
+        active_in(&body)
+    }
+
     async fn token(&self) -> Result<String> {
         let response = self
             .client
@@ -94,3 +125,20 @@ impl Ocapi {
             .to_string())
     }
 }
+
+fn active_in(body: &str) -> Result<Option<String>> {
+    let payload: serde_json::Value =
+        serde_json::from_str(body).context("malformed code version list")?;
+    let versions = payload["data"]
+        .as_array()
+        .context("code version list without data")?;
+    Ok(versions
+        .iter()
+        .find(|version| version["active"].as_bool() == Some(true))
+        .and_then(|version| version["id"].as_str())
+        .map(str::to_string))
+}
+
+#[cfg(test)]
+#[path = "ocapi_tests.rs"]
+mod tests;

@@ -216,6 +216,17 @@ It needs an API client in `dw.json` — either `client-id`/`client-secret`, or t
 list `/code_versions` in the sandbox's *Open Commerce API Settings* (type `Data`, context
 `Global`). Without that the sandbox answers 403 and the tool says so.
 
+Uploading to a code version that is not the active one succeeds, and the storefront keeps
+serving the other: someone activated another version, and every save looks fine but never
+shows. `status` and `doctor` say which one is active (`active  no - release_42 is`) when the
+API client may read `/code_versions`, and `unknown` with the reason when it may not.
+
+With `"ensure-active": true` in `dw.json`, `push` — the git hook's too — and the start of
+`watch` or `start` check it, and activate the synced code version if another one is active.
+Not on every save: an activation drops the sandbox's caches. Without an API client, or
+without the OCAPI permissions, nothing is activated: the tool says so in one line and the
+upload goes on as usual. It costs a token and a request per push, so it is off by default.
+
 ## Pushing on a branch switch
 
 ```bash
@@ -238,6 +249,7 @@ changed. An existing hook is never replaced unless `--force` is given.
 | `cartridge` | Cartridges to sync. Omit to sync all of them |
 | `cartridgesDir` | Cartridge root relative to `dw.json`. Auto-detected when absent |
 | `self-signed` | Accept an invalid TLS certificate |
+| `ensure-active` | `true` to activate the synced code version when another one is active. Needs the API client above |
 
 Optional `.sfccignore` next to the cartridges or next to `dw.json`, one pattern per line:
 a bare name skips it anywhere (`fixtures`), `*` plus a suffix skips by extension
@@ -379,5 +391,8 @@ path the linker sees may contain non-ASCII characters. On this machine that mean
 - The delta trusts the manifest. A file someone else changes is only noticed when you change or
   delete it too. Until then, their version stays on the sandbox. `--full` puts yours back.
 - `cartridge/static/` is uploaded, not built — the webpack build still has to run.
-- `activate` depends on a BM configuration step per sandbox, so it fails until someone does it.
+- `activate` and `ensure-active` depend on a BM configuration step per sandbox; until someone
+  does it, `activate` fails and `ensure-active` only says it could not check.
+- A version activated by someone else while the watcher runs is only noticed on the next
+  `push` or watcher start.
 - Version 0.1.0: exercised end to end against one sandbox, by one person.
