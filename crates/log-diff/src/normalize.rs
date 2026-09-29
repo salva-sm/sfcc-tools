@@ -53,6 +53,11 @@ regex!(HEADER, r"^\[[^\]]*\]\s*");
 regex!(THREAD, r"^(\w+)\s+(\S*\|\S*)\s*");
 // `category Sites-X-Site STOREFRONT <session> <request> <n> - `, after the thread.
 regex!(CONTEXT, r"^(\S+ (?:Sites-\S+|-) [A-Z]+) \S+ \S+ (\S+ - )");
+// The same after a thread without segments: `LEVEL http-nio-x category - BUSINESSMGR ...`.
+regex!(
+    BARE_CONTEXT,
+    r"^(\w+ \S+ \S+ (?:Sites-\S+|-) [A-Z]+) \S+ \S+ (\S+ - )"
+);
 // Scrubbers, applied in this order.
 regex!(
     TIMESTAMP,
@@ -121,7 +126,9 @@ pub fn signature(entry: &Entry) -> Signature {
 fn strip_header(head: &str) -> String {
     let rest = HEADER.replace(head, "");
     let Some(found) = THREAD.captures(&rest) else {
-        return rest.into_owned();
+        return BARE_CONTEXT
+            .replace(&rest, "$1 <session> <request> $2")
+            .into_owned();
     };
 
     let segments: Vec<&str> = found[2].split('|').collect();

@@ -76,6 +76,27 @@ fn the_session_and_request_after_the_category_are_not_the_failure() {
 }
 
 #[test]
+fn a_thread_without_segments_loses_its_session_too() {
+    let record = |session: &str| {
+        one(
+            "error-blade1-20260922.log",
+            &format!(
+                "[2026-09-22 10:00:00.000 GMT] ERROR http-nio-10.0.0.1-8443-exec-7 com.demandware.am.client.oidc.Callback - BUSINESSMGR {session} Qx9z_7f8e9d0c1-0-00 5361824311231047680 - Error while handling the authorization callback
+"
+            ),
+        )
+    };
+    assert_eq!(record("dldMQwzdCQ").id, record("ttGAUIUViM").id);
+    assert!(
+        record("dldMQwzdCQ")
+            .message
+            .contains("- BUSINESSMGR <session> <request> <n> - Error while handling"),
+        "{}",
+        record("dldMQwzdCQ").message
+    );
+}
+
+#[test]
 fn the_request_dump_after_the_stack_never_reaches_the_signature() {
     let signature = one("error-blade1-20260922.log", WRAPPED);
     let example = signature.example();
