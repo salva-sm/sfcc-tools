@@ -76,6 +76,12 @@ pub struct Known {
     /// Team only: so that a day's spike is reported once, not on every run of the day.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spiked_on: Option<String>,
+    /// Records per site it failed on; what names none (Business Manager, jobs) is left out.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sites: BTreeMap<String, u64>,
+    /// Records per controller, the same way.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub controllers: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +114,12 @@ impl Known {
     /// Shows as an error page: SFCC answers an uncaught `error` or a `fatal` with a 500.
     pub fn serious(&self) -> bool {
         serious(&self.label, &self.example)
+    }
+}
+
+fn add_counts(into: &mut BTreeMap<String, u64>, from: &BTreeMap<String, u64>) {
+    for (name, count) in from {
+        *into.entry(name.clone()).or_default() += count;
     }
 }
 
@@ -249,6 +261,8 @@ impl Ledger {
             if finding.first < known.first_seen {
                 known.first_seen = finding.first.clone();
             }
+            add_counts(&mut known.sites, &finding.sites);
+            add_counts(&mut known.controllers, &finding.controllers);
             return false;
         }
 
@@ -269,6 +283,8 @@ impl Ledger {
                 resolved_at: None,
                 muted: false,
                 spiked_on: None,
+                sites: finding.sites.clone(),
+                controllers: finding.controllers.clone(),
             },
         );
         true

@@ -51,6 +51,7 @@ fn options(state: &Path) -> RunOptions {
         spike_min: 20,
         spike_factor: 5.0,
         environment: Some("dev".to_string()),
+        skip_sites: Vec::new(),
     }
 }
 
@@ -403,4 +404,37 @@ async fn code_versions_come_oldest_first_with_when_they_were_written() {
             ),
         ]
     );
+}
+
+#[tokio::test]
+async fn a_site_switched_off_is_neither_counted_nor_reported() {
+    let scratch = Scratch::new("skip-sites");
+    let state = scratch.path("prd.json");
+    let server = MockDav::start().await;
+    let config = server.config();
+    let dav = Dav::new(&config).unwrap();
+    let on = |site: &str, message: &str| {
+        let at = (Utc::now() - Duration::minutes(5)).format("%Y-%m-%d %H:%M:%S%.3f GMT");
+        format!(
+            "[{at}] ERROR PipelineCallServlet|1|Sites-{site}-Site|Cart-Show|PipelineCall|x c [] {message}\n\tat app_x/cartridge/scripts/a.js:10 (f)\n"
+        )
+    };
+    let mut options = options(&state);
+    options.skip_sites = vec!["acme_fr".to_string()];
+
+    server.append(&log_file(), &on("acme_na", "TypeError: known"));
+    assert!(run(&config, &dav, &options).await.unwrap().baseline);
+    server.append(
+        &log_file(),
+        &on("acme_fr", "TypeError: only on the French site"),
+    );
+    server.append(&log_file(), &on("acme_fr", "TypeError: known"));
+    let outcome = run(&config, &dav, &options).await.unwrap();
+
+    assert!(outcome.report.new.is_empty());
+    let ledger = Ledger::load(&state).unwrap();
+    assert_eq!(ledger.known_signatures.len(), 1);
+    let known = ledger.known_signatures.values().next().unwrap();
+    assert_eq!(known.count, 1);
+    assert!(!known.sites.contains_key("acme_fr"));
 }

@@ -12,6 +12,8 @@ pub struct Finding {
     pub last: String,
     /// `YYYY-MM-DD`, UTC.
     pub per_day: BTreeMap<String, u64>,
+    pub sites: BTreeMap<String, u64>,
+    pub controllers: BTreeMap<String, u64>,
 }
 
 /// In the order each signature first appeared.
@@ -28,6 +30,7 @@ pub struct Findings {
     now: String,
     found: Vec<Finding>,
     index: HashMap<String, usize>,
+    skip: Vec<String>,
 }
 
 impl Default for Findings {
@@ -42,6 +45,19 @@ impl Findings {
             now: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
             found: Vec::new(),
             index: HashMap::new(),
+            skip: Vec::new(),
+        }
+    }
+
+    /// Leaves out the records of these sites.
+    pub fn skipping(sites: &[String]) -> Findings {
+        Findings {
+            skip: sites
+                .iter()
+                .map(|site| site.trim().to_string())
+                .filter(|site| !site.is_empty())
+                .collect(),
+            ..Findings::new()
         }
     }
 
@@ -52,6 +68,13 @@ impl Findings {
     pub fn add(&mut self, entry: &Entry) {
         let (now, found, index) = (&self.now, &mut self.found, &mut self.index);
         let signature = signature(entry);
+        if signature
+            .site
+            .as_ref()
+            .is_some_and(|site| self.skip.contains(site))
+        {
+            return;
+        }
         // A leftover with no timestamp of its own was logged just before this read.
         let moment = entry
             .moment_utc()
@@ -70,17 +93,31 @@ impl Findings {
                 if moment > finding.last {
                     finding.last = moment;
                 }
+                count_in(&mut finding.sites, &signature.site);
+                count_in(&mut finding.controllers, &signature.controller);
             }
             None => {
                 index.insert(signature.id.clone(), found.len());
+                let mut sites = BTreeMap::new();
+                let mut controllers = BTreeMap::new();
+                count_in(&mut sites, &signature.site);
+                count_in(&mut controllers, &signature.controller);
                 found.push(Finding {
                     signature,
                     count: 1,
                     first: moment.clone(),
                     last: moment,
                     per_day: BTreeMap::from([(day, 1)]),
+                    sites,
+                    controllers,
                 });
             }
         }
+    }
+}
+
+fn count_in(counts: &mut BTreeMap<String, u64>, name: &Option<String>) {
+    if let Some(name) = name {
+        *counts.entry(name.clone()).or_default() += 1;
     }
 }

@@ -133,6 +133,8 @@ mod tests {
             resolved_at: None,
             muted: false,
             spiked_on: None,
+            sites: Default::default(),
+            controllers: Default::default(),
         };
         let issue = issue(&target, "abc", "prd", &known, None);
 

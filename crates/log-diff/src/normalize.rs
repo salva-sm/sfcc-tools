@@ -8,7 +8,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 /// Raise it with any change that gives a failure a different id, so old ledgers relearn quietly
 /// instead of reporting everything as new.
-pub const SIGNATURES: u32 = 2;
+pub const SIGNATURES: u32 = 3;
 /// Below this the stack is the framework's, the same for every failure.
 const FRAMES: usize = 8;
 const EXAMPLE_FRAMES: usize = 3;
@@ -28,6 +28,10 @@ pub struct Signature {
     pub message: String,
     /// Scrubbed, line numbers included.
     pub frames: Vec<String>,
+    /// `acme_na` of `Sites-acme_na-Site`: where it failed, not what - kept out of the id.
+    pub site: Option<String>,
+    /// `Cart-Show`: the same.
+    pub controller: Option<String>,
 }
 
 impl Signature {
@@ -85,6 +89,18 @@ regex!(
     MESSAGE_LOCATION,
     r"([A-Za-z0-9_\-]+/cartridge/[^\s()#:]+\.(?:js|ds|isml))#(\d+)"
 );
+// What is left of the header once the thread is gone: the category, then the site, request type,
+// session, request and counter of a system log (`- - - - - -` when there are none) or a custom
+// log's `[]`. Only the category tells failures apart.
+regex!(CATEGORY, r"^(\w+ \S+) (?:\S+ \S+ \S+ \S+ \S+ - |\[\] )");
+// A repeated failure, said once more by the instance's filter: the same failure.
+regex!(
+    REPEATED,
+    r"The following message was generated more than (?:\d+|<n>) times within the last (?:\d+|<n>) seconds\. It will be suppressed for (?:\d+|<n>) seconds: "
+);
+regex!(SITE, r"Sites-([\w-]+?)-Site\b");
+// SCAPI names the site between bars: `|acme|/_scapi/...`.
+regex!(SCAPI_SITE, r"\|([a-z]\w*)\|/_scapi/");
 regex!(
     EXCEPTION,
     r"\b(?:[a-z_][\w]*\.)*([A-Z]\w*(?:Error|Exception))\b"
@@ -93,7 +109,8 @@ regex!(
 pub fn signature(entry: &Entry) -> Signature {
     let mut lines = entry.lines.iter();
     let head = lines.next().map(String::as_str).unwrap_or_default();
-    let message = scrub(&strip_header(head));
+    let (stripped, thread) = strip_header(head);
+    let message = scrub(&stripped);
 
     let frames: Vec<String> = lines
         .filter_map(|line| line.trim_start().strip_prefix("at "))
@@ -101,7 +118,11 @@ pub fn signature(entry: &Entry) -> Signature {
         .map(|frame| scrub_frame(frame.trim()))
         .collect();
 
-    let mut hashed = format!("{}\n{}", entry.label, without_positions(&message));
+    let mut hashed = format!(
+        "{}\n{}",
+        entry.label,
+        without_positions(&essence(&message, thread.is_some()))
+    );
     for frame in &frames {
         hashed.push('\n');
         hashed.push_str(&without_positions(frame));
@@ -115,20 +136,66 @@ pub fn signature(entry: &Entry) -> Signature {
             .last()
             .map(|found| found[1].to_string()),
         location: location(&frames, &message),
+        site: SITE
+            .captures(&message)
+            .or_else(|| SCAPI_SITE.captures(head))
+            .map(|found| found[1].to_string()),
+        // A thread of one segment is a thread's name: `RepeatedMessageSuppressingFilter-Thread`.
+        controller: thread
+            .as_deref()
+            .filter(|thread| thread.contains('|'))
+            .and_then(controller),
         message,
         frames,
     }
 }
 
+/// The failure without where it happened: one signature for every site, controller and
+/// thread it shows up under, and for the filter's repetition of it.
+fn essence(message: &str, headed: bool) -> String {
+    if !headed {
+        return message.to_string();
+    }
+    // `LEVEL thread category ...`: the thread goes.
+    let mut words = message.splitn(3, ' ');
+    let (Some(level), Some(_thread), Some(rest)) = (words.next(), words.next(), words.next())
+    else {
+        return message.to_string();
+    };
+    let text = format!("{level} {rest}");
+    let text = CATEGORY.replace(&text, "$1 ");
+    let text = REPEATED.replace(&text, "");
+    SITE.replace_all(&text, "<site>").into_owned()
+}
+
+/// `Cart-Show`, out of `PipelineCallServlet|Sites-acme-Site|Cart-Show|PipelineCall`.
+fn controller(thread: &str) -> Option<String> {
+    thread
+        .split('|')
+        .find(|segment| {
+            let Some((name, action)) = segment.split_once('-') else {
+                return false;
+            };
+            name != "Sites"
+                && name.starts_with(|first: char| first.is_ascii_uppercase())
+                && !action.is_empty()
+                && !action.contains('-')
+        })
+        .map(str::to_string)
+}
+
 /// Drops the moment, thread number and session: of
 /// `PipelineCallServlet|157318437|Sites-Site|Cart-Show|PipelineCall|t1ZZ-bCb`, the servlet, site
-/// and controller stay.
-fn strip_header(head: &str) -> String {
+/// and controller stay. The thread comes back apart, when there is a header to find it in.
+fn strip_header(head: &str) -> (String, Option<String>) {
     let rest = HEADER.replace(head, "");
     let Some(found) = THREAD.captures(&rest) else {
-        return BARE_CONTEXT
+        let headed = rest.len() < head.len();
+        let text = BARE_CONTEXT
             .replace(&rest, "$1 <session> <request> $2")
             .into_owned();
+        let thread = headed.then(|| text.split(' ').nth(1).unwrap_or_default().to_string());
+        return (text, thread);
     };
 
     let segments: Vec<&str> = found[2].split('|').collect();
@@ -143,12 +210,14 @@ fn strip_header(head: &str) -> String {
         .collect();
 
     let tail = &rest[found.get(0).map_or(0, |whole| whole.end())..];
-    format!(
+    let thread = thread.join("|");
+    let text = format!(
         "{} {} {}",
         &found[1],
-        thread.join("|"),
+        thread,
         CONTEXT.replace(tail, "$1 <session> <request> $2")
-    )
+    );
+    (text, Some(thread))
 }
 
 pub fn scrub(text: &str) -> String {
