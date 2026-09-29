@@ -10,8 +10,8 @@ use crate::scan::{LocalFile, collect_files, describe};
 use crate::sync_status;
 use crate::webdav::{Availability, Ready};
 use anyhow::{Context, Result, bail};
-use notify::RecursiveMode;
-use notify_debouncer_full::new_debouncer;
+use notify::{RecommendedWatcher, RecursiveMode};
+use notify_debouncer_full::{NoCache, new_debouncer_opt};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -53,7 +53,9 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
     sync_status::publish(&ctx.config, sync_status::State::Synced);
 
     let (sender, mut receiver) = unbounded_channel::<Vec<PathBuf>>();
-    let mut debouncer = new_debouncer(
+    // No file-id cache: with it, on a 9,000-file checkout, most of a 200-file deletion never
+    // came out of the debouncer - no error, no rescan. Only paths are used here anyway.
+    let mut debouncer = new_debouncer_opt::<_, RecommendedWatcher, NoCache>(
         DEBOUNCE,
         None,
         move |result: notify_debouncer_full::DebounceEventResult| {
@@ -67,6 +69,8 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
                 }
             }
         },
+        NoCache,
+        notify::Config::default(),
     )
     .context("cannot start the file watcher")?;
 
