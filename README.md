@@ -78,6 +78,57 @@ cargo install --path crates/isml-lsp
 cargo install --path crates/sfcc-dap
 ```
 
+## Suggested tasks
+
+Few, because most of it starts on its own. The watcher starts with the editor, its state
+shows in the editor's status, and debugging has its own configuration. What is left to run
+by hand is a `push` (in a terminal, where it can ask before overwriting a colleague's
+change), the sandbox log, and `log-diff watch` where the editor cannot start it itself.
+
+**The team's ledger (optional).** `log-diff` compares your sandbox with what the team already
+knows when `LOG_DIFF_SHARED` points at the ledger. It can be a raw URL, a clone of the ledger
+repository (its `ledgers/dev.json` is read) or a ledger file. Set it once in your user
+environment, and the tasks below need nothing:
+
+```bash
+setx LOG_DIFF_SHARED "https://raw.githubusercontent.com/<owner>/sfcc-log-ledger/main/ledgers/dev.json"
+```
+
+To keep it per project instead, add `"env": { "LOG_DIFF_SHARED": "…" }` to the `log-diff`
+task. A path that is not there is said on every check. With no ledger at all, `log-diff`
+still works and compares only against what you have seen.
+
+**Zed.** Start the watcher with the workspace, in `.zed/settings.json`:
+
+```json
+{ "lsp": { "isml-lsp": { "initialization_options": { "upload": { "autostart": true } } } } }
+```
+
+and `.zed/tasks.json`, run with `task: spawn`:
+
+```json
+[
+  { "label": "SFCC: push", "command": "sfcc-upload", "args": ["push"], "allow_concurrent_runs": false },
+  { "label": "SFCC: sandbox log", "command": "sfcc-upload", "args": ["logger"], "use_new_terminal": true, "allow_concurrent_runs": false },
+  { "label": "log-diff: watch", "command": "log-diff", "args": ["watch"], "reveal": "no_focus", "allow_concurrent_runs": false }
+]
+```
+
+Debugging goes in `.zed/debug.json`, see [`extensions/b2c-debug`](extensions/b2c-debug).
+
+**VS Code.** Both watchers can start when the folder opens, with no terminal shown, and
+report into Problems. Merge
+[`crates/sfcc-upload/templates/vscode-tasks.json`](crates/sfcc-upload/templates/vscode-tasks.json)
+and [`crates/log-diff/templates/vscode-tasks.json`](crates/log-diff/templates/vscode-tasks.json)
+into `.vscode/tasks.json`, and add the push:
+
+```json
+{ "label": "SFCC: push", "type": "process", "command": "sfcc-upload", "args": ["push"], "problemMatcher": [] }
+```
+
+A watcher started by VS Code belongs to the window, and does not run next to a detached one
+for the same project. Use the editor's or the `start` one, not both.
+
 ## Layout
 
 ```
