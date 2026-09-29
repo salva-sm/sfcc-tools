@@ -126,7 +126,7 @@ impl Config {
 
         Ok(Config {
             dw_json,
-            hostname: hostname.trim().trim_end_matches('/').to_string(),
+            hostname: bare_host(&hostname),
             credentials,
             code_version,
             cartridges_dir,
@@ -198,6 +198,20 @@ impl Config {
             })
             .collect()
     }
+}
+
+/// `https://host/`, as a URL copied from the browser, is `host`.
+fn bare_host(hostname: &str) -> String {
+    let host = hostname.trim();
+    let host = ["https://", "http://"]
+        .iter()
+        .find_map(|scheme| {
+            host.get(..scheme.len())
+                .filter(|start| start.eq_ignore_ascii_case(scheme))
+                .map(|_| &host[scheme.len()..])
+        })
+        .unwrap_or(host);
+    host.trim_end_matches('/').to_string()
 }
 
 pub fn classify_host(hostname: &str) -> Instance {

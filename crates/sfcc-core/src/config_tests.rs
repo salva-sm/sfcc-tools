@@ -60,6 +60,21 @@ fn reads_a_dw_json_the_way_prophet_writes_it() {
 }
 
 #[test]
+fn a_hostname_pasted_as_a_url_is_the_host() {
+    let home = scratch("dwjson-url-host");
+    std::fs::write(
+        home.join("dw.json"),
+        r#"{ "hostname": " HTTPS://production-eu01-acme.demandware.net/ ", "username": "someone", "password": "secret" }"#,
+    )
+    .unwrap();
+
+    let config = Config::load(Some(home.join("dw.json")), Some("version1".into())).unwrap();
+    assert_eq!(config.hostname, "production-eu01-acme.demandware.net");
+
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
 fn takes_the_api_client_from_the_sfcc_ci_block() {
     let home = scratch("dwjson-apiclient");
     std::fs::write(
