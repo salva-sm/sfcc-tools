@@ -25,20 +25,23 @@ These are the pieces that close those gaps. No instance, no network, no `node_mo
 
 ## What is here
 
+**Crates** — the Rust programs, one cargo workspace:
+
 | | | |
 | :-- | :-- | :-- |
-| | **Shared** | |
 | 🔌 | **[`crates/sfcc-core`](crates/sfcc-core)** | The one `dw.json` reader they all share, and the WebDAV log reader the uploader and `log-diff` share |
-| | **Sandbox** | |
 | 📤 | **[`crates/sfcc-upload`](crates/sfcc-upload)** | Cartridge uploader for sandboxes, as a CLI. Same job as Prophet, with no editor attached. Formerly `prost` |
 | 🔎 | **[`crates/log-diff`](crates/log-diff)** | Tells the errors a deploy or a change introduced from the ones already known: DEV, STG and PRD for the team, with spikes and a weekly digest; and each sandbox for its developer |
-| | **Editing** | |
 | 🧠 | **[`crates/isml-lsp`](crates/isml-lsp)** | Language server: ISML and `dw.*` completion, metadata-backed checks, route override chains, go-to-definition |
-| 🌳 | **[`grammar`](grammar)** | `tree-sitter-isml` — the only tree-sitter grammar for ISML there is |
-| ✏️ | **[`extensions/isml`](extensions/isml)** | Zed extension wiring the grammar and the language server together |
-| | **Debugging** | |
 | 🐞 | **[`crates/sfcc-dap`](crates/sfcc-dap)** | Debug adapter for server-side scripts: DAP to the editor, the instance's own debugger API on the other side |
-| 🧩 | **[`extensions/b2c-debug`](extensions/b2c-debug)** | Zed extension registering that adapter |
+
+**Grammar and Zed extensions** — outside the workspace:
+
+| | | |
+| :-- | :-- | :-- |
+| 🌳 | **[`grammar`](grammar)** | `tree-sitter-isml` — the only tree-sitter grammar for ISML there is |
+| ✏️ | **[`extensions/isml`](extensions/isml)** | Zed extension wiring the grammar and `isml-lsp` together |
+| 🧩 | **[`extensions/b2c-debug`](extensions/b2c-debug)** | Zed extension registering `sfcc-dap` as a debug adapter |
 
 Each has its own README. This one only says how they fit together.
 
