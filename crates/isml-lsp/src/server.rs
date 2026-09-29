@@ -19,7 +19,7 @@ use lsp_types::{
 use crate::complete::{self, Completer};
 use crate::metadata::Metadata;
 use crate::workspace::Workspace;
-use crate::{diagnose, errors, hover, reference, resolve, sync, validate};
+use crate::{diagnose, errors, hover, live, reference, resolve, sync, validate};
 
 pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
@@ -140,8 +140,17 @@ impl Server {
         let line = text.lines().nth(position.position.line as usize)?;
         let column = char_offset(line, position.position.character as usize);
 
-        let value = hover::member_markdown(line, column, text)
-            .or_else(|| self.reference_hover(&uri, position.position, &file))?;
+        let docs = hover::member_markdown(line, column, text)
+            .or_else(|| self.reference_hover(&uri, position.position, &file));
+        let value = match (live::markdown(&file, line, column), docs) {
+            (Some(live), Some(docs)) => format!(
+                "{live}
+---
+
+{docs}"
+            ),
+            (live, docs) => live.or(docs)?,
+        };
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,

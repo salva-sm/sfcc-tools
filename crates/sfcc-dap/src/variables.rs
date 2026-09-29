@@ -33,6 +33,25 @@ pub fn looks_like_an_object(value: &str, kind: Option<&str>) -> bool {
     value.starts_with("[object ") || kind.is_some_and(|kind| kind.contains('.'))
 }
 
+/// `order.totalGrossPrice.value` as (`order.totalGrossPrice`, `value`); `None` for anything but dotted names.
+pub fn split_path(expression: &str) -> Option<(Option<&str>, &str)> {
+    let expression = expression.trim();
+    let identifier = |part: &str| {
+        let mut chars = part.chars();
+        chars
+            .next()
+            .is_some_and(|first| first.is_alphabetic() || first == '_' || first == '$')
+            && chars.all(|next| next.is_alphanumeric() || next == '_' || next == '$')
+    };
+    if !expression.split('.').all(identifier) {
+        return None;
+    }
+    Some(match expression.rsplit_once('.') {
+        Some((parent, leaf)) => (Some(parent), leaf),
+        None => (None, expression),
+    })
+}
+
 pub fn one_line(text: &str) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= SUMMARY {
@@ -66,6 +85,25 @@ mod tests {
         assert!(looks_like_an_object("EUR", Some("dw.util.Currency")));
         assert!(!looks_like_an_object("function () {}", Some("function")));
         assert!(!looks_like_an_object("anonymous", Some("string")));
+    }
+
+    #[test]
+    fn splits_a_dotted_name_at_its_last_member() {
+        assert_eq!(
+            split_path("order.totalGrossPrice.value"),
+            Some((Some("order.totalGrossPrice"), "value"))
+        );
+        assert_eq!(split_path(" basket "), Some((None, "basket")));
+        assert_eq!(split_path("$ctx._id"), Some((Some("$ctx"), "_id")));
+    }
+
+    #[test]
+    fn leaves_anything_but_a_name_to_the_evaluator() {
+        assert_eq!(split_path("basket.getTotalGrossPrice()"), None);
+        assert_eq!(split_path("items[0]"), None);
+        assert_eq!(split_path("a..b"), None);
+        assert_eq!(split_path("1.5"), None);
+        assert_eq!(split_path(""), None);
     }
 
     #[test]
