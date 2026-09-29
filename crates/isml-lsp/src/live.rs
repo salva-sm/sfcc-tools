@@ -1,12 +1,14 @@
 //! The value under the cursor while debugging. Zed asks a debug adapter nothing on hover, so
-//! sfcc-dap answers on localhost; its session files are the layout both programs share.
+//! sfcc-dap answers on localhost.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use serde_json::Value;
+use sfcc_core::state::is_within;
+use sfcc_core::state::sessions::{self, Session};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(4);
@@ -39,13 +41,6 @@ const KEYWORDS: [&str; 24] = [
     "throw",
 ];
 
-#[derive(Debug, serde::Deserialize)]
-struct Session {
-    cartridges: String,
-    port: u16,
-    token: String,
-}
-
 pub fn markdown(file: &Path, line: &str, column: usize) -> Option<String> {
     let script = file
         .extension()
@@ -54,9 +49,9 @@ pub fn markdown(file: &Path, line: &str, column: usize) -> Option<String> {
         return None;
     }
     let expression = expression_at(line, column)?;
-    let answer = sessions()
+    let answer = sessions::all()
         .into_iter()
-        .filter(|session| covers(&session.cartridges, file))
+        .filter(|session| is_within(file, Path::new(&session.cartridges)))
         .find_map(|session| ask(&session, &expression))?;
     render(&expression, &answer)
 }
@@ -91,24 +86,6 @@ pub fn expression_at(line: &str, column: usize) -> Option<String> {
     let keyword = KEYWORDS.contains(&first) || expression.split('.').any(|part| part.is_empty());
     let number = first.starts_with(|c: char| c.is_ascii_digit());
     (!keyword && !number).then_some(expression)
-}
-
-fn sessions() -> Vec<Session> {
-    let Some(entries) = sessions_dir().and_then(|dir| std::fs::read_dir(dir).ok()) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| serde_json::from_str(&std::fs::read_to_string(entry.path()).ok()?).ok())
-        .collect()
-}
-
-/// Case and separators aside: `dw.json` and the editor rarely spell a Windows path alike.
-fn covers(cartridges: &str, file: &Path) -> bool {
-    let normal = |path: &str| path.replace('\\', "/").trim_end_matches('/').to_lowercase();
-    let root = normal(cartridges);
-    let file = normal(&file.to_string_lossy());
-    !root.is_empty() && file.starts_with(&format!("{root}/"))
 }
 
 fn ask(session: &Session, expression: &str) -> Option<Value> {
@@ -161,20 +138,6 @@ fn cell(text: &str) -> String {
     text.replace('|', "\\|").replace('\n', " ")
 }
 
-/// sfcc-dap's folder, as it derives it.
-fn sessions_dir() -> Option<PathBuf> {
-    if cfg!(windows) {
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            return Some(PathBuf::from(appdata).join("sfcc-dap").join("sessions"));
-        }
-    }
-    let root = match std::env::var("XDG_CONFIG_HOME") {
-        Ok(config) if !config.is_empty() => PathBuf::from(config),
-        _ => PathBuf::from(std::env::var("HOME").ok()?).join(".config"),
-    };
-    Some(root.join("sfcc-dap").join("sessions"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,13 +164,6 @@ mod tests {
         assert_eq!(at("items[0].price", "price"), None);
         assert_eq!(at("    var points = 1;", "var"), None);
         assert_eq!(expression_at("a  b", 1), None);
-    }
-
-    #[test]
-    fn matches_a_checkout_however_the_path_is_spelled() {
-        let file = Path::new(r"C:\Dev\shop\cartridges\app\cartridge\scripts\a.js");
-        assert!(covers("c:/dev/shop/cartridges/", file));
-        assert!(!covers(r"C:\dev\shop\cartridges-old", file));
     }
 
     #[test]

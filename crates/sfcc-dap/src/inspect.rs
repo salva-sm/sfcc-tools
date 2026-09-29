@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 use crate::sdapi::Session;
 use crate::variables;
+use sfcc_core::state::{self, sessions};
 
 /// The frame the editor last opened, so a hover reads the one on screen.
 pub type Selected = Arc<Mutex<Option<(u32, usize)>>>;
@@ -87,15 +88,16 @@ pub fn publish(
     let port = listener.local_addr().ok()?.port();
     let token = format!("{:016x}", RandomState::new().build_hasher().finish());
 
-    let dir = sessions_dir()?;
-    std::fs::create_dir_all(&dir).ok()?;
-    let file = dir.join(format!("{}.json", std::process::id()));
-    let record = json!({
-        "cartridges": cartridges.to_string_lossy(),
-        "port": port,
-        "token": token,
-    });
-    std::fs::write(&file, record.to_string()).ok()?;
+    let file = sessions::path(std::process::id());
+    let record = sessions::Session {
+        cartridges: cartridges.to_string_lossy().into_owned(),
+        port,
+        token: token.clone(),
+    };
+    state::write(&file, &record);
+    if !file.is_file() {
+        return None;
+    }
 
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
@@ -167,18 +169,4 @@ fn inspect(session: &Session, selected: &Selected, expression: &str, raw: bool) 
         false => Vec::new(),
     };
     json!({ "value": found.value, "type": found.type_, "members": members })
-}
-
-/// sfcc-dap's folder; isml-lsp derives the same one.
-fn sessions_dir() -> Option<PathBuf> {
-    if cfg!(windows)
-        && let Ok(appdata) = std::env::var("APPDATA")
-    {
-        return Some(PathBuf::from(appdata).join("sfcc-dap").join("sessions"));
-    }
-    let root = match std::env::var("XDG_CONFIG_HOME") {
-        Ok(config) if !config.is_empty() => PathBuf::from(config),
-        _ => PathBuf::from(std::env::var("HOME").ok()?).join(".config"),
-    };
-    Some(root.join("sfcc-dap").join("sessions"))
 }

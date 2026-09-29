@@ -1,5 +1,4 @@
 //! Pending SFCC error count from log-diff, shown via LSP progress (the only channel Zed renders for an extension).
-//! Reads one JSON file per sandbox under log-diff's folder: the layout both programs must agree on.
 
 use crossbeam_channel::{SendError, Sender};
 use std::path::{Path, PathBuf};
@@ -18,16 +17,8 @@ const POLL: Duration = Duration::from_secs(5);
 /// A check a day old says nothing about now; `watch` writes every few seconds.
 const STALE_SECONDS: i64 = 24 * 60 * 60;
 
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
-pub struct Status {
-    pub cartridges: String,
-    pub hostname: String,
-    pub pending: usize,
-    #[serde(default)]
-    pub new: usize,
-    /// Seconds since the epoch.
-    pub at: i64,
-}
+pub use sfcc_core::state::errors::Status;
+use sfcc_core::state::{errors, is_within, now_seconds};
 
 pub fn report(roots: Vec<PathBuf>, sender: Sender<Message>) {
     std::thread::spawn(move || {
@@ -49,10 +40,7 @@ pub fn report(roots: Vec<PathBuf>, sender: Sender<Message>) {
 /// The freshest status for a sandbox whose checkout is one of the open folders.
 pub fn current(roots: &[PathBuf]) -> Option<Status> {
     let mut best: Option<Status> = None;
-    for entry in std::fs::read_dir(status_dir()?).ok()?.flatten() {
-        let Some(status) = read(&entry.path()) else {
-            continue;
-        };
+    for status in errors::all() {
         if !covers(&status, roots) || now_seconds() - status.at > STALE_SECONDS {
             continue;
         }
@@ -63,30 +51,9 @@ pub fn current(roots: &[PathBuf]) -> Option<Status> {
     best
 }
 
-fn read(path: &Path) -> Option<Status> {
-    if path.extension().is_none_or(|extension| extension != "json") {
-        return None;
-    }
-    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
-}
-
 fn covers(status: &Status, roots: &[PathBuf]) -> bool {
-    let checked = PathBuf::from(&status.cartridges);
-    roots.iter().any(|root| checked.starts_with(root))
-}
-
-/// log-diff's folder, as it derives it.
-fn status_dir() -> Option<PathBuf> {
-    if cfg!(windows) {
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            return Some(PathBuf::from(appdata).join("log-diff").join("status"));
-        }
-    }
-    let root = match std::env::var("XDG_CONFIG_HOME") {
-        Ok(config) if !config.is_empty() => PathBuf::from(config),
-        _ => PathBuf::from(std::env::var("HOME").ok()?).join(".config"),
-    };
-    Some(root.join("log-diff").join("status"))
+    let checked = Path::new(&status.cartridges);
+    roots.iter().any(|root| is_within(checked, root))
 }
 
 pub fn describe(status: &Status) -> Option<String> {
@@ -139,13 +106,6 @@ fn create_token(sender: &Sender<Message>) -> Result<(), SendError<Message>> {
             token: NumberOrString::String(TOKEN.to_string()),
         },
     )))
-}
-
-fn now_seconds() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

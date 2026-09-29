@@ -1,11 +1,11 @@
-use crate::manifest::state_dir;
 use anyhow::{Context, Result, bail};
 use sfcc_core::config::Config;
+use sfcc_core::state::{now_seconds, uploader_dir};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 const STALE_HEARTBEAT: i64 = 90;
@@ -18,19 +18,19 @@ pub struct SpawnArgs {
 }
 
 pub fn pid_path(config: &Config) -> PathBuf {
-    state_dir()
+    uploader_dir()
         .join("daemons")
         .join(format!("{}.pid", config.identity()))
 }
 
 pub fn log_path(config: &Config) -> PathBuf {
-    state_dir()
+    uploader_dir()
         .join("logs")
         .join(format!("{}.log", config.identity()))
 }
 
 pub fn heartbeat_path(config: &Config) -> PathBuf {
-    state_dir()
+    uploader_dir()
         .join("daemons")
         .join(format!("{}.beat", config.identity()))
 }
@@ -149,7 +149,7 @@ pub struct Running {
 
 /// Pid files of watchers that died are cleared on the way.
 pub fn running_anywhere() -> Vec<Running> {
-    let Ok(entries) = std::fs::read_dir(state_dir().join("daemons")) else {
+    let Ok(entries) = std::fs::read_dir(uploader_dir().join("daemons")) else {
         return Vec::new();
     };
     let mut running = Vec::new();
@@ -181,9 +181,8 @@ pub fn running_anywhere() -> Vec<Running> {
 
 /// `hostname / code version - cartridges folder`, from the watcher's status file.
 fn describe_identity(identity: &str) -> Option<String> {
-    let path = crate::sync_status::status_dir().join(format!("{identity}.json"));
-    let status: crate::sync_status::Status =
-        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let status: sfcc_core::state::upload::Status =
+        sfcc_core::state::read(&sfcc_core::state::upload::path(identity))?;
     Some(format!(
         "{} / {} - {}",
         status.hostname, status.code_version, status.cartridges
@@ -192,12 +191,10 @@ fn describe_identity(identity: &str) -> Option<String> {
 
 pub fn stop_running(watcher: &Running) -> Result<()> {
     terminate(watcher.pid)?;
-    let daemons = state_dir().join("daemons");
+    let daemons = uploader_dir().join("daemons");
     let _ = std::fs::remove_file(daemons.join(format!("{}.pid", watcher.identity)));
     let _ = std::fs::remove_file(daemons.join(format!("{}.beat", watcher.identity)));
-    let _ = std::fs::remove_file(
-        crate::sync_status::status_dir().join(format!("{}.json", watcher.identity)),
-    );
+    let _ = std::fs::remove_file(sfcc_core::state::upload::path(&watcher.identity));
     Ok(())
 }
 
@@ -267,13 +264,6 @@ fn prepare_log(path: &Path) -> Result<()> {
         std::fs::write(path, "").with_context(|| format!("cannot truncate {}", path.display()))?;
     }
     Ok(())
-}
-
-fn now_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 #[cfg(windows)]
