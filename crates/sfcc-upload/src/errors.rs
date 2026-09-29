@@ -8,7 +8,6 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use sfcc_core::config::Config;
 use sfcc_core::logs::{self, Mark};
-use sfcc_core::state::uploader_dir;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -21,9 +20,7 @@ pub struct ReportOptions {
 }
 
 fn mark_path(config: &Config) -> PathBuf {
-    uploader_dir()
-        .join("marks")
-        .join(format!("{}.json", config.identity()))
+    sfcc_core::state::upload::mark_path(&config.identity())
 }
 
 /// Records the current length of each of today's log files.

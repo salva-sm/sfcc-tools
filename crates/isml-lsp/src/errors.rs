@@ -14,8 +14,6 @@ use lsp_types::{
 
 const TOKEN: &str = "sfcc/errors";
 const POLL: Duration = Duration::from_secs(5);
-/// A check a day old says nothing about now; `watch` writes every few seconds.
-const STALE_SECONDS: i64 = 24 * 60 * 60;
 
 pub use sfcc_core::state::errors::Status;
 use sfcc_core::state::{errors, is_within, now_seconds};
@@ -41,7 +39,7 @@ pub fn report(roots: Vec<PathBuf>, sender: Sender<Message>) {
 pub fn current(roots: &[PathBuf]) -> Option<Status> {
     let mut best: Option<Status> = None;
     for status in errors::all() {
-        if !covers(&status, roots) || now_seconds() - status.at > STALE_SECONDS {
+        if !covers(&status, roots) || now_seconds() - status.at > errors::STALE_SECONDS {
             continue;
         }
         if best.as_ref().is_none_or(|found| found.at < status.at) {

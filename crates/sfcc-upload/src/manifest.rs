@@ -83,9 +83,7 @@ impl Manifest {
 }
 
 pub fn manifest_path(config: &Config) -> PathBuf {
-    sfcc_core::state::uploader_dir()
-        .join("manifests")
-        .join(format!("{}.json", config.identity()))
+    sfcc_core::state::upload::manifest_path(&config.identity())
 }
 
 pub fn hash_file(path: &Path) -> Result<u64> {
