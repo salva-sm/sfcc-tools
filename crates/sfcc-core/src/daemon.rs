@@ -189,9 +189,15 @@ pub fn is_alive(pid: u32) -> bool {
     }
 }
 
+/// 0 and anything past `i32::MAX` would reach `kill` as the process group or every process.
+#[cfg(unix)]
+fn one_process(pid: u32) -> Option<i32> {
+    i32::try_from(pid).ok().filter(|pid| *pid > 0)
+}
+
 #[cfg(unix)]
 pub fn is_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    one_process(pid).is_some_and(|pid| unsafe { libc::kill(pid, 0) } == 0)
 }
 
 #[cfg(windows)]
@@ -212,7 +218,10 @@ fn terminate(pid: u32) -> Result<()> {
 
 #[cfg(unix)]
 fn terminate(pid: u32) -> Result<()> {
-    if unsafe { libc::kill(pid as i32, libc::SIGTERM) } != 0 {
+    let Some(process) = one_process(pid) else {
+        bail!("{pid} is not a process id");
+    };
+    if unsafe { libc::kill(process, libc::SIGTERM) } != 0 {
         bail!("cannot stop process {pid}");
     }
     Ok(())
@@ -240,6 +249,13 @@ mod tests {
         assert!(running_in(daemon.pid.parent().unwrap()).is_empty());
         assert!(!daemon.pid.exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_pid_that_would_reach_more_than_one_process_is_never_alive() {
+        assert!(!is_alive(0));
+        assert!(!is_alive(u32::MAX));
+        assert!(!is_alive(i32::MAX as u32 + 1));
     }
 
     #[test]
