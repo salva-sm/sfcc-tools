@@ -401,6 +401,25 @@ fn a_steady_or_small_or_muted_or_brand_new_signature_does_not_spike() {
 }
 
 #[test]
+fn what_was_not_logged_on_any_day_kept_is_forgotten() {
+    let mut team = Ledger::default();
+    let gone = at("2026-06-01 10:00:00.000");
+    let still = found(&FAILURE.replace("boom", "still here"));
+    team.observe(&gone, None, false);
+    team.observe(&still, None, false);
+    team.record_daily(&counted(&still, &[("2026-09-01", 1), ("2026-09-22", 3)]));
+
+    assert_eq!(team.forget_gone(), 1);
+    assert!(!team.knows(&gone.signature.id));
+    assert!(team.knows(&still.signature.id));
+    assert_eq!(
+        Ledger::default().forget_gone(),
+        0,
+        "no days kept, nothing to measure by"
+    );
+}
+
+#[test]
 fn a_ledger_signed_another_way_learns_again_once() {
     let mut ledger = Ledger::default();
     assert!(!ledger.resigned(), "an empty ledger has nothing to mistake");

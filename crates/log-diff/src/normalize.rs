@@ -8,7 +8,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 /// Raise it with any change that gives a failure a different id, so old ledgers relearn quietly
 /// instead of reporting everything as new.
-pub const SIGNATURES: u32 = 1;
+pub const SIGNATURES: u32 = 2;
 /// Below this the stack is the framework's, the same for every failure.
 const FRAMES: usize = 8;
 const EXAMPLE_FRAMES: usize = 3;
@@ -51,6 +51,8 @@ macro_rules! regex {
 // `[moment] LEVEL thread|with|segments category []`.
 regex!(HEADER, r"^\[[^\]]*\]\s*");
 regex!(THREAD, r"^(\w+)\s+(\S*\|\S*)\s*");
+// `category Sites-X-Site STOREFRONT <session> <request> <n> - `, after the thread.
+regex!(CONTEXT, r"^(\S+ (?:Sites-\S+|-) [A-Z]+) \S+ \S+ (\S+ - )");
 // Scrubbers, applied in this order.
 regex!(
     TIMESTAMP,
@@ -133,11 +135,12 @@ fn strip_header(head: &str) -> String {
         .filter(|segment| !segment.is_empty() && !segment.bytes().all(|b| b.is_ascii_digit()))
         .collect();
 
+    let tail = &rest[found.get(0).map_or(0, |whole| whole.end())..];
     format!(
         "{} {} {}",
         &found[1],
         thread.join("|"),
-        &rest[found.get(0).map_or(0, |whole| whole.end())..]
+        CONTEXT.replace(tail, "$1 <session> <request> $2")
     )
 }
 
