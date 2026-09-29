@@ -50,6 +50,32 @@ fn the_thread_keeps_the_site_and_the_controller_but_not_the_session() {
 }
 
 #[test]
+fn the_session_and_request_after_the_category_are_not_the_failure() {
+    let record = |session: &str, request: &str| {
+        one(
+            "warn-blade1-20260922.log",
+            &format!(
+                "[2026-09-22 10:00:00.000 GMT] WARN PipelineCallServlet|1|Sites-X-Site|Page-IncludeFooter|PipelineCall|abc system.core Sites-X-Site STOREFRONT {session} {request} 5361824311231047680 - core.ISML_CustomTagNotDeclared (iskebform)
+"
+            ),
+        )
+    };
+    let one_session = record("mpsWkpQgnP", "RnB1_2a3b4c5d6-0-00");
+    let another = record("WvITUB_rxi", "Qx9z_7f8e9d0c1-0-00");
+    let job = record("5", "Qx9z_7f8e9d0c1-0-00");
+
+    assert_eq!(one_session.id, another.id);
+    assert_eq!(one_session.id, job.id);
+    assert!(
+        one_session.message.contains(
+            "Sites-X-Site STOREFRONT <session> <request> <n> - core.ISML_CustomTagNotDeclared"
+        ),
+        "{}",
+        one_session.message
+    );
+}
+
+#[test]
 fn the_request_dump_after_the_stack_never_reaches_the_signature() {
     let signature = one("error-blade1-20260922.log", WRAPPED);
     let example = signature.example();

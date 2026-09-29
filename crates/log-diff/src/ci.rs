@@ -183,6 +183,7 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
     if baseline {
         ledger.baseline = Some(next.taken.clone());
     }
+    ledger.forget_gone();
     ledger.advance(host, next);
     ledger.save(&options.state)?;
     if let Some(path) = &options.report {

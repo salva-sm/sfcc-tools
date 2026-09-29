@@ -290,6 +290,17 @@ impl Ledger {
         }
     }
 
+    /// Team only: what was not logged on any day it still counts is gone; back, it is new again.
+    pub fn forget_gone(&mut self) -> usize {
+        let Some(oldest) = self.daily.keys().next().cloned() else {
+            return 0;
+        };
+        let before = self.known_signatures.len();
+        self.known_signatures
+            .retain(|_, known| known.last_seen.as_str() >= oldest.as_str());
+        before - self.known_signatures.len()
+    }
+
     /// Each reported once a day. What first showed up today is new, not a spike.
     pub fn spikes(&mut self, today: &str, min: u64, factor: f64, quiet: &[&str]) -> Vec<Spike> {
         let Some(counts) = self.daily.get(today).cloned() else {
