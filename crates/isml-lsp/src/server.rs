@@ -44,7 +44,11 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
         sync::Options::from_settings(params.initialization_options.as_ref()),
         connection.sender.clone(),
     );
-    errors::report(workspace_roots(&params), connection.sender.clone());
+    errors::report(
+        workspace_roots(&params),
+        errors::Options::from_settings(params.initialization_options.as_ref()),
+        connection.sender.clone(),
+    );
 
     let server = Server::new(params);
     server.run(&connection)?;

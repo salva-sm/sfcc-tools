@@ -100,6 +100,8 @@ written; delete them to remove it.
 log-diff check                    one pass over the sandbox log: report what is new
 log-diff check --fail-on-new      the same, exiting 1 while anything is pending
 log-diff watch [--interval 10s]   the same pass on a timer
+log-diff start                    watch in the background, surviving the terminal or editor
+log-diff stop                     stop the watcher `start` left running
 log-diff ack [ID... | --all]      list what is pending, or resolve it; --mute to never hear of it again
 log-diff list [--pending --resolved --muted --baseline]   everything, most important first
 log-diff unmute <ID... | --all>   hear of a muted signature again
@@ -297,11 +299,17 @@ the folder may do that) with a problem matcher that puts pending signatures in t
 checking` line and a summary line, which is what a background problem matcher needs to keep
 the panel in sync.
 
-### Zed
+### In the background, and with Zed
 
-[`templates/zed-tasks.json`](templates/zed-tasks.json) is a `.zed/tasks.json` with the same
-`log-diff watch`. Zed has no equivalent of `runOn: folderOpen` at the time of writing, so it
-is started from the command palette (`task: spawn`) or a key binding.
+`log-diff start` runs the same watch detached, like `sfcc-upload start`: it keeps going when
+the terminal or editor that started it closes, writes its cards to a log under
+`log-diff/logs/`, and still raises desktop notifications. `log-diff stop` ends it. The ISML
+language server starts it when Zed opens a workspace with a `dw.json`, with this in
+`.zed/settings.json`:
+
+```json
+{ "lsp": { "isml-lsp": { "initialization_options": { "errors": { "autostart": true } } } } }
+```
 
 ### The pre-commit hook
 

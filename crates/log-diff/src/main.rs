@@ -17,6 +17,7 @@ use local::{Local, reachable};
 use output::{Badge, Card, Tone, status};
 use sfcc_core::config::Config;
 use sfcc_core::logs::parse_levels;
+use sfcc_core::state::errors;
 use sfcc_core::webdav::Dav;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -35,6 +36,8 @@ Examples:
   log-diff check                       one pass over the sandbox log, now
   log-diff check --fail-on-new         the same, exiting 1 while anything is pending (a git hook)
   log-diff watch                       the same pass every 10s, until Ctrl-C
+  log-diff start                       watch in the background, surviving the terminal or editor
+  log-diff stop                        stop the watcher `start` left running
   log-diff ack                         list what is pending; `ack <id>` or `ack --all` to clear it
   log-diff list --muted --baseline     what is never reported, most important first
   log-diff unmute <id>                 hear of a muted one again
@@ -85,6 +88,10 @@ enum Command {
     Check(CheckArgs),
     /// The same pass on a timer, for a terminal or an editor task
     Watch(WatchArgs),
+    /// `watch` detached, so closing the terminal or editor that started it does not stop it
+    Start(WatchArgs),
+    /// Stop the watcher `start` left running for the sandbox in dw.json
+    Stop(StopArgs),
     /// CI: update the team's ledger from the shared instance's log
     #[command(
         long_about = "Update the team's ledger from the log of the instance in dw.json.\n\n\
@@ -198,6 +205,13 @@ struct LocalArgs {
         value_parser = parse_span
     )]
     expire: Duration,
+}
+
+#[derive(Args)]
+struct StopArgs {
+    /// Path to dw.json (default: the nearest one, searching upwards)
+    #[arg(long, short = 'c', value_name = "PATH", value_hint = ValueHint::FilePath)]
+    config: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -440,6 +454,8 @@ async fn run(cli: Cli) -> Result<i32> {
             local.watch(&dav, args.interval).await?;
             Ok(0)
         }
+        Command::Start(args) => start(args),
+        Command::Stop(args) => stop(args),
         Command::Run(args) => ci_run(args).await,
         Command::CodeVersions(args) => {
             let config = Config::load(args.config, None)?;
@@ -745,6 +761,53 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
         true => Ok(EXIT_NEW),
         false => Ok(0),
     }
+}
+
+/// Runs `watch` again, detached, with what was given here.
+fn start(args: WatchArgs) -> Result<i32> {
+    let config = Config::load(args.local.instance.config.clone(), None)?;
+    let daemon = errors::daemon(&config.identity());
+    let local = &args.local;
+    let mut command =
+        std::process::Command::new(std::env::current_exe().context("cannot locate log-diff")?);
+    command
+        .arg("watch")
+        .arg("--config")
+        .arg(&config.dw_json)
+        .args(["--color", "never", "--level", &local.instance.level])
+        .arg("--expire")
+        .arg(format!("{}s", local.expire.as_secs()))
+        .arg("--interval")
+        .arg(format!("{}s", args.interval.as_secs()));
+    if let Some(state) = &local.state {
+        command.arg("--state").arg(state);
+    }
+    if let Some(shared) = &local.shared {
+        command.arg("--shared").arg(shared);
+    }
+    if local.no_desktop {
+        command.arg("--no-desktop");
+    }
+    let what = format!("log-diff watch for {}", config.hostname);
+    let pid = sfcc_core::daemon::start(&daemon, command, &what)?;
+    status(
+        Tone::Ok,
+        &format!("watching {} in the background (pid {pid})", config.hostname),
+    );
+    status(Tone::Info, &format!("log: {}", daemon.log.display()));
+    Ok(0)
+}
+
+fn stop(args: StopArgs) -> Result<i32> {
+    let config = Config::load(args.config, None)?;
+    match sfcc_core::daemon::stop(&errors::daemon(&config.identity()))? {
+        Some(pid) => status(Tone::Ok, &format!("stopped log-diff watch (pid {pid})")),
+        None => status(
+            Tone::Info,
+            &format!("no log-diff watch running for {}", config.hostname),
+        ),
+    }
+    Ok(0)
 }
 
 fn local(args: LocalArgs) -> Result<(Local, Dav)> {

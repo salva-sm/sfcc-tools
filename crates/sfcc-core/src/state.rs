@@ -54,6 +54,59 @@ fn home() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
 }
 
+/// How often a daemon beats.
+pub const HEARTBEAT_EVERY: std::time::Duration = std::time::Duration::from_secs(20);
+/// Past this with no beat, a daemon is gone rather than quiet.
+pub const STALE_SECONDS: i64 = 90;
+
+/// A tool's background process, by the files it is found and followed by.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Daemon {
+    pub pid: PathBuf,
+    pub heartbeat: PathBuf,
+    pub log: PathBuf,
+}
+
+impl Daemon {
+    pub fn named(daemons: &Path, logs: &Path, identity: &str) -> Daemon {
+        Daemon {
+            pid: daemons.join(format!("{identity}.pid")),
+            heartbeat: daemons.join(format!("{identity}.beat")),
+            log: logs.join(format!("{identity}.log")),
+        }
+    }
+
+    pub fn beat(&self) {
+        if let Some(parent) = self.heartbeat.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&self.heartbeat, now_seconds().to_string());
+    }
+
+    pub fn heartbeat_age(&self) -> Option<i64> {
+        let stamp: i64 = std::fs::read_to_string(&self.heartbeat)
+            .ok()?
+            .trim()
+            .parse()
+            .ok()?;
+        Some(now_seconds() - stamp)
+    }
+
+    pub fn is_beating(&self) -> bool {
+        self.heartbeat_age()
+            .is_some_and(|age| age <= STALE_SECONDS)
+    }
+
+    pub fn tail(&self, lines: usize) -> Vec<String> {
+        let text = std::fs::read_to_string(&self.log).unwrap_or_default();
+        let all: Vec<&str> = text.lines().collect();
+        all[all.len().saturating_sub(lines)..]
+            .iter()
+            .map(|line| line.to_string())
+            .collect()
+    }
+}
+
 /// The watcher's state, one file per sandbox and code version.
 pub mod upload {
     use super::*;
@@ -84,9 +137,6 @@ pub mod upload {
         pub at: i64,
     }
 
-    /// A watcher beats every 20 s; past this with no word it is gone, not quiet.
-    pub const STALE_SECONDS: i64 = 90;
-
     pub fn dir() -> PathBuf {
         uploader_dir().join("status")
     }
@@ -103,16 +153,8 @@ pub mod upload {
         uploader_dir().join("daemons")
     }
 
-    pub fn pid_path(identity: &str) -> PathBuf {
-        daemons_dir().join(format!("{identity}.pid"))
-    }
-
-    pub fn heartbeat_path(identity: &str) -> PathBuf {
-        daemons_dir().join(format!("{identity}.beat"))
-    }
-
-    pub fn log_path(identity: &str) -> PathBuf {
-        uploader_dir().join("logs").join(format!("{identity}.log"))
+    pub fn daemon(identity: &str) -> Daemon {
+        Daemon::named(&daemons_dir(), &uploader_dir().join("logs"), identity)
     }
 
     pub fn manifest_path(identity: &str) -> PathBuf {
@@ -127,17 +169,6 @@ pub mod upload {
             .join(format!("{identity}.json"))
     }
 
-    pub fn write_heartbeat(path: &Path) {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(path, now_seconds().to_string());
-    }
-
-    pub fn heartbeat_age(path: &Path) -> Option<i64> {
-        let stamp: i64 = std::fs::read_to_string(path).ok()?.trim().parse().ok()?;
-        Some(now_seconds() - stamp)
-    }
 }
 
 /// What log-diff last found pending on a sandbox.
@@ -168,6 +199,15 @@ pub mod errors {
 
     pub fn all() -> Vec<Status> {
         read_all(&dir())
+    }
+
+    pub fn daemons_dir() -> PathBuf {
+        log_diff_dir().join("daemons")
+    }
+
+    /// `log-diff start`'s watcher.
+    pub fn daemon(identity: &str) -> Daemon {
+        Daemon::named(&daemons_dir(), &log_diff_dir().join("logs"), identity)
     }
 }
 

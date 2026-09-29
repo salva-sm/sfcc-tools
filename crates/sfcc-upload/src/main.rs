@@ -473,7 +473,7 @@ async fn list_remote(config: Config, jobs: usize, path: Option<String>) -> Resul
 fn start_detached(config: &Config, spawn: daemon::SpawnArgs) -> Result<()> {
     let pid = daemon::start(config, spawn)?;
     logging::ok(format!("watcher running in the background (pid {pid})"));
-    crate::out!("  log:  {}", daemon::log_path(config).display());
+    crate::out!("  log:  {}", daemon::of(config).log.display());
     crate::out!("  stop: sfcc-upload stop");
     Ok(())
 }
@@ -577,7 +577,7 @@ async fn report_status(config: Config, jobs: usize) -> Result<()> {
     crate::out!("code version {}", ctx.config.code_version);
     crate::out!("cartridges   {}", ctx.config.cartridges_dir.display());
     crate::out!("watcher      {}", daemon::describe_state(&ctx.config));
-    crate::out!("log          {}", daemon::log_path(&ctx.config).display());
+    crate::out!("log          {}", daemon::of(&ctx.config).log.display());
     crate::out!("tracked      {tracked} file(s) in the local manifest");
     crate::out!(
         "availability {}",

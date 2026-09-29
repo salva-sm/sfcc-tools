@@ -24,7 +24,6 @@ const DRAIN_BURST: Duration = Duration::from_millis(500);
 // Shortening this splits a burst across batches and measures worse, not better.
 const DRAIN_CAP: Duration = Duration::from_secs(3);
 const BURST_PATHS: usize = 25;
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 // After a failure: probe after this, doubling up to RETRY_MAX; a save probes at once.
 const RETRY_FIRST: Duration = Duration::from_secs(10);
 const RETRY_MAX: Duration = Duration::from_secs(60);
@@ -38,8 +37,8 @@ pub struct WatchOptions {
 }
 
 pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
-    let heartbeat = daemon::heartbeat_path(&ctx.config);
-    daemon::write_heartbeat(&heartbeat);
+    let heartbeat = daemon::of(&ctx.config);
+    heartbeat.beat();
     sync_status::publish(&ctx.config, sync_status::State::Uploading);
     if options.problems {
         problems::enable();
@@ -79,7 +78,7 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
         .watch(&ctx.config.cartridges_dir, RecursiveMode::Recursive)
         .with_context(|| format!("cannot watch {}", ctx.config.cartridges_dir.display()))?;
 
-    let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
+    let mut ticker = tokio::time::interval(sfcc_core::state::HEARTBEAT_EVERY);
 
     logging::ok(format!(
         "watching {} -> {}",
@@ -104,7 +103,7 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
     loop {
         let due = retry.map(|retry| retry.at);
         tokio::select! {
-            _ = ticker.tick() => daemon::write_heartbeat(&heartbeat),
+            _ = ticker.tick() => heartbeat.beat(),
             _ = tokio::signal::ctrl_c() => {
                 logging::info("stopping the watcher");
                 manifest.save(&ctx.manifest_path)?;

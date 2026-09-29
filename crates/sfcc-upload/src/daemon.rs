@@ -1,14 +1,11 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use sfcc_core::config::Config;
-use sfcc_core::state::upload;
-pub use sfcc_core::state::upload::{heartbeat_age, write_heartbeat};
-use std::fs::{File, OpenOptions};
+use sfcc_core::daemon;
+use sfcc_core::state::{Daemon, upload};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
-
-const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct SpawnArgs {
@@ -17,45 +14,16 @@ pub struct SpawnArgs {
     pub cartridges: Vec<String>,
 }
 
-pub fn pid_path(config: &Config) -> PathBuf {
-    upload::pid_path(&config.identity())
-}
-
-pub fn log_path(config: &Config) -> PathBuf {
-    upload::log_path(&config.identity())
-}
-
-pub fn heartbeat_path(config: &Config) -> PathBuf {
-    upload::heartbeat_path(&config.identity())
+pub fn of(config: &Config) -> Daemon {
+    upload::daemon(&config.identity())
 }
 
 pub fn running_pid(config: &Config) -> Option<u32> {
-    let raw = std::fs::read_to_string(pid_path(config)).ok()?;
-    let pid: u32 = raw.trim().parse().ok()?;
-    if is_alive(pid) { Some(pid) } else { None }
+    daemon::running(&of(config))
 }
 
 pub fn start(config: &Config, args: SpawnArgs) -> Result<u32> {
-    if let Some(pid) = running_pid(config) {
-        bail!(
-            "a watcher is already running for {} (pid {pid})",
-            config.code_version
-        );
-    }
-
     let executable = std::env::current_exe().context("cannot locate the sfcc-upload executable")?;
-    let log = log_path(config);
-    prepare_log(&log)?;
-
-    let output = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log)
-        .with_context(|| format!("cannot open {}", log.display()))?;
-    let errors = output
-        .try_clone()
-        .context("cannot duplicate the log handle")?;
-
     let mut command = Command::new(executable);
     command
         .arg("--config")
@@ -64,11 +32,7 @@ pub fn start(config: &Config, args: SpawnArgs) -> Result<u32> {
         .arg(&config.code_version)
         .arg("watch")
         .arg("--jobs")
-        .arg(args.jobs.to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(output))
-        .stderr(Stdio::from(errors));
-
+        .arg(args.jobs.to_string());
     if args.watch.full {
         command.arg("--full");
     }
@@ -84,39 +48,17 @@ pub fn start(config: &Config, args: SpawnArgs) -> Result<u32> {
     for cartridge in &args.cartridges {
         command.arg("--cartridge").arg(cartridge);
     }
-    detach(&mut command);
-    keep_std_handles_from_the_child();
-
-    let child = command
-        .spawn()
-        .context("cannot start the background watcher")?;
-    let pid = child.id();
-
-    let pid_file = pid_path(config);
-    if let Some(parent) = pid_file.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("cannot create {}", parent.display()))?;
-    }
-    std::fs::write(&pid_file, pid.to_string())
-        .with_context(|| format!("cannot write {}", pid_file.display()))?;
-    let _ = std::fs::remove_file(heartbeat_path(config));
-
-    Ok(pid)
+    let what = format!("a watcher for {}", config.code_version);
+    daemon::start(&of(config), command, &what)
 }
 
 pub fn stop(config: &Config) -> Result<Option<u32>> {
-    let pid_file = pid_path(config);
-    let Some(pid) = running_pid(config) else {
-        let _ = std::fs::remove_file(&pid_file);
-        return Ok(None);
-    };
-
-    terminate(pid)?;
-    let _ = std::fs::remove_file(&pid_file);
-    let _ = std::fs::remove_file(heartbeat_path(config));
-    // Killed, it cannot clear its own status: an editor would show it uploading until it went stale.
-    crate::sync_status::clear(config);
-    Ok(Some(pid))
+    let stopped = daemon::stop(&of(config))?;
+    if stopped.is_some() {
+        // Killed, it cannot clear its own status: an editor would show it uploading until it went stale.
+        crate::sync_status::clear(config);
+    }
+    Ok(stopped)
 }
 
 /// Found by its pid file alone, so it can be stopped without its dw.json.
@@ -128,42 +70,20 @@ pub struct Running {
     pub description: Option<String>,
 }
 
-/// Pid files of watchers that died are cleared on the way.
 pub fn running_anywhere() -> Vec<Running> {
-    let Ok(entries) = std::fs::read_dir(upload::daemons_dir()) else {
-        return Vec::new();
-    };
-    let mut running = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("pid") {
-            continue;
-        }
-        let Some(identity) = path.file_stem().and_then(|stem| stem.to_str()) else {
-            continue;
-        };
-        let pid = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|raw| raw.trim().parse::<u32>().ok());
-        match pid {
-            Some(pid) if is_alive(pid) => running.push(Running {
-                identity: identity.to_string(),
-                pid,
-                description: describe_identity(identity),
-            }),
-            _ => {
-                let _ = std::fs::remove_file(&path);
-            }
-        }
-    }
-    running.sort_by(|left, right| left.identity.cmp(&right.identity));
-    running
+    daemon::running_in(&upload::daemons_dir())
+        .into_iter()
+        .map(|(identity, pid)| Running {
+            description: describe_identity(&identity),
+            identity,
+            pid,
+        })
+        .collect()
 }
 
 /// `hostname / code version - cartridges folder`, from the watcher's status file.
 fn describe_identity(identity: &str) -> Option<String> {
-    let status: sfcc_core::state::upload::Status =
-        sfcc_core::state::read(&sfcc_core::state::upload::path(identity))?;
+    let status: upload::Status = sfcc_core::state::read(&upload::path(identity))?;
     Some(format!(
         "{} / {} - {}",
         status.hostname, status.code_version, status.cartridges
@@ -171,15 +91,13 @@ fn describe_identity(identity: &str) -> Option<String> {
 }
 
 pub fn stop_running(watcher: &Running) -> Result<()> {
-    terminate(watcher.pid)?;
-    let _ = std::fs::remove_file(upload::pid_path(&watcher.identity));
-    let _ = std::fs::remove_file(upload::heartbeat_path(&watcher.identity));
-    let _ = std::fs::remove_file(sfcc_core::state::upload::path(&watcher.identity));
+    daemon::stop(&upload::daemon(&watcher.identity))?;
+    let _ = std::fs::remove_file(upload::path(&watcher.identity));
     Ok(())
 }
 
 pub fn tail(config: &Config, lines: usize) -> Result<String> {
-    let path = log_path(config);
+    let path = of(config).log;
     let Ok(contents) = std::fs::read_to_string(&path) else {
         return Ok(String::new());
     };
@@ -189,7 +107,7 @@ pub fn tail(config: &Config, lines: usize) -> Result<String> {
 }
 
 pub fn follow(config: &Config, lines: usize) -> Result<()> {
-    let path = log_path(config);
+    let path = of(config).log;
     crate::out!("{}", tail(config, lines)?);
 
     let mut file = File::open(&path).with_context(|| format!("cannot open {}", path.display()))?;
@@ -219,123 +137,5 @@ pub fn follow(config: &Config, lines: usize) -> Result<()> {
 }
 
 pub fn describe_state(config: &Config) -> String {
-    match running_pid(config) {
-        None => "stopped".to_string(),
-        Some(pid) => match heartbeat_age(&heartbeat_path(config)) {
-            Some(age) if age > upload::STALE_SECONDS => {
-                format!("running (pid {pid}), last heartbeat {age}s ago")
-            }
-            Some(age) => format!("running (pid {pid}), heartbeat {age}s ago"),
-            None => format!("running (pid {pid}), starting up"),
-        },
-    }
-}
-
-fn prepare_log(path: &Path) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("cannot create {}", parent.display()))?;
-    }
-    if std::fs::metadata(path)
-        .map(|metadata| metadata.len())
-        .unwrap_or(0)
-        > MAX_LOG_BYTES
-    {
-        std::fs::write(path, "").with_context(|| format!("cannot truncate {}", path.display()))?;
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn detach(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-}
-
-#[cfg(unix)]
-fn detach(command: &mut Command) {
-    use std::os::unix::process::CommandExt;
-    command.process_group(0);
-}
-
-#[cfg(windows)]
-mod win32 {
-    use std::ffi::c_void;
-
-    pub type Handle = *mut c_void;
-    pub const PROCESS_TERMINATE: u32 = 0x0001;
-    pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
-    pub const STILL_ACTIVE: u32 = 259;
-    pub const HANDLE_FLAG_INHERIT: u32 = 0x0001;
-    pub const STD_HANDLES: [u32; 3] = [0xFFFF_FFF6, 0xFFFF_FFF5, 0xFFFF_FFF4];
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        pub fn OpenProcess(access: u32, inherit_handle: i32, process_id: u32) -> Handle;
-        pub fn GetExitCodeProcess(process: Handle, exit_code: *mut u32) -> i32;
-        pub fn TerminateProcess(process: Handle, exit_code: u32) -> i32;
-        pub fn CloseHandle(object: Handle) -> i32;
-        pub fn GetStdHandle(id: u32) -> Handle;
-        pub fn SetHandleInformation(object: Handle, mask: u32, flags: u32) -> i32;
-    }
-}
-
-#[cfg(windows)]
-fn keep_std_handles_from_the_child() {
-    for id in win32::STD_HANDLES {
-        unsafe {
-            let handle = win32::GetStdHandle(id);
-            if !handle.is_null() && handle as isize != -1 {
-                win32::SetHandleInformation(handle, win32::HANDLE_FLAG_INHERIT, 0);
-            }
-        }
-    }
-}
-
-#[cfg(unix)]
-fn keep_std_handles_from_the_child() {}
-
-#[cfg(windows)]
-fn is_alive(pid: u32) -> bool {
-    unsafe {
-        let handle = win32::OpenProcess(win32::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if handle.is_null() {
-            return false;
-        }
-        let mut code: u32 = 0;
-        let queried = win32::GetExitCodeProcess(handle, &mut code);
-        win32::CloseHandle(handle);
-        queried != 0 && code == win32::STILL_ACTIVE
-    }
-}
-
-#[cfg(unix)]
-fn is_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
-}
-
-#[cfg(windows)]
-fn terminate(pid: u32) -> Result<()> {
-    unsafe {
-        let handle = win32::OpenProcess(win32::PROCESS_TERMINATE, 0, pid);
-        if handle.is_null() {
-            bail!("cannot open process {pid}");
-        }
-        let stopped = win32::TerminateProcess(handle, 0);
-        win32::CloseHandle(handle);
-        if stopped == 0 {
-            bail!("cannot stop process {pid}");
-        }
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn terminate(pid: u32) -> Result<()> {
-    if unsafe { libc::kill(pid as i32, libc::SIGTERM) } != 0 {
-        bail!("cannot stop process {pid}");
-    }
-    Ok(())
+    daemon::describe(&of(config))
 }
