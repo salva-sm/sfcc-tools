@@ -468,3 +468,26 @@ fn only_a_storefront_request_makes_an_error_page() {
         "ERROR JobThread|1 custom [] HTTP 500 Internal Server Error from the payment service"
     ));
 }
+
+#[test]
+fn a_clone_of_the_ledger_repository_means_its_dev_ledger() {
+    let clone = std::env::temp_dir().join(format!("log-diff-clone-{}", std::process::id()));
+    std::fs::create_dir_all(clone.join("ledgers")).unwrap();
+    let mut dev = Ledger::default();
+    dev.advance("dev.example.com", Mark::start_of_today());
+    dev.save(&clone.join("ledgers").join("dev.json")).unwrap();
+
+    let (from_folder, warning) = load_local_shared(&clone).unwrap();
+    assert!(warning.is_none());
+    assert!(from_folder.cursor_for("dev.example.com").is_some());
+    let (from_file, _) = load_local_shared(&clone.join("ledgers").join("dev.json")).unwrap();
+    assert!(from_file.cursor_for("dev.example.com").is_some());
+    std::fs::remove_dir_all(&clone).unwrap();
+}
+
+#[test]
+fn a_ledger_path_that_is_not_there_is_said() {
+    let (ledger, warning) = load_local_shared(Path::new("no/such/ledger.json")).unwrap();
+    assert!(ledger.cursor_for("dev.example.com").is_none());
+    assert!(warning.unwrap().contains("no team ledger at"));
+}

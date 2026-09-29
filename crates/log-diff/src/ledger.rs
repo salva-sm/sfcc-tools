@@ -435,11 +435,27 @@ impl Ledger {
     }
 }
 
+/// A clone of the ledger repository means its DEV ledger, the one a sandbox is compared with.
+fn load_local_shared(source: &Path) -> Result<(Ledger, Option<String>)> {
+    let file = match source.is_dir() {
+        true => source.join("ledgers").join("dev.json"),
+        false => source.to_path_buf(),
+    };
+    if !file.is_file() {
+        let warning = format!(
+            "no team ledger at {} - what the team knows reads as new",
+            file.display()
+        );
+        return Ok((Ledger::default(), Some(warning)));
+    }
+    Ok((Ledger::load(&file)?, None))
+}
+
 /// A fetched URL is kept in `cache`: when unreachable, the last copy beats treating everything
 /// the team knows as new.
 pub async fn load_shared(source: &str, cache: &Path) -> Result<(Ledger, Option<String>)> {
     if !source.starts_with("http://") && !source.starts_with("https://") {
-        return Ok((Ledger::load(Path::new(source))?, None));
+        return load_local_shared(Path::new(source));
     }
 
     match fetch(source).await {
