@@ -1,3 +1,4 @@
+mod active;
 mod daemon;
 mod errors;
 mod githook;
@@ -14,6 +15,7 @@ mod tail;
 mod watch;
 mod webdav;
 
+use active::Serving;
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueHint};
 use push::{Ctx, PushOptions, human_bytes};
@@ -358,8 +360,12 @@ async fn run(cli: Cli) -> Result<()> {
                 },
             };
             push::push(&ctx, options).await?;
-            if args.activate && !args.dry_run {
-                activate(&ctx.config, None).await?;
+            if args.dry_run {
+                return Ok(());
+            }
+            match args.activate {
+                true => activate(&ctx.config, None).await?,
+                false => active::ensure(&ctx.config).await,
             }
             Ok(())
         }
@@ -583,6 +589,10 @@ async fn report_status(config: Config, jobs: usize) -> Result<()> {
         "availability {}",
         describe_availability(&ctx.dav.availability().await)
     );
+    crate::out!(
+        "active       {}",
+        active::describe(&active::check(&ctx.config).await)
+    );
     Ok(())
 }
 
@@ -621,6 +631,22 @@ async fn diagnose(config: Config, jobs: usize) -> Result<()> {
             ));
         }
         Availability::Ready => {}
+    }
+
+    let serving = active::check(&ctx.config).await;
+    crate::out!("active       {}", active::describe(&serving));
+    match serving {
+        Serving::Other(_) | Serving::Nothing if ctx.config.ensure_active => {
+            logging::info("ensure-active is on: the next push or watch activates it")
+        }
+        Serving::Other(_) | Serving::Nothing => logging::warn(format!(
+            "the storefront does not run {} - `sfcc-upload activate`, or \"ensure-active\": true              in dw.json",
+            ctx.config.code_version
+        )),
+        Serving::Unknown(_) if ctx.config.ensure_active => logging::info(
+            "ensure-active is on, but cannot act without an API client allowed /code_versions",
+        ),
+        Serving::Ours | Serving::Unknown(_) => {}
     }
 
     let files = scan::scan(&ctx.config, &ctx.ignore)?;

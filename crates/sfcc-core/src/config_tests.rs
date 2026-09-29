@@ -55,6 +55,22 @@ fn reads_a_dw_json_the_way_prophet_writes_it() {
     );
     assert!(matches!(config.credentials, Credentials::Basic { .. }));
     assert!(config.api_client.is_none());
+    assert!(!config.ensure_active);
+
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn ensure_active_is_asked_for_in_dw_json() {
+    let home = scratch("dwjson-ensure-active");
+    std::fs::write(
+        home.join("dw.json"),
+        r#"{ "hostname": "sbx-001.example.com", "username": "someone", "password": "secret", "ensure-active": true }"#,
+    )
+    .unwrap();
+
+    let config = Config::load(Some(home.join("dw.json")), None).unwrap();
+    assert!(config.ensure_active);
 
     let _ = std::fs::remove_dir_all(&home);
 }

@@ -62,6 +62,7 @@ impl MockDav {
             cartridge_filter: None,
             accept_invalid_certs: false,
             api_client: None,
+            ensure_active: false,
             plain_http: true,
         }
     }
