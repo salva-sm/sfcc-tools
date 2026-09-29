@@ -156,7 +156,8 @@ stack is dropped whole, which is where most of the personal data in an error log
 
 From what is left, the moment, the thread number and the session go. Then, in this order:
 timestamps, UUIDs, URLs (the host and the shape of the path stay; the query goes, and so does
-any segment that is an id), emails, IP addresses, `key=value` secrets (`dwsid`, `token`,
+any segment that is an id), emails (`@@` too), IP addresses, locales (`en_FR`), the line inside
+a template of an `ISML_` warning, `key=value` secrets (`dwsid`, `token`,
 `password`, `authorization`...), bearer tokens, decimals, numbers of four digits or more,
 and any word six long or more that mixes letters and digits — order numbers, product ids.
 Short numbers stay: `HTTP 404` means something. Paths stay, since a cartridge may have a
