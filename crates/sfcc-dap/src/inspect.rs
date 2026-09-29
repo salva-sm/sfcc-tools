@@ -1,9 +1,5 @@
-//! Values from the halted frame, for the evaluate request and for the language server's hover.
-//!
-//! Zed asks a debug adapter nothing on hover, but it does ask isml-lsp. So while attached, the
-//! adapter answers on a localhost port and says where in one JSON file per adapter under its
-//! own folder - the one layout the two programs have to agree on. One connection carries one
-//! JSON line each way: `{"token", "expression"}` in, `{"value", "type", "members"}` out.
+//! Values from the halted frame, for `evaluate` and for isml-lsp's hover, which asks on a
+//! localhost port: one JSON line each way, `{"token", "expression"}` in, `{"value", "type", "members"}` out.
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
@@ -30,8 +26,7 @@ pub struct Found {
     pub object: bool,
 }
 
-/// A plain name is read from its parent's members, so it carries the type and arrow the
-/// Variables view shows; anything else goes to the evaluator. `Err` is the message to show.
+/// A plain name is read from its parent's members, which carry its type; the rest is evaluated.
 pub fn read(
     session: &Session,
     thread: u32,
@@ -137,7 +132,6 @@ fn answer(
     writeln!(stream, "{reply}")
 }
 
-/// Nothing halted is an empty answer, not an error: the hover then shows only the docs.
 fn inspect(session: &Session, selected: &Selected, expression: &str, raw: bool) -> Value {
     let Ok(Some(thread)) = session.halted() else {
         return json!({});

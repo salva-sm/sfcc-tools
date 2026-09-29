@@ -1,13 +1,5 @@
-//! The value under the cursor while a debug session is halted, at the top of the hover.
-//!
-//! The one place this server reaches past the checkout: Zed sends a debug adapter nothing on
-//! hover, so sfcc-dap, while attached, answers on a localhost port instead.
-//!
-//! # The file it reads
-//!
-//! One JSON file per running adapter under sfcc-dap's own folder, naming its cartridges, port
-//! and token - the one layout the two programs have to agree on. One connection carries one
-//! JSON line each way.
+//! The value under the cursor while debugging. Zed asks a debug adapter nothing on hover, so
+//! sfcc-dap answers on localhost; its session files are the layout both programs share.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
@@ -16,7 +8,6 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-/// Past this the hover would rather show only the docs than keep the editor waiting.
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(4);
 const VALUE: usize = 80;
@@ -70,8 +61,7 @@ pub fn markdown(file: &Path, line: &str, column: usize) -> Option<String> {
     render(&expression, &answer)
 }
 
-/// The dotted name up to the identifier under the cursor: on `totalGrossPrice` in
-/// `order.totalGrossPrice.value`, that is `order.totalGrossPrice`.
+/// On `totalGrossPrice` in `order.totalGrossPrice.value`: `order.totalGrossPrice`.
 pub fn expression_at(line: &str, column: usize) -> Option<String> {
     let chars: Vec<char> = line.chars().collect();
     let part = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
@@ -91,7 +81,6 @@ pub fn expression_at(line: &str, column: usize) -> Option<String> {
             start -= 1;
             continue;
         }
-        // Past a call or an index the chain is no longer a name the debugger can open.
         if start >= 1 && chars[start - 1] == '.' {
             return None;
         }
@@ -133,7 +122,6 @@ fn ask(session: &Session, expression: &str) -> Option<Value> {
     serde_json::from_str(&line).ok()
 }
 
-/// Nothing when nothing is halted, or the name means nothing in the frame.
 pub fn render(expression: &str, answer: &Value) -> Option<String> {
     let value = answer.get("value")?.as_str()?;
     let mut out = format!("**{expression}**");
