@@ -66,7 +66,7 @@ impl MockDav {
         }
     }
 
-    /// A write from outside: another developer, another tool.
+    /// A write from outside, such as another developer's.
     pub fn put(&self, path: &str, contents: impl Into<Vec<u8>>) {
         let mut tree = self.tree.lock().unwrap();
         tree.write(path, contents.into());

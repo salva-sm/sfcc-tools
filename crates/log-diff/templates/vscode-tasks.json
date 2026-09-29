@@ -1,7 +1,7 @@
 {
   // Copy into the SFCC project as .vscode/tasks.json (or merge the task in).
   // Allow automatic tasks when VS Code asks, or later via "Tasks: Manage Automatic Tasks".
-  // The team's ledger comes from LOG_DIFF_SHARED in your user environment (setx on Windows).
+  // LOG_DIFF_SHARED comes from your environment.
   "version": "2.0.0",
   "tasks": [
     {

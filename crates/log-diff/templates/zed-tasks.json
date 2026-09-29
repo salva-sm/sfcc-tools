@@ -1,6 +1,4 @@
-// Copy into the SFCC project as .zed/tasks.json; start it with
-// "task: spawn" -> "log-diff: watch". The team's ledger comes from LOG_DIFF_SHARED in your
-// user environment (setx on Windows), so every terminal and editor sees the same one.
+// Copy into the SFCC project as .zed/tasks.json. LOG_DIFF_SHARED comes from your environment.
 [
   {
     "label": "log-diff: watch",

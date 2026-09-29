@@ -1,10 +1,6 @@
-//! Whether the sandbox still holds what this checkout last sent it.
-//!
-//! `getetag` changes on every write, even of the same bytes, so a file whose etag is not the one
-//! read back after its last upload has been written since by someone else: a colleague on the
-//! same code version, Prophet, another checkout. Files sent in bulk have no etag read back - one
-//! listing per folder would double a full deploy - and are judged by date instead. The instance
-//! ignores `If-Match`, so this is a look before the write, not a lock.
+//! Whether someone else wrote a file since this checkout last sent it. `getetag` changes on
+//! every write; files sent in bulk get no etag read back and are judged by date. The instance
+//! ignores `If-Match`, so this is a check before the write, not a lock.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,7 +13,6 @@ use crate::push::Ctx;
 use crate::scan::LocalFile;
 use crate::webdav::DavEntry;
 
-/// How far the sandbox's clock and this one may disagree.
 const CLOCK_SLACK_SECONDS: i64 = 120;
 /// Past this many folders, reading etags back costs more than the upload did.
 const REMEMBER_FOLDERS: usize = 40;
@@ -33,7 +28,7 @@ pub enum Overwrite {
 pub struct Settled {
     pub upserts: Vec<LocalFile>,
     pub removals: Vec<String>,
-    /// Written on the sandbox by someone else, and left as they are.
+    /// Left as the sandbox has them.
     pub held: Vec<String>,
 }
 
@@ -89,8 +84,7 @@ pub async fn settle(
     })
 }
 
-/// Of `paths` - files, or folders about to be deleted - the recorded files someone else has
-/// written since. A file gone from the sandbox is not one.
+/// `paths` may be folders about to be deleted. A file gone from the sandbox is not a conflict.
 pub async fn overwritten(ctx: &Ctx, manifest: &Manifest, paths: &[String]) -> Result<Vec<String>> {
     let recorded: BTreeMap<&str, &Entry> = paths
         .iter()
@@ -210,7 +204,6 @@ mod tests {
             &entry(Some("a1"), None),
             &remote("a1", MODIFIED)
         ));
-        // The etag decides, whatever the date says.
         assert!(!written_since(
             &entry(Some("a1"), Some(0)),
             &remote("a1", MODIFIED)

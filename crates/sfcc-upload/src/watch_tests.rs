@@ -123,7 +123,6 @@ async fn a_file_someone_else_wrote_since_is_neither_overwritten_nor_deleted() {
     attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
     assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine"));
 
-    // Ours again, with nobody in between: sent as always.
     pending.insert(checkout.save("app_x/cartridge/a.js", "mine, second"));
     attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
     assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine, second"));
