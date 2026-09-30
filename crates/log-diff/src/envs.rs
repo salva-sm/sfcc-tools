@@ -120,12 +120,18 @@ pub fn github_token() -> Option<String> {
             return Some(token.trim().to_string());
         }
     }
-    let output = std::process::Command::new("gh")
+    let mut command = std::process::Command::new("gh");
+    command
         .args(["auth", "token"])
         .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command.output().ok()?;
     let token = String::from_utf8(output.stdout).ok()?.trim().to_string();
     (output.status.success() && !token.is_empty()).then_some(token)
 }
