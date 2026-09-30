@@ -342,6 +342,9 @@ struct TicketArgs {
     /// Link to a line of code, with {sha}, {path} and {line}
     #[arg(long, value_name = "URL", env = "LOG_DIFF_CODE_URL")]
     code_url: Option<String>,
+    /// The dashboard, linked from the ticket at this signature
+    #[arg(long, value_name = "URL", env = "LOG_DIFF_DASHBOARD_URL")]
+    dashboard_url: Option<String>,
     /// Print the issue that would be created, and create nothing
     #[arg(long)]
     dry_run: bool,
@@ -891,6 +894,10 @@ async fn ticket(args: TicketArgs) -> Result<i32> {
         known.first_deploy_sha.as_deref(),
         known.location.as_deref(),
     );
+    let dashboard = args
+        .dashboard_url
+        .filter(|url| !url.trim().is_empty())
+        .map(|url| format!("{url}?signature={id}&env={}", environment.name));
     if args.dry_run {
         let target = jira::Target {
             url: String::new(),
@@ -899,12 +906,26 @@ async fn ticket(args: TicketArgs) -> Result<i32> {
             project: args.project,
             kind: args.kind,
         };
-        let issue = jira::issue(&target, id, &environment.name, known, link.as_deref());
+        let issue = jira::issue(
+            &target,
+            id,
+            &environment.name,
+            known,
+            link.as_deref(),
+            dashboard.as_deref(),
+        );
         println!("{}", serde_json::to_string_pretty(&issue)?);
         return Ok(0);
     }
     let target = jira::Target::from_env(args.project, args.kind)?;
-    let issue = jira::issue(&target, id, &environment.name, known, link.as_deref());
+    let issue = jira::issue(
+        &target,
+        id,
+        &environment.name,
+        known,
+        link.as_deref(),
+        dashboard.as_deref(),
+    );
     let ticket = jira::create(&target, &issue).await?;
     status(
         Tone::Ok,
