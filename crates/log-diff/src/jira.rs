@@ -39,6 +39,7 @@ pub fn issue(
     environment: &str,
     known: &Known,
     link: Option<&str>,
+    dashboard: Option<&str>,
 ) -> Value {
     let what = headline(
         &known.label,
@@ -56,10 +57,35 @@ pub fn issue(
     if let Some(sha) = &known.first_deploy_sha {
         content.push(paragraph(format!("First seen after deploy {sha}.")));
     }
+    // Where it happened: one signature spans every site and controller it reached.
+    let most = |counts: &std::collections::BTreeMap<String, u64>| {
+        let mut all: Vec<_> = counts.iter().collect();
+        all.sort_by(|left, right| right.1.cmp(left.1));
+        all.iter()
+            .take(6)
+            .map(|(name, count)| format!("{name} {count}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if !known.sites.is_empty() {
+        content.push(paragraph(format!("Sites: {}.", most(&known.sites))));
+    }
+    if !known.controllers.is_empty() {
+        content.push(paragraph(format!(
+            "Controllers: {}.",
+            most(&known.controllers)
+        )));
+    }
+    let linked = |text: &str, href: &str| {
+        json!({ "type": "paragraph", "content": [{
+            "type": "text", "text": text, "marks": [{ "type": "link", "attrs": { "href": href } }]
+        }]})
+    };
     if let Some(link) = link {
-        content.push(json!({ "type": "paragraph", "content": [{
-            "type": "text", "text": "Code", "marks": [{ "type": "link", "attrs": { "href": link } }]
-        }]}));
+        content.push(linked("Code", link));
+    }
+    if let Some(dashboard) = dashboard {
+        content.push(linked("In the dashboard", dashboard));
     }
     content.push(
         json!({ "type": "codeBlock", "content": [{ "type": "text", "text": known.example }] }),
@@ -68,10 +94,37 @@ pub fn issue(
     json!({ "fields": {
         "project": { "key": target.project },
         "issuetype": { "name": target.kind },
-        "summary": format!("[{}] {}", environment.to_uppercase(), what.chars().take(200).collect::<String>()),
+        "summary": summary(environment, &what, &known.example),
         "labels": ["log-diff", environment],
         "description": { "type": "doc", "version": 1, "content": content },
     }})
+}
+
+/// `[PRD] TypeError at a.js:9: Cannot read property "x" from null`: what, where, and the
+/// message, which tells two warnings of one kind apart.
+fn summary(environment: &str, what: &str, example: &str) -> String {
+    let head = example.lines().next().unwrap_or_default();
+    // After a custom log's `[]`, a system log's counter, or its six empty columns.
+    let message = match (
+        head.find("[] "),
+        head.find(" <n> - "),
+        head.find(" - - - - - - "),
+    ) {
+        (Some(at), _, _) => &head[at + 3..],
+        (None, Some(at), _) => &head[at + 7..],
+        (None, None, Some(at)) => &head[at + 13..],
+        _ => "",
+    };
+    // The instance's filter repeating it says so first.
+    let message = message
+        .split_once(" seconds: ")
+        .filter(|(before, _)| before.contains("suppressed for"))
+        .map_or(message, |(_, repeated)| repeated);
+    let text = match message.trim() {
+        "" => format!("[{}] {what}", environment.to_uppercase()),
+        message => format!("[{}] {what}: {message}", environment.to_uppercase()),
+    };
+    text.chars().take(250).collect()
 }
 
 pub async fn create(target: &Target, issue: &Value) -> Result<Ticket> {
@@ -136,7 +189,7 @@ mod tests {
             sites: Default::default(),
             controllers: Default::default(),
         };
-        let issue = issue(&target, "abc", "prd", &known, None);
+        let issue = issue(&target, "abc", "prd", &known, None, None);
 
         assert_eq!(issue["fields"]["project"]["key"], "SHOP");
         assert_eq!(
