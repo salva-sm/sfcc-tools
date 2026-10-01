@@ -188,6 +188,7 @@ mod tests {
             spiked_on: None,
             sites: Default::default(),
             controllers: Default::default(),
+            orders: Default::default(),
         };
         let issue = issue(&target, "abc", "prd", &known, None, None);
 

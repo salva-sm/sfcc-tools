@@ -342,3 +342,42 @@ fn a_compiled_template_names_its_cartridge() {
         "{scrubbed}"
     );
 }
+
+const VOUCHER: &str = "[2026-09-30 10:00:00.000 GMT] WARN ShopAPIServlet|1|/servlet/s/guess_fr/dw/shop/v23_2/orders/GE17863814/payment_instruments/aa329fa7d446bcf91c5085b00b custom.voucherRedeem [] Loyalty voucher \"WANKQBRZ\" no longer reserved at placeOrder. Failing order GE17863814.\n";
+
+#[test]
+fn the_order_number_and_the_voucher_code_are_not_the_failure() {
+    let signature = one("custom-voucherRedeem-blade1-20260930.log", VOUCHER);
+    assert!(
+        signature.message.ends_with(
+            "/orders/<orderNumber>/payment_instruments/aa329fa7d446bcf91c5085b00b custom.voucherRedeem [] Loyalty voucher \"<voucherCode>\" no longer reserved at placeOrder. Failing order <orderNumber>."
+        ),
+        "{}",
+        signature.message
+    );
+    let other = one(
+        "custom-voucherRedeem-blade1-20260930.log",
+        &VOUCHER
+            .replace("GE17863814", "GNA02311750")
+            .replace("WANKQBRZ", "QRQTLLNX"),
+    );
+    assert_eq!(signature.id, other.id);
+}
+
+#[test]
+fn the_orders_it_failed_are_kept_apart() {
+    assert_eq!(
+        one("custom-voucherRedeem-blade1-20260930.log", VOUCHER).orders,
+        ["GE17863814"]
+    );
+    assert!(one("error-blade1-20260922.log", WRAPPED).orders.is_empty());
+}
+
+#[test]
+fn naming_the_order_number_keeps_the_id_it_had() {
+    let before = "WARN ShopAPIServlet custom.voucherRedeem [] Loyalty voucher \"<voucherCode>\" no longer reserved at placeOrder. Failing order <id>.";
+    assert_eq!(
+        without_positions(&before.replace("<id>", "<orderNumber>")),
+        without_positions(before)
+    );
+}
