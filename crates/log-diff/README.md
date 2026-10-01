@@ -101,7 +101,8 @@ log-diff check                    one pass over the sandbox log: report what is 
 log-diff check --fail-on-new      the same, exiting 1 while anything is pending
 log-diff watch [--interval 10s]   the same pass on a timer
 log-diff start                    watch in the background, surviving the terminal or editor
-log-diff stop                     stop the watcher `start` left running
+log-diff stop                     stop the watcher `start` left running - from anywhere, when only one runs
+log-diff stop --all               stop every watcher, whichever project started it
 log-diff ack [ID... | --all]      list what is pending, or resolve it; --mute to never hear of it again
 log-diff list [--pending --resolved --muted --baseline]   everything, most important first
 log-diff unmute <ID... | --all>   hear of a muted signature again

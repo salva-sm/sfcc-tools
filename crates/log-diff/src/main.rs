@@ -90,7 +90,10 @@ enum Command {
     Watch(WatchArgs),
     /// `watch` detached, so closing the terminal or editor that started it does not stop it
     Start(WatchArgs),
-    /// Stop the watcher `start` left running for the sandbox in dw.json
+    /// Stop the watcher `start` left running - from anywhere, when only one is running
+    #[command(long_about = "Stop the watcher `start` left running.
+
+Inside a project, it stops the         one for the sandbox in dw.json. Anywhere else - no dw.json around - it stops the one         watcher running, whichever project started it; with several running it lists them, and         `--all` stops every one.")]
     Stop(StopArgs),
     /// CI: update the team's ledger from the shared instance's log
     #[command(
@@ -212,6 +215,9 @@ struct StopArgs {
     /// Path to dw.json (default: the nearest one, searching upwards)
     #[arg(long, short = 'c', value_name = "PATH", value_hint = ValueHint::FilePath)]
     config: Option<PathBuf>,
+    /// Every watcher running, whichever project started it
+    #[arg(long)]
+    all: bool,
 }
 
 #[derive(Args)]
@@ -809,16 +815,90 @@ fn start(args: WatchArgs) -> Result<i32> {
     Ok(0)
 }
 
+/// This project's watcher; outside a project, the one running anywhere.
 fn stop(args: StopArgs) -> Result<i32> {
-    let config = Config::load(args.config, None)?;
+    let running = sfcc_core::daemon::running_in(&errors::daemons_dir());
+    if args.all {
+        if running.is_empty() {
+            status(Tone::Info, "no log-diff watch was running");
+        }
+        for (identity, pid) in &running {
+            stop_running(identity, *pid)?;
+        }
+        return Ok(0);
+    }
+
+    let config = match Config::load(args.config.clone(), None) {
+        Ok(config) => config,
+        // An explicit --config that does not load is a mistake to report,
+        // not a reason to go and stop something else.
+        Err(error) if args.config.is_some() => return Err(error),
+        Err(_) => match running.as_slice() {
+            [] => {
+                status(Tone::Info, "no log-diff watch was running");
+                return Ok(0);
+            }
+            [(identity, pid)] => {
+                stop_running(identity, *pid)?;
+                return Ok(0);
+            }
+            several => {
+                status(
+                    Tone::Warn,
+                    &format!(
+                        "no dw.json here, and {} watches are running:",
+                        several.len()
+                    ),
+                );
+                for (identity, pid) in several {
+                    println!("  pid {pid:<7} {}", watched(identity));
+                }
+                bail!(
+                    "run `log-diff stop` inside the project, or `log-diff stop --all` to stop every one"
+                );
+            }
+        },
+    };
+
     match sfcc_core::daemon::stop(&errors::daemon(&config.identity()))? {
         Some(pid) => status(Tone::Ok, &format!("stopped log-diff watch (pid {pid})")),
-        None => status(
-            Tone::Info,
-            &format!("no log-diff watch running for {}", config.hostname),
-        ),
+        None => {
+            status(
+                Tone::Info,
+                &format!("no log-diff watch running for {}", config.hostname),
+            );
+            if !running.is_empty() {
+                status(
+                    Tone::Info,
+                    &format!(
+                        "{} running elsewhere - `log-diff stop --all` stops {}",
+                        running.len(),
+                        match running.len() {
+                            1 => "it",
+                            _ => "them",
+                        }
+                    ),
+                );
+            }
+        }
     }
     Ok(0)
+}
+
+fn stop_running(identity: &str, pid: u32) -> Result<()> {
+    sfcc_core::daemon::stop(&errors::daemon(identity))?;
+    status(
+        Tone::Ok,
+        &format!("stopped log-diff watch (pid {pid}) {}", watched(identity)),
+    );
+    Ok(())
+}
+
+/// `hostname - cartridges folder`, from the watch's status file.
+fn watched(identity: &str) -> String {
+    sfcc_core::state::read::<errors::Status>(&errors::path(identity))
+        .map(|last| format!("{} - {}", last.hostname, last.cartridges))
+        .unwrap_or_else(|| identity.to_string())
 }
 
 fn local(args: LocalArgs) -> Result<(Local, Dav)> {

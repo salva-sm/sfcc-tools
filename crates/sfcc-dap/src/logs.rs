@@ -19,7 +19,14 @@ pub struct Logs {
 impl Logs {
     /// Never fails the session: no log is better than no debugger.
     pub fn follow(config: &Path, levels: Option<&str>, writer: &Writer) -> Logs {
-        let started = Command::new(LOGGER)
+        let mut command = Command::new(LOGGER);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let started = command
             .args([
                 "logger",
                 "--color",
