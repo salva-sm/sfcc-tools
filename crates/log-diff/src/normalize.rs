@@ -32,6 +32,8 @@ pub struct Signature {
     pub site: Option<String>,
     /// `Cart-Show`: the same.
     pub controller: Option<String>,
+    /// `GE12345678`, raw.
+    pub orders: Vec<String>,
 }
 
 impl Signature {
@@ -77,6 +79,10 @@ regex!(EMAIL, r"[\w.+-]+@+[\w-]+(?:\.[\w-]+)+");
 regex!(LOCALE, r"\b[a-z]{2}_[A-Z]{2}\b");
 // `core.ISML_CustomTagNotDeclared (tag, template, 46)`: the line inside the template.
 regex!(ISML_LINE, r"(ISML_\w+ \([^()]*), \d+\)");
+// `GE12345678`, `GNA12345678`, `RB123456789`.
+regex!(ORDER, r"\b[A-Z]{2,3}\d{7,10}\b");
+// `Loyalty voucher "ABCDEFGH"`.
+regex!(CODE, r#"(?i)\b(voucher|coupon)(\s+(?:code\s+)?)"[^"]*""#);
 regex!(URL, r#"https?://[^\s"'<>()]+"#);
 regex!(IP, r"\b\d{1,3}(?:\.\d{1,3}){3}\b");
 regex!(
@@ -150,6 +156,7 @@ pub fn signature(entry: &Entry) -> Signature {
             .as_deref()
             .filter(|thread| thread.contains('|'))
             .and_then(controller),
+        orders: orders(head),
         message,
         frames,
     }
@@ -231,6 +238,11 @@ pub fn scrub(text: &str) -> String {
     let text = text.replace("_005f", "_").replace("_002d", "-");
     let text = TIMESTAMP.replace_all(&text, "<time>");
     let text = UUID.replace_all(&text, "<uuid>");
+    let text = ORDER.replace_all(&text, "<orderNumber>");
+    let text = CODE.replace_all(&text, |found: &Captures| {
+        let kind = found[1].to_ascii_lowercase();
+        format!("{}{}\"<{kind}Code>\"", &found[1], &found[2])
+    });
     // Before the email rule, which would cut a query string in two.
     let text = URL.replace_all(&text, |found: &Captures| scrub_url(&found[0]));
     let text = EMAIL.replace_all(&text, "<email>");
@@ -242,6 +254,16 @@ pub fn scrub(text: &str) -> String {
     let text = DECIMAL.replace_all(&text, "<n>");
     let text = scrub_words(&text);
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn orders(head: &str) -> Vec<String> {
+    let mut orders: Vec<String> = Vec::new();
+    for found in ORDER.find_iter(head) {
+        if !orders.iter().any(|order| order == found.as_str()) {
+            orders.push(found.as_str().to_string());
+        }
+    }
+    orders
 }
 
 fn scrub_url(url: &str) -> String {
@@ -296,8 +318,11 @@ fn scrub_frame(frame: &str) -> String {
     }
 }
 
+/// `<orderNumber>` hashes as `<id>`, as before, so ids stay.
 fn without_positions(text: &str) -> String {
-    POSITION.replace_all(text, "$1").into_owned()
+    POSITION
+        .replace_all(text, "$1")
+        .replace("<orderNumber>", "<id>")
 }
 
 fn location(frames: &[String], message: &str) -> Option<String> {

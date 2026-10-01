@@ -520,3 +520,28 @@ fn counts_where_a_failure_happened_under_one_signature() {
     assert_eq!(known.controllers["Cart-Show"], 2);
     assert_eq!(known.controllers["Product-Show"], 1);
 }
+
+#[test]
+fn keeps_the_latest_orders_a_signature_failed() {
+    let failed = |order: usize, minute: usize| {
+        found(&format!(
+            "[2026-09-22 {:02}:{:02}:00.000 GMT] WARN ShopAPIServlet|1|/orders/GE{order:08}|x custom.voucherRedeem [] Failing order GE{order:08}.\n",
+            minute / 60,
+            minute % 60
+        ))
+    };
+    let mut ledger = Ledger::default();
+    for order in 0..ORDERS_KEPT + 5 {
+        ledger.observe(&failed(order, order), None, false);
+    }
+    ledger.observe(&failed(3, ORDERS_KEPT + 10), None, false);
+
+    let orders = &ledger.known_signatures[&failed(0, 0).signature.id].orders;
+    assert_eq!(orders.len(), ORDERS_KEPT);
+    assert!(
+        orders.contains_key("GE00000003"),
+        "seen again, so among the latest"
+    );
+    assert!(!orders.contains_key("GE00000004"));
+    assert_eq!(orders["GE00000104"], "2026-09-22T01:44:00Z");
+}

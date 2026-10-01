@@ -1,6 +1,6 @@
 [package]
 name = "log-diff"
-version = "0.16.4"
+version = "0.17.0"
 edition = "2024"
 license.workspace = true
 repository.workspace = true
