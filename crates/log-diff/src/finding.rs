@@ -14,6 +14,7 @@ pub struct Finding {
     pub per_day: BTreeMap<String, u64>,
     pub sites: BTreeMap<String, u64>,
     pub controllers: BTreeMap<String, u64>,
+    pub orders: BTreeMap<String, String>,
 }
 
 /// In the order each signature first appeared.
@@ -90,6 +91,12 @@ impl Findings {
                 if moment < finding.first {
                     finding.first = moment.clone();
                 }
+                for order in &signature.orders {
+                    let last = finding.orders.entry(order.clone()).or_default();
+                    if moment > *last {
+                        *last = moment.clone();
+                    }
+                }
                 if moment > finding.last {
                     finding.last = moment;
                 }
@@ -102,6 +109,11 @@ impl Findings {
                 let mut controllers = BTreeMap::new();
                 count_in(&mut sites, &signature.site);
                 count_in(&mut controllers, &signature.controller);
+                let orders = signature
+                    .orders
+                    .iter()
+                    .map(|order| (order.clone(), moment.clone()))
+                    .collect();
                 found.push(Finding {
                     signature,
                     count: 1,
@@ -110,6 +122,7 @@ impl Findings {
                     per_day: BTreeMap::from([(day, 1)]),
                     sites,
                     controllers,
+                    orders,
                 });
             }
         }

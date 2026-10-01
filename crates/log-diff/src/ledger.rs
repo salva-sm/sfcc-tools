@@ -14,6 +14,7 @@ use std::time::Duration;
 pub const VERSION: u32 = 1;
 /// Old deploys only matter through the signatures they introduced, which keep their sha.
 const DEPLOYS_KEPT: usize = 500;
+pub const ORDERS_KEPT: usize = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ledger {
@@ -82,6 +83,9 @@ pub struct Known {
     /// Records per controller, the same way.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub controllers: BTreeMap<String, u64>,
+    /// Order -> when it last failed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub orders: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -114,6 +118,23 @@ impl Known {
     /// Shows as an error page: SFCC answers an uncaught `error` or a `fatal` with a 500.
     pub fn serious(&self) -> bool {
         serious(&self.label, &self.example)
+    }
+}
+
+fn add_orders(into: &mut BTreeMap<String, String>, from: &BTreeMap<String, String>) {
+    for (order, moment) in from {
+        let last = into.entry(order.clone()).or_default();
+        if moment > last {
+            *last = moment.clone();
+        }
+    }
+    while into.len() > ORDERS_KEPT {
+        let oldest = into
+            .iter()
+            .min_by(|left, right| left.1.cmp(right.1))
+            .map(|(order, _)| order.clone())
+            .expect("more than ORDERS_KEPT orders");
+        into.remove(&oldest);
     }
 }
 
@@ -263,10 +284,13 @@ impl Ledger {
             }
             add_counts(&mut known.sites, &finding.sites);
             add_counts(&mut known.controllers, &finding.controllers);
+            add_orders(&mut known.orders, &finding.orders);
             return false;
         }
 
         let signature = &finding.signature;
+        let mut orders = BTreeMap::new();
+        add_orders(&mut orders, &finding.orders);
         self.known_signatures.insert(
             signature.id.clone(),
             Known {
@@ -285,6 +309,7 @@ impl Ledger {
                 spiked_on: None,
                 sites: finding.sites.clone(),
                 controllers: finding.controllers.clone(),
+                orders,
             },
         );
         true
