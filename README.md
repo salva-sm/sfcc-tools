@@ -29,7 +29,7 @@ These are the pieces that close those gaps. No instance, no network, no `node_mo
 
 | | | |
 | :-- | :-- | :-- |
-| 🔌 | **[`crates/sfcc-core`](crates/sfcc-core)** | What they all share: the `dw.json` reader, where each tool keeps its state and the files one writes for another, and the WebDAV log reader |
+| 🔌 | **[`crates/sfcc-core`](crates/sfcc-core)** | What they all share: the `dw.json` reader, where each tool keeps its state and the files one writes for another, the WebDAV log reader and the OCAPI client |
 | 📤 | **[`crates/sfcc-upload`](crates/sfcc-upload)** | Cartridge uploader for sandboxes, as a CLI. Same job as Prophet, with no editor attached. Formerly `prost` |
 | 🔎 | **[`crates/log-diff`](crates/log-diff)** | Tells the errors a deploy or a change introduced from the ones already known: DEV, STG and PRD for the team, with spikes and a weekly digest; and each sandbox for its developer |
 | 🧠 | **[`crates/isml-lsp`](crates/isml-lsp)** | Language server: ISML and `dw.*` completion, metadata-backed checks, route override chains, go-to-definition |
