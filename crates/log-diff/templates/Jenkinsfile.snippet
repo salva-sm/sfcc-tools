@@ -5,14 +5,14 @@
 stage('Tell log-diff') {
   environment { ENVIRONMENT = 'dev' }
   steps {
-    withCredentials([string(credentialsId: 'sfcc-log-ledger-dispatch', variable: 'GH_TOKEN')]) {
+    withCredentials([string(credentialsId: 'sfcc-tools-dashboard-dispatch', variable: 'GH_TOKEN')]) {
       sh '''
         payload=$(printf '{"event_type":"sfcc-deploy","client_payload":{"environment":"%s","sha":"%s","build_number":%s,"deployed_at":"%s"}}' \
           "$ENVIRONMENT" "$GIT_COMMIT" "$BUILD_NUMBER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
         curl -fsS -X POST \
           -H "Authorization: Bearer $GH_TOKEN" \
           -H "Accept: application/vnd.github+json" \
-          https://api.github.com/repos/<owner>/sfcc-log-ledger/dispatches \
+          https://api.github.com/repos/<owner>/sfcc-tools-dashboard/dispatches \
           -d "$payload" || echo "log-diff was not told about this deploy"
       '''
     }

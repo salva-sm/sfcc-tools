@@ -1,4 +1,4 @@
-# sfcc-log-ledger
+# sfcc-tools-dashboard
 
 The known errors of an SFCC site on **DEV, STG and PRD**, and the workflow that keeps the
 lists.
@@ -53,7 +53,7 @@ Two ways to make it exact, both optional and neither needed now:
 
   ```bash
   curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-    https://api.github.com/repos/<owner>/sfcc-log-ledger/dispatches \
+    https://api.github.com/repos/<owner>/sfcc-tools-dashboard/dispatches \
     -d '{"event_type":"sfcc-deploy","client_payload":{"environment":"dev","sha":"'"$GIT_COMMIT"'","build_number":'"$BUILD_NUMBER"',"deployed_at":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}}'
   ```
 
@@ -127,7 +127,7 @@ git commit -am "Ticket for 4cfc68" && git push
 once, in your environment:
 
 ```bash
-export LOG_DIFF_SHARED=https://raw.githubusercontent.com/<owner>/sfcc-log-ledger/main/ledgers/dev.json
+export LOG_DIFF_SHARED=https://raw.githubusercontent.com/<owner>/sfcc-tools-dashboard/main/ledgers/dev.json
 export GITHUB_TOKEN=<fine-grained token, this repository, Contents: read-only>
 ```
 

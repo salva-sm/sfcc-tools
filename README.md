@@ -89,11 +89,12 @@ change) and the sandbox log.
 
 **The team's ledger (optional).** `log-diff` compares your sandbox with what the team already
 knows when `LOG_DIFF_SHARED` points at the ledger. It can be a raw URL, a clone of the ledger
-repository (its `ledgers/dev.json` is read) or a ledger file. Set it once in your user
-environment, and nothing below needs it:
+repository (its `ledgers/dev.json` is read) or a ledger file. The team's ledgers are on the
+`data` branch of `sfcc-tools-dashboard` - a clone of it reads them from its `.data` worktree.
+Set it once in your user environment, and nothing below needs it:
 
 ```bash
-setx LOG_DIFF_SHARED "https://raw.githubusercontent.com/<owner>/sfcc-log-ledger/main/ledgers/dev.json"
+setx LOG_DIFF_SHARED "https://raw.githubusercontent.com/<owner>/sfcc-tools-dashboard/data/ledgers/dev.json"
 ```
 
 In VS Code it can also go in the `log-diff` task's `"env"`, per project. A path that is not

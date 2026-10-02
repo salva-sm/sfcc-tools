@@ -333,7 +333,8 @@ The team's ledgers live in a repository of their own, one per environment - DEV,
 or whichever of them the repository is given credentials for. The whole repository is a
 template: [`templates/ledger-repo`](templates/ledger-repo) - its workflows, the script that
 reads one environment, the team file and a README with every secret and variable. Copy it
-into a new private repository and replace `<owner>` and `<sfcc-repo>`.
+into a new private repository and replace `<owner>` and `<sfcc-repo>`. The team's runs as the
+*SFCC errors* tool of `sfcc-tools-dashboard`, with the ledgers on its `data` branch.
 
 Every 30 minutes on working days, for each environment in turn, the workflow:
 
