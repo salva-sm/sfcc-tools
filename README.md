@@ -173,6 +173,12 @@ per-component tag would leave it looking for an asset that release does not carr
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
+## Contributing
+
+Through a pull request, from a branch here for collaborators and from a fork for everyone
+else, after an issue for anything beyond a small fix.
+[`CONTRIBUTING.md`](CONTRIBUTING.md) says how, and what stays with the maintainer.
+
 ## History
 
 This repository is the three that came before it, merged with their history intact:
