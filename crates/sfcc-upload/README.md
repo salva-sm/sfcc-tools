@@ -27,6 +27,11 @@ curl -L https://github.com/salva-sm/sfcc-tools/releases/latest/download/sfcc-upl
 
 To build it yourself instead, see [Building](#building).
 
+`sfcc-upload self-update` moves it, and the other tools installed next to it, to the latest
+release; `--check` only says whether there is one. Every other command says so too, once a
+newer release is out. A binary built from source is never told, and `self-update` leaves it
+alone unless given `--force`.
+
 ### Tab completion
 
 Nothing to set up. Every run of `sfcc-upload` — `sfcc-upload --version` is enough — makes sure its
@@ -81,6 +86,7 @@ sfcc-upload clean               # delete this project's cartridges from the code
 sfcc-upload activate [NAME]     # make a code version the active one
 sfcc-upload sandbox [start|stop|restart]   # the on-demand sandbox's state, or change it
 sfcc-upload install-hook        # push automatically after a branch switch
+sfcc-upload self-update         # this and the tools next to it, to the latest release
 sfcc-upload completions zsh     # the tab completion script for zsh or PowerShell, see Install
 ```
 

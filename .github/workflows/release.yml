@@ -15,6 +15,9 @@ env:
   # The committed .cargo/config.toml may point target-dir somewhere that only
   # exists on a developer's machine.
   CARGO_TARGET_DIR: target
+  # The release a binary belongs to, for `sfcc-upload self-update`. Empty on a manual run,
+  # which then builds what is never told of a newer release.
+  SFCC_TOOLS_RELEASE: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
 jobs:
   build:
