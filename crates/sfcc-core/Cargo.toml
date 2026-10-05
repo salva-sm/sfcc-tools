@@ -1,6 +1,6 @@
 [package]
 name = "sfcc-core"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2024"
 license.workspace = true
 repository.workspace = true
@@ -13,6 +13,7 @@ webdav = ["dep:chrono", "dep:flate2", "dep:futures", "dep:reqwest", "dep:tokio"]
 testing = ["webdav", "tokio/net", "tokio/io-util", "tokio/rt"]
 completions = ["dep:clap", "dep:clap_complete"]
 daemon = ["dep:libc"]
+ocapi = ["dep:reqwest", "dep:tokio"]
 
 [dependencies]
 anyhow = "1.0.104"

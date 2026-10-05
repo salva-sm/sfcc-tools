@@ -1,54 +1,36 @@
-use anyhow::{Context, Result, bail};
-use reqwest::{Client, Method, StatusCode};
-use sfcc_core::config::Config;
-use std::time::Duration;
+//! The code versions, through the Data API client in sfcc-core.
 
-const TOKEN_URL: &str = "https://account.demandware.com/dwsso/oauth2/access_token";
-const DATA_API_VERSION: &str = "v23_2";
+use anyhow::{Context, Result, bail};
+use reqwest::{Method, StatusCode};
+use sfcc_core::config::Config;
 
 pub struct Ocapi {
-    client: Client,
-    hostname: String,
-    id: String,
-    secret: String,
+    api: sfcc_core::ocapi::Ocapi,
 }
 
 impl Ocapi {
     pub fn new(config: &Config) -> Result<Ocapi> {
-        let api_client = config.api_client.clone().context(
-            "activating a code version needs an API client - put \"client-id\" and \
-             \"client-secret\" (or the custom-sfcc-ci block) in dw.json",
-        )?;
-
-        let client = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .danger_accept_invalid_certs(config.accept_invalid_certs)
-            .build()
-            .context("cannot build the OCAPI client")?;
-
+        if config.api_client.is_none() {
+            bail!(
+                "activating a code version needs an API client - put \"client-id\" and \
+                 \"client-secret\" (or the custom-sfcc-ci block) in dw.json"
+            );
+        }
         Ok(Ocapi {
-            client,
-            hostname: config.hostname.clone(),
-            id: api_client.id,
-            secret: api_client.secret,
+            api: sfcc_core::ocapi::Ocapi::new(config)?,
         })
     }
 
     pub async fn activate(&self, code_version: &str) -> Result<()> {
-        let url = format!(
-            "https://{}/s/-/dw/data/{DATA_API_VERSION}/code_versions/{code_version}",
-            self.hostname
-        );
-
         let response = self
-            .client
-            .request(Method::PATCH, &url)
-            .bearer_auth(self.token().await?)
+            .api
+            .data(Method::PATCH, &format!("code_versions/{code_version}"))
+            .await?
             .header("Content-Type", "application/json")
             .body(r#"{"active":true}"#)
             .send()
             .await
-            .with_context(|| format!("cannot reach the Data API on {}", self.hostname))?;
+            .with_context(|| format!("cannot reach the Data API on {}", self.api.hostname()))?;
 
         match response.status() {
             status if status.is_success() => Ok(()),
@@ -58,7 +40,7 @@ impl Ocapi {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => bail!(
                 "the API client is not allowed to touch code versions on {} - add \
                  /code_versions to its OCAPI Data settings",
-                self.hostname
+                self.api.hostname()
             ),
             status => bail!("activating {code_version} failed with HTTP {status}"),
         }
@@ -66,24 +48,20 @@ impl Ocapi {
 
     /// The code version the sandbox serves, if any is active.
     pub async fn active_code_version(&self) -> Result<Option<String>> {
-        let url = format!(
-            "https://{}/s/-/dw/data/{DATA_API_VERSION}/code_versions",
-            self.hostname
-        );
-
         let response = self
-            .client
-            .get(&url)
-            .bearer_auth(self.token().await?)
+            .api
+            .data(Method::GET, "code_versions")
+            .await?
             .send()
             .await
-            .with_context(|| format!("cannot reach the Data API on {}", self.hostname))?;
+            .with_context(|| format!("cannot reach the Data API on {}", self.api.hostname()))?;
 
         match response.status() {
             status if status.is_success() => {}
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => bail!(
-                "the API client is not allowed to read code versions on {} - add                  /code_versions to its OCAPI Data settings",
-                self.hostname
+                "the API client is not allowed to read code versions on {} - add \
+                 /code_versions to its OCAPI Data settings",
+                self.api.hostname()
             ),
             status => bail!("listing the code versions failed with HTTP {status}"),
         }
@@ -93,36 +71,6 @@ impl Ocapi {
             .await
             .context("cannot read the code version list")?;
         active_in(&body)
-    }
-
-    async fn token(&self) -> Result<String> {
-        let response = self
-            .client
-            .post(TOKEN_URL)
-            .basic_auth(&self.id, Some(&self.secret))
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body("grant_type=client_credentials")
-            .send()
-            .await
-            .context("cannot reach Account Manager for an access token")?;
-
-        if !response.status().is_success() {
-            bail!(
-                "Account Manager rejected the API client (HTTP {})",
-                response.status()
-            );
-        }
-
-        let body = response
-            .text()
-            .await
-            .context("cannot read the token response")?;
-        let payload: serde_json::Value =
-            serde_json::from_str(&body).context("malformed token response")?;
-        Ok(payload["access_token"]
-            .as_str()
-            .context("token response without access_token")?
-            .to_string())
     }
 }
 

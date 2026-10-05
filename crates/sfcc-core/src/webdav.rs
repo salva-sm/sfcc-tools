@@ -1,13 +1,12 @@
 //! No waiting loop for a sleeping sandbox here: that is the caller's, built on [`Dav::availability`].
 
 use crate::config::{Config, Credentials};
+use crate::oauth::TokenCache;
 use anyhow::{Context, Result, bail};
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
-use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use std::time::Duration;
 
 const MAX_ATTEMPTS: u32 = 4;
-const OAUTH_URL: &str = "https://account.demandware.com/dwsso/oauth2/access_token";
 const PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/></d:prop></d:propfind>"#;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,18 +30,13 @@ pub struct DavEntry {
     pub etag: String,
 }
 
-struct Token {
-    value: String,
-    expires_at: Instant,
-}
-
 pub struct Dav {
     client: Client,
     root: String,
     base: String,
     logs: String,
     credentials: Credentials,
-    token: RwLock<Option<Token>>,
+    token: TokenCache,
 }
 
 impl Dav {
@@ -61,7 +55,7 @@ impl Dav {
             base: config.code_version_url(),
             logs: config.logs_url(),
             credentials: config.credentials.clone(),
-            token: RwLock::new(None),
+            token: TokenCache::default(),
         })
     }
 
@@ -317,12 +311,6 @@ impl Dav {
     }
 
     async fn access_token(&self) -> Result<String> {
-        if let Some(token) = self.token.read().await.as_ref()
-            && token.expires_at > Instant::now()
-        {
-            return Ok(token.value.clone());
-        }
-
         let Credentials::OAuth {
             client_id,
             client_secret,
@@ -330,44 +318,7 @@ impl Dav {
         else {
             bail!("no OAuth credentials configured");
         };
-
-        let response = self
-            .client
-            .post(OAUTH_URL)
-            .basic_auth(client_id, Some(client_secret))
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body("grant_type=client_credentials")
-            .send()
-            .await
-            .context("cannot reach Account Manager for an access token")?;
-
-        if !response.status().is_success() {
-            bail!(
-                "Account Manager rejected the client credentials (HTTP {})",
-                response.status()
-            );
-        }
-
-        let body = response
-            .text()
-            .await
-            .context("cannot read the token response")?;
-        let payload: serde_json::Value =
-            serde_json::from_str(&body).context("malformed token response")?;
-        let value = payload["access_token"]
-            .as_str()
-            .context("token response without access_token")?
-            .to_string();
-        let lifetime = payload["expires_in"]
-            .as_u64()
-            .unwrap_or(1800)
-            .saturating_sub(60);
-
-        *self.token.write().await = Some(Token {
-            value: value.clone(),
-            expires_at: Instant::now() + Duration::from_secs(lifetime),
-        });
-        Ok(value)
+        self.token.get(&self.client, client_id, client_secret).await
     }
 }
 
