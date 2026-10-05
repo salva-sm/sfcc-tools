@@ -110,6 +110,8 @@ pub struct Card<'a> {
     pub label: &'a str,
     pub exception: Option<&'a str>,
     pub location: Option<&'a str>,
+    /// Where it failed last, when the line has moved since.
+    pub moved_to: Option<&'a str>,
     /// The message, then `  at` frames.
     pub example: &'a str,
     pub count: u64,
@@ -170,6 +172,9 @@ pub fn card(card: &Card) -> String {
             paint(DIM, "↳"),
             paint(DIM, &within)
         ));
+    }
+    if let Some(moved) = card.moved_to {
+        lines.push(format!("   {} {moved}", paint(DIM, "↳ now at")));
     }
 
     let mut when = Vec::new();
@@ -285,6 +290,7 @@ mod tests {
             label: "error",
             exception: Some("TypeError"),
             location: Some("app_acme/cartridge/scripts/checkout/CheckoutServices.js:214"),
+            moved_to: None,
             example: "ERROR PipelineCallServlet|Sites-Acme-Site|Checkout-Begin|PipelineCall custom.checkout [] \
                       Error while executing script: Wrapped com.x.PipelineExecutionException: TypeError: \
                       Cannot read property \"shipments\" from null (app_acme/cartridge/scripts/checkout/CheckoutServices.js#214)\n  \
@@ -315,6 +321,19 @@ mod tests {
             "   ↳ app_acme/cartridge/scripts/checkout/CheckoutServices.js:214 in validateBasket"
         );
         assert_eq!(lines[3], "   first not a timestamp · 4cfc684705f583bc");
+    }
+
+    #[test]
+    fn a_line_that_moved_says_where_it_fails_now() {
+        let moved = Card {
+            moved_to: Some("app_acme/cartridge/scripts/checkout/CheckoutServices.js:220"),
+            ..sample(Badge::None)
+        };
+        let lines: Vec<String> = card(&moved).lines().map(str::to_string).collect();
+        assert_eq!(
+            lines[3],
+            "   ↳ now at app_acme/cartridge/scripts/checkout/CheckoutServices.js:220"
+        );
     }
 
     #[test]

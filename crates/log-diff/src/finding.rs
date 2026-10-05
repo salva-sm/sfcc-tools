@@ -1,3 +1,4 @@
+use crate::ledger::Record;
 use crate::normalize::{Signature, signature};
 use chrono::{SecondsFormat, Utc};
 use sfcc_core::logs::Entry;
@@ -15,6 +16,10 @@ pub struct Finding {
     pub sites: BTreeMap<String, u64>,
     pub controllers: BTreeMap<String, u64>,
     pub orders: BTreeMap<String, String>,
+    /// Where the instance logged the first and the last of them; `None` for a record that
+    /// arrived without a moment of its own, which cannot be told from its neighbours.
+    pub first_record: Option<Record>,
+    pub last_record: Option<Record>,
 }
 
 /// In the order each signature first appeared.
@@ -82,11 +87,29 @@ impl Findings {
             .map(|moment| moment.to_rfc3339_opts(SecondsFormat::Secs, true))
             .unwrap_or_else(|| now.clone());
         let day = moment[..10].to_string();
+        let record = Record::of(entry, &signature);
 
         match index.get(&signature.id) {
             Some(&at) => {
                 let finding = &mut found[at];
                 finding.count += 1;
+                if let Some(record) = record {
+                    // Ties go to the later one read, the later one in its file.
+                    if finding
+                        .last_record
+                        .as_ref()
+                        .is_none_or(|last| record.moment >= last.moment)
+                    {
+                        finding.last_record = Some(record.clone());
+                    }
+                    if finding
+                        .first_record
+                        .as_ref()
+                        .is_none_or(|first| record.moment < first.moment)
+                    {
+                        finding.first_record = Some(record);
+                    }
+                }
                 *finding.per_day.entry(day).or_default() += 1;
                 if moment < finding.first {
                     finding.first = moment.clone();
@@ -123,6 +146,8 @@ impl Findings {
                     sites,
                     controllers,
                     orders,
+                    first_record: record.clone(),
+                    last_record: record,
                 });
             }
         }

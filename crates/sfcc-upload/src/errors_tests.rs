@@ -6,6 +6,8 @@ fn entry(moment: &str, lines: &[&str]) -> Entry {
         label: "error".to_string(),
         moment: moment.to_string(),
         lines: lines.iter().map(|line| line.to_string()).collect(),
+        file: "error-blade1-20260910.log".to_string(),
+        offset: None,
     }
 }
 

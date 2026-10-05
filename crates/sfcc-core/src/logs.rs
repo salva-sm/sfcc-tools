@@ -13,6 +13,8 @@ pub const DEFAULT_LEVELS: &str = "error,customerror,custom";
 const READS_AT_ONCE: usize = 6;
 /// What one request of the log folder reads at most.
 const SLICE: u64 = 16 * 1024 * 1024;
+/// Read at a record's offset to take it whole: a stack and a request dump fit many times over.
+const RECORD_BYTES: u64 = 256 * 1024;
 
 /// A timestamped line and every line up to the next one: a stack trace, a request dump.
 #[derive(Debug, Clone)]
@@ -21,6 +23,11 @@ pub struct Entry {
     /// `2026-09-09 07:26:29.103 GMT`, or empty for lines that arrived without one.
     pub moment: String,
     pub lines: Vec<String>,
+    /// `error-blade1-4-appserver-20260905.log`, the plain name even when it was read gzipped.
+    pub file: String,
+    /// Where its first line starts in the file; only known in the log folder, where files are
+    /// read as they are, not in log_archive.
+    pub offset: Option<u64>,
 }
 
 impl Entry {
@@ -227,12 +234,9 @@ pub async fn since_each(
             file.carry.extend_from_slice(&bytes);
             if let Some(end) = file.carry.iter().rposition(|byte| *byte == b'\n') {
                 let complete: Vec<u8> = file.carry.drain(..=end).collect();
+                let at = file.offset;
                 file.offset += complete.len() as u64;
-                for line in String::from_utf8_lossy(&complete).lines() {
-                    if let Some(entry) = file.parser.line(line) {
-                        each(entry);
-                    }
-                }
+                parse_lines(&mut file.parser, &complete, at, &mut each);
             }
         }
         offsets
@@ -437,8 +441,101 @@ pub fn parse_entries(file: &str, text: &str) -> Vec<Entry> {
     entries
 }
 
+/// Complete lines that start at `offset` of a file, into its parser.
+fn parse_lines(parser: &mut EntryParser, bytes: &[u8], offset: u64, each: &mut impl FnMut(Entry)) {
+    let mut at = offset;
+    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        let text = String::from_utf8_lossy(line);
+        if let Some(entry) = parser.line_at(text.trim_end_matches(['\n', '\r']), at) {
+            each(entry);
+        }
+        at += line.len() as u64;
+    }
+}
+
+/// The record logged at `moment` in `file` that `wanted` picks, wherever the instance keeps it
+/// now: at `offset` in the log folder, anywhere else in that file, or in log_archive once it
+/// has been moved there. `None` once the instance keeps it no longer.
+pub async fn record(
+    dav: &Dav,
+    file: &str,
+    offset: Option<u64>,
+    moment: &str,
+    wanted: impl Fn(&Entry) -> bool,
+) -> Result<Option<Entry>> {
+    let wanted = |entry: &Entry| entry.moment == moment && wanted(entry);
+    let url = format!("{}/{}", dav.logs_url(), encode_path(file));
+    if let Some(offset) = offset {
+        let bytes = dav
+            .read_range(&url, offset, offset + RECORD_BYTES - 1)
+            .await
+            .with_context(|| format!("cannot read {file}"))?;
+        // The record is the first one there; a cut at the end of the range only cuts the next.
+        let mut parser = EntryParser::new(file);
+        let mut first = None;
+        parse_lines(&mut parser, &bytes, offset, &mut |entry| {
+            first.get_or_insert(entry);
+        });
+        if let Some(entry) = first
+            .or_else(|| parser.finish())
+            .filter(|entry| wanted(entry))
+        {
+            return Ok(Some(entry));
+        }
+    }
+
+    // In the log folder, from the start: the offset was not where the record is.
+    let mut parser = EntryParser::new(file);
+    let (mut fetched, mut found) = (0, None);
+    let mut keep = |entry: Entry| {
+        if found.is_none() && wanted(&entry) {
+            found = Some(entry);
+        }
+    };
+    let mut carry = Vec::new();
+    loop {
+        let bytes = dav
+            .read_range(&url, fetched, fetched + SLICE - 1)
+            .await
+            .with_context(|| format!("cannot read {file}"))?;
+        if bytes.is_empty() {
+            break;
+        }
+        let at = fetched - carry.len() as u64;
+        fetched += bytes.len() as u64;
+        carry.extend_from_slice(&bytes);
+        if let Some(end) = carry.iter().rposition(|byte| *byte == b'\n') {
+            let complete: Vec<u8> = carry.drain(..=end).collect();
+            parse_lines(&mut parser, &complete, at, &mut keep);
+        }
+    }
+    if fetched > 0 {
+        let at = fetched - carry.len() as u64;
+        parse_lines(&mut parser, &carry, at, &mut keep);
+        if let Some(entry) = parser.finish() {
+            keep(entry);
+        }
+        return Ok(found);
+    }
+
+    // Not in the log folder any more: moved to log_archive, gzipped or not.
+    let Some(day) = file_day(file) else {
+        return Ok(None);
+    };
+    let archived = archive_files(dav, day, &["all".to_string()]).await?;
+    let Some(archived) = archived
+        .iter()
+        .find(|archived| archived.name.strip_suffix(".gz").unwrap_or(&archived.name) == file)
+    else {
+        return Ok(None);
+    };
+    read_archived_each(dav, archived, keep).await?;
+    Ok(found)
+}
+
 /// Lines into entries as they come: each entry is handed over once the next one starts.
 pub struct EntryParser {
+    file: String,
     label: String,
     current: Option<Entry>,
 }
@@ -446,6 +543,7 @@ pub struct EntryParser {
 impl EntryParser {
     pub fn new(file: &str) -> EntryParser {
         EntryParser {
+            file: file.to_string(),
             label: file.split('-').next().unwrap_or(file).to_string(),
             current: None,
         }
@@ -453,6 +551,15 @@ impl EntryParser {
 
     /// The entry this line closes, when it starts the next one.
     pub fn line(&mut self, line: &str) -> Option<Entry> {
+        self.next(line, None)
+    }
+
+    /// [`EntryParser::line`], for a line that starts at `offset` of the file.
+    pub fn line_at(&mut self, line: &str, offset: u64) -> Option<Entry> {
+        self.next(line, Some(offset))
+    }
+
+    fn next(&mut self, line: &str, offset: Option<u64>) -> Option<Entry> {
         if line.trim().is_empty() {
             return None;
         }
@@ -465,6 +572,8 @@ impl EntryParser {
                 label: self.label.clone(),
                 moment: moment.unwrap_or_default(),
                 lines: vec![line.to_string()],
+                file: self.file.clone(),
+                offset,
             }),
         }
     }

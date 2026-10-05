@@ -525,6 +525,7 @@ fn card_of<'a>(id: &'a str, known: &'a Known, badge: Badge) -> Card<'a> {
         label: &known.label,
         exception: known.exception_class.as_deref(),
         location: known.location.as_deref(),
+        moved_to: known.moved_to(),
         example: &known.example,
         count: known.count,
         first_seen: &known.first_seen,

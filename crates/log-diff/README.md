@@ -106,6 +106,7 @@ log-diff stop --all               stop every watcher, whichever project started 
 log-diff ack [ID... | --all]      list what is pending, or resolve it; --mute to never hear of it again
 log-diff list [--pending --resolved --muted --baseline]   everything, most important first
 log-diff unmute <ID... | --all>   hear of a muted signature again
+log-diff show <ID> [--first]      its last record as the instance logged it: the whole stack, the request
 log-diff run [--state ledger.json] [--sha SHA --build N] read a shared instance, update its ledger
              [--baseline-days N] [--team team.json]      first run: learn N days of history
 log-diff deploy --sha SHA --at TIMESTAMP                 CI: record a deploy learned elsewhere
@@ -181,6 +182,32 @@ The ledger keeps one scrubbed example per signature, never raw log lines. Scrubb
 pattern matching, not understanding: a message that spells out a customer's name in plain
 words keeps it. Keep the ledger repository private.
 
+### The record itself
+
+What the scrubbing takes out - the email, the basket, the request dump, the frames past the
+third - is often what tells you why it failed. So the ledger also keeps where the first and
+the last record of each signature are on the instance (`first_record`, `last_record`): the
+log file, the byte the record starts at and its moment. Nothing in that is a customer's.
+
+```console
+$ log-diff show 4cfc68
+10:02:11 · last record of 4cfc684705f583bc · error-blade1-4-appserver-20260922.log · 2026-09-22 21:38:04.112 GMT · 143 logged
+10:02:11 ▲ as logged, customer data included - not for tickets or chats
+[2026-09-22 21:38:04.112 GMT] ERROR PipelineCallServlet|157318437|Sites-Acme-Site|Checkout-Begin|...
+```
+
+`show` reads that one record again from the instance, unscrubbed and whole, and prints it;
+it is never written anywhere. `--first` shows the first record instead. The record is looked for
+at its byte in the log folder, then anywhere in its file, then in `log_archive`
+once SFCC has moved it there; once the instance no longer keeps it, `show` says so. Your
+ledger is looked in first, then the team's. A signature only the team knows needs
+`--config` with the `dw.json` of the instance its ledger reads, which takes that instance's
+credentials: the team's ledger alone shows nobody a customer's data.
+
+The last record also carries the line the code fails at now. When an edit above it has moved
+that line, the card says where (`↳ now at ...:220`), and `ticket` links both the line it
+first failed at and the line it fails at now, each at the deploy that was live then.
+
 ## The ledger
 
 ```json
@@ -201,7 +228,21 @@ words keeps it. Keep the ledger repository private.
       "first_seen": "2026-09-10T09:12:00Z",
       "last_seen": "2026-09-22T21:38:00Z",
       "count": 143,
-      "first_deploy_sha": "9451cff"
+      "first_deploy_sha": "9451cff",
+      "first_record": {
+        "file": "error-blade1-4-appserver-20260910.log",
+        "offset": 1048213,
+        "moment": "2026-09-10 09:12:00.381 GMT",
+        "location": "app_acme/cartridge/scripts/checkout/CheckoutServices.js:214",
+        "sha": "9451cff"
+      },
+      "last_record": {
+        "file": "error-blade1-4-appserver-20260922.log",
+        "offset": 480112,
+        "moment": "2026-09-22 21:38:04.112 GMT",
+        "location": "app_acme/cartridge/scripts/checkout/CheckoutServices.js:220",
+        "sha": "b03e7aa"
+      }
     }
   },
   "deploy_log": [
