@@ -9,6 +9,7 @@ mod ocapi;
 mod problems;
 mod push;
 mod reload;
+mod sandbox;
 mod scan;
 mod sync_status;
 mod tail;
@@ -17,9 +18,10 @@ mod webdav;
 
 use active::Serving;
 use anyhow::{Context, Result, bail};
-use clap::{Args, Parser, Subcommand, ValueHint};
+use clap::{Args, Parser, Subcommand, ValueEnum, ValueHint};
 use push::{Ctx, PushOptions, human_bytes};
 use sfcc_core::config::{Config, Credentials};
+use sfcc_core::ods::Operation;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -35,6 +37,7 @@ Examples:
   sfcc-upload start                      watch in the background, surviving the editor
   sfcc-upload activity                   what the background watcher has been doing
   sfcc-upload logger                     follow the sandbox log, where server errors land
+  sfcc-upload sandbox start              start the on-demand sandbox when ODS stopped it
   sfcc-upload push --cartridge int_analytics --code-version test1
 
 Configuration comes from the nearest dw.json (hostname, credentials, code-version,
@@ -147,6 +150,15 @@ enum Command {
         WebDAV cannot do this, so it goes through the OCAPI Data API and needs an API client in \
         dw.json whose OCAPI Data settings include /code_versions.")]
     Activate(ActivateArgs),
+    /// Show the on-demand sandbox's state, or start, stop or restart it
+    #[command(
+        long_about = "Show the state of the on-demand sandbox dw.json points at, or \
+        start, stop or restart it, through the Sandbox API (ODS).\n\nOnly that sandbox: never \
+        the realm's others, and never create or delete. It needs the API client of dw.json to \
+        have the Sandbox API User role on the realm in Account Manager. Starting a sandbox \
+        spends realm credits for as long as it runs."
+    )]
+    Sandbox(SandboxArgs),
     /// Install a git hook that pushes after a branch switch
     #[command(
         long_about = "Install a post-checkout git hook that runs `sfcc-upload push`.\n\n\
@@ -248,6 +260,32 @@ struct ActivateArgs {
     /// Code version to activate (default: the one being synced)
     #[arg(value_name = "NAME")]
     name: Option<String>,
+}
+
+#[derive(Args)]
+struct SandboxArgs {
+    /// What to do with the sandbox
+    #[arg(value_enum, default_value_t = SandboxAction::Status)]
+    action: SandboxAction,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SandboxAction {
+    Status,
+    Start,
+    Stop,
+    Restart,
+}
+
+impl SandboxAction {
+    fn operation(self) -> Option<Operation> {
+        match self {
+            SandboxAction::Status => None,
+            SandboxAction::Start => Some(Operation::Start),
+            SandboxAction::Stop => Some(Operation::Stop),
+            SandboxAction::Restart => Some(Operation::Restart),
+        }
+    }
 }
 
 #[derive(Args)]
@@ -394,6 +432,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Status => report_status(config, jobs).await,
         Command::Activity(args) => print_logs(&config, &args),
         Command::Activate(args) => activate(&config, args.name).await,
+        Command::Sandbox(args) => sandbox::run(&config, args.action.operation()).await,
         Command::InstallHook(args) => {
             let hook = githook::install(&config, args.force)?;
             logging::ok(format!("git hook installed at {}", hook.display()));
@@ -592,6 +631,10 @@ async fn report_status(config: Config, jobs: usize) -> Result<()> {
     crate::out!(
         "active       {}",
         active::describe(&active::check(&ctx.config).await)
+    );
+    crate::out!(
+        "ods          {}",
+        sandbox::describe_for_status(&ctx.config).await
     );
     Ok(())
 }

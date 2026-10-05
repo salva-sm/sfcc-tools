@@ -219,6 +219,60 @@ pub mod errors {
     }
 }
 
+/// What the Sandbox API last said about a checkout's sandbox, one file per sandbox label.
+pub mod sandbox {
+    use super::*;
+
+    /// A settled state is asked for again after this long.
+    pub const SETTLED_SECONDS: i64 = 60;
+    /// One that will change on its own, sooner.
+    pub const MOVING_SECONDS: i64 = 10;
+    /// One that could not be read: asking every minute would not change why.
+    pub const UNKNOWN_SECONDS: i64 = 5 * 60;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct Status {
+        /// `zzzz-001`: the hostname's first label.
+        pub label: String,
+        /// As ODS reports it: `started`, `stopped`, `starting`…, or `unknown`.
+        pub state: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub eol: Option<String>,
+        /// Why the state is unknown.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub detail: Option<String>,
+        pub at: i64,
+    }
+
+    impl Status {
+        pub fn is_known(&self) -> bool {
+            self.detail.is_none() && self.state != "unknown"
+        }
+
+        /// Whether it is old enough to ask ODS again.
+        pub fn is_due(&self) -> bool {
+            let after = match (self.is_known(), crate::ods::is_transition(&self.state)) {
+                (false, _) => UNKNOWN_SECONDS,
+                (true, true) => MOVING_SECONDS,
+                (true, false) => SETTLED_SECONDS,
+            };
+            now_seconds() - self.at >= after
+        }
+    }
+
+    pub fn dir() -> PathBuf {
+        uploader_dir().join("sandboxes")
+    }
+
+    pub fn path(label: &str) -> PathBuf {
+        dir().join(format!("{label}.json"))
+    }
+
+    pub fn of(label: &str) -> Option<Status> {
+        read(&path(label))
+    }
+}
+
 /// A debug session isml-lsp can ask for values on localhost.
 pub mod sessions {
     use super::*;

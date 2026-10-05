@@ -79,6 +79,7 @@ sfcc-upload ls [PATH]           # what the code version holds on the sandbox
 sfcc-upload rm <PATH>           # delete something left behind up there
 sfcc-upload clean               # delete this project's cartridges from the code version
 sfcc-upload activate [NAME]     # make a code version the active one
+sfcc-upload sandbox [start|stop|restart]   # the on-demand sandbox's state, or change it
 sfcc-upload install-hook        # push automatically after a branch switch
 sfcc-upload completions zsh     # the tab completion script for zsh or PowerShell, see Install
 ```
@@ -227,6 +228,31 @@ Not on every save: an activation drops the sandbox's caches. Without an API clie
 without the OCAPI permissions, nothing is activated: the tool says so in one line and the
 upload goes on as usual. It costs a token and a request per push, so it is off by default.
 
+## The sandbox itself
+
+An on-demand sandbox that ODS stopped looks, from WebDAV, like one that is asleep or
+unreachable. `sandbox` asks the Sandbox API (ODS) instead, for the sandbox `dw.json` points at:
+
+```bash
+sfcc-upload sandbox             # zzzz-001 started
+sfcc-upload sandbox start       # start it - realm credits run while it does
+sfcc-upload sandbox stop
+sfcc-upload sandbox restart
+```
+
+Only that sandbox: never the realm's others, never create, clone or delete. It is found in
+the realm's list by its first label (`zzzz-001`), because the instance answers on `.dx.` and
+`.my.` and ODS lists only `.dx.`, and never by `GET /sandboxes/{id}`, which can return a deleted
+sandbox's record. An operation the state does not allow - starting a started sandbox - is
+refused before it reaches ODS. `status` prints the state on its `ods` line.
+
+It uses the same API client as `activate`, which needs the **Sandbox API User** role on the
+realm in Account Manager; the OCAPI settings of the instance do not come into it. Without
+the role the answer is 403, and the tool says which role is missing.
+
+Each run records the state under `sandboxes/` in the state folder, which is what `sfcc-tui`
+shows and refreshes.
+
 ## Pushing on a branch switch
 
 ```bash
@@ -243,7 +269,7 @@ changed. An existing hook is never replaced unless `--force` is given.
 | --- | ------- |
 | `hostname` | Sandbox host. Required |
 | `username` / `password` | WebDAV credentials. Required unless `client-id` is used |
-| `client-id` / `client-secret` | Account Manager client: used for WebDAV when there is no user/password, and always for `activate` |
+| `client-id` / `client-secret` | Account Manager client: used for WebDAV when there is no user/password, and always for `activate` and `sandbox` |
 | `custom-sfcc-ci` | The `sfcc-oauth-client-id` / `-secret` pair, as sfcc-ci stores it |
 | `code-version` | Code version folder. Defaults to `version1` |
 | `cartridge` | Cartridges to sync. Omit to sync all of them |
