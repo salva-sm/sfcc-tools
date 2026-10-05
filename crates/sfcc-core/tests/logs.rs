@@ -281,3 +281,94 @@ async fn a_file_larger_than_a_slice_is_read_across_slices_line_by_line() {
         text.len() - "[unfinished".len()
     );
 }
+
+#[tokio::test]
+async fn each_record_knows_the_file_and_the_byte_it_starts_at() {
+    let server = MockDav::start().await;
+    let today = day(0);
+    let name = format!("error-blade1-{today}.log");
+    let first = record(&today, "08:00:00", "first");
+    server.put(
+        &format!("Logs/{name}"),
+        format!("{first}{}", record(&today, "08:05:00", "second")),
+    );
+    let dav = Dav::new(&server.config()).unwrap();
+
+    let since = logs::since(&dav, &Mark::start_of_today(), &levels())
+        .await
+        .unwrap();
+    assert_eq!(since.entries[0].file, name);
+    assert_eq!(since.entries[0].offset, Some(0));
+    assert_eq!(since.entries[1].offset, Some(first.len() as u64));
+}
+
+fn moment_of(day: &str, time: &str) -> String {
+    format!("{}-{}-{} {time}.000 GMT", &day[..4], &day[4..6], &day[6..])
+}
+
+#[tokio::test]
+async fn a_record_is_found_again_at_its_offset_or_anywhere_in_its_file() {
+    let server = MockDav::start().await;
+    let today = day(0);
+    let name = format!("error-blade1-{today}.log");
+    let first = record(&today, "08:00:00", "first");
+    server.put(
+        &format!("Logs/{name}"),
+        format!("{first}{}", record(&today, "08:05:00", "second")),
+    );
+    let dav = Dav::new(&server.config()).unwrap();
+    let moment = moment_of(&today, "08:05:00");
+
+    let at = logs::record(&dav, &name, Some(first.len() as u64), &moment, |_| true)
+        .await
+        .unwrap()
+        .expect("the record at its offset");
+    assert!(at.lines[0].contains("second"));
+    assert_eq!(at.lines.len(), 2);
+
+    for offset in [None, Some(0), Some(1_000_000)] {
+        let found = logs::record(&dav, &name, offset, &moment, |_| true)
+            .await
+            .unwrap()
+            .expect("the record, read from the start");
+        assert!(found.lines[0].contains("second"), "{offset:?}");
+    }
+    let refused = logs::record(&dav, &name, None, &moment, |_| false)
+        .await
+        .unwrap();
+    assert!(refused.is_none());
+}
+
+#[tokio::test]
+async fn a_record_moved_to_the_archive_is_found_there_and_one_gone_is_none() {
+    let server = MockDav::start().await;
+    let old = day(3);
+    let name = format!("error-blade1-{old}.log");
+    server.put(
+        &format!("Logs/log_archive/{name}.gz"),
+        gzip(&format!(
+            "{}{}",
+            record(&old, "08:00:00", "first"),
+            record(&old, "09:00:00", "second")
+        )),
+    );
+    let dav = Dav::new(&server.config()).unwrap();
+
+    let found = logs::record(&dav, &name, Some(0), &moment_of(&old, "09:00:00"), |_| true)
+        .await
+        .unwrap()
+        .expect("the record, in log_archive");
+    assert!(found.lines[0].contains("second"));
+    assert_eq!(found.file, name);
+
+    let gone = logs::record(
+        &dav,
+        &format!("error-blade1-{}.log", day(40)),
+        Some(0),
+        &moment_of(&day(40), "09:00:00"),
+        |_| true,
+    )
+    .await
+    .unwrap();
+    assert!(gone.is_none());
+}

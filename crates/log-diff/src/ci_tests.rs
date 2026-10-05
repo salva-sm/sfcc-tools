@@ -438,3 +438,54 @@ async fn a_site_switched_off_is_neither_counted_nor_reported() {
     assert_eq!(known.count, 1);
     assert!(!known.sites.contains_key("acme_fr"));
 }
+
+#[tokio::test]
+async fn a_signature_points_at_its_records_and_show_reads_them_again() {
+    let scratch = Scratch::new("records");
+    let state = scratch.path("ledger.json");
+    let server = MockDav::start().await;
+    let config = server.config();
+    let dav = Dav::new(&config).unwrap();
+    let first = record(Duration::hours(3), "cart", "TypeError: broken");
+    server.put(&log_file(), first.clone());
+    assert!(run(&config, &dav, &options(&state)).await.unwrap().baseline);
+
+    let deployed = RunOptions {
+        sha: Some("2222222222222".to_string()),
+        at: at(Duration::hours(1)),
+        ..options(&state)
+    };
+    run(&config, &dav, &deployed).await.unwrap();
+    // An edit above it since: the same failure, four lines down.
+    server.append(
+        &log_file(),
+        &record(Duration::minutes(30), "cart", "TypeError: broken").replace(".js:10", ".js:14"),
+    );
+    run(&config, &dav, &options(&state)).await.unwrap();
+
+    let ledger = Ledger::load(&state).unwrap();
+    let (id, known) = ledger.known_signatures.iter().next().unwrap();
+    let (earliest, latest) = (
+        known.first_record.as_ref().unwrap(),
+        known.last_record.as_ref().unwrap(),
+    );
+    assert_eq!(earliest.offset, Some(0));
+    assert_eq!(latest.offset, Some(first.len() as u64));
+    assert_eq!(latest.file, log_file().trim_start_matches("Logs/"));
+    assert_eq!(latest.sha.as_deref(), Some("2222222222222"));
+    assert_eq!(known.moved_to(), Some("app_x/cartridge/scripts/cart.js:14"));
+
+    let sources = [("the team's", &ledger)];
+    for first in [false, true] {
+        crate::show::show(&dav, &config.hostname, &sources, &id[..8], first)
+            .await
+            .unwrap();
+    }
+    let elsewhere = crate::show::show(&dav, "staging", &sources, id, false).await;
+    assert!(elsewhere.unwrap_err().to_string().contains("--config"));
+
+    // Gone from the instance: said so, not shown as something else.
+    server.put(&log_file(), "");
+    let gone = crate::show::show(&dav, &config.hostname, &sources, id, false).await;
+    assert!(gone.unwrap_err().to_string().contains("no longer keeps"));
+}

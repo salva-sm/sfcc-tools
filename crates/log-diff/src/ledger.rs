@@ -2,10 +2,11 @@
 //! which remembers what they were told. The team's is read, never written, locally.
 
 use crate::finding::Finding;
+use crate::normalize::Signature;
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
-use sfcc_core::logs::Mark;
+use sfcc_core::logs::{Entry, Mark};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
@@ -86,6 +87,46 @@ pub struct Known {
     /// Order -> when it last failed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub orders: BTreeMap<String, String>,
+    /// Where the instance logged the first record, for `log-diff show`. None in a ledger
+    /// older than the field, until the signature is logged again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_record: Option<Record>,
+    /// The same for the last; its location is where the code fails now, which the first's
+    /// stops being once an edit above it moves the line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_record: Option<Record>,
+}
+
+/// Where a record is in the instance's log: what to read it again by, in full and unscrubbed,
+/// while the instance keeps it. Nothing in it is a customer's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Record {
+    /// `error-blade1-4-appserver-20260905.log`.
+    pub file: String,
+    /// Where it starts in the file, when it was read in the log folder; one read in
+    /// log_archive is looked for by its moment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
+    /// As the log spells it, to the millisecond: `2026-09-09 07:26:29.103 GMT`.
+    pub moment: String,
+    /// `cartridge/path/file.js:214`, in the code that logged it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    /// Team only: the deploy live when it was logged, which that location is a line of.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha: Option<String>,
+}
+
+impl Record {
+    pub fn of(entry: &Entry, signature: &Signature) -> Option<Record> {
+        (!entry.moment.is_empty()).then(|| Record {
+            file: entry.file.clone(),
+            offset: entry.offset,
+            moment: entry.moment.clone(),
+            location: signature.location.clone(),
+            sha: None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -118,6 +159,28 @@ impl Known {
     /// Shows as an error page: SFCC answers an uncaught `error` or a `fatal` with a 500.
     pub fn serious(&self) -> bool {
         serious(&self.label, &self.example)
+    }
+
+    /// Where it failed last, when that is not where it was first seen failing.
+    pub fn moved_to(&self) -> Option<&str> {
+        self.last_record
+            .as_ref()?
+            .location
+            .as_deref()
+            .filter(|last| Some(*last) != self.location.as_deref())
+    }
+
+    fn record(&mut self, finding: &Finding) {
+        if finding.last >= self.last_seen
+            && let Some(last) = &finding.last_record
+        {
+            self.last_record = Some(last.clone());
+        }
+        if (finding.first < self.first_seen || self.first_record.is_none())
+            && let Some(first) = &finding.first_record
+        {
+            self.first_record = Some(first.clone());
+        }
     }
 }
 
@@ -275,6 +338,7 @@ impl Ledger {
     pub fn observe(&mut self, finding: &Finding, deploy: Option<&str>, pending: bool) -> bool {
         if let Some(known) = self.known_signatures.get_mut(&finding.signature.id) {
             known.count += finding.count;
+            known.record(finding);
             if finding.last > known.last_seen {
                 known.last_seen = finding.last.clone();
             }
@@ -310,6 +374,8 @@ impl Ledger {
                 sites: finding.sites.clone(),
                 controllers: finding.controllers.clone(),
                 orders,
+                first_record: finding.first_record.clone(),
+                last_record: finding.last_record.clone(),
             },
         );
         true
@@ -399,6 +465,7 @@ impl Ledger {
         };
 
         known.count += finding.count;
+        known.record(finding);
         if finding.last > known.last_seen {
             known.last_seen = finding.last.clone();
         }

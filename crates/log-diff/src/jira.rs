@@ -39,6 +39,7 @@ pub fn issue(
     environment: &str,
     known: &Known,
     link: Option<&str>,
+    now_link: Option<&str>,
     dashboard: Option<&str>,
 ) -> Value {
     let what = headline(
@@ -56,6 +57,18 @@ pub fn issue(
     ];
     if let Some(sha) = &known.first_deploy_sha {
         content.push(paragraph(format!("First seen after deploy {sha}.")));
+    }
+    if let Some(moved) = known.moved_to() {
+        content.push(paragraph(format!(
+            "Fails at {moved} now: the code around it has moved since."
+        )));
+    }
+    if let Some(last) = &known.last_record {
+        content.push(paragraph(format!(
+            "Last record: {}, {}. `log-diff show {id}` with the environment's dw.json prints \
+             it as logged - the whole stack and the request - while the instance keeps it.",
+            last.file, last.moment
+        )));
     }
     // Where it happened: one signature spans every site and controller it reached.
     let most = |counts: &std::collections::BTreeMap<String, u64>| {
@@ -83,6 +96,9 @@ pub fn issue(
     };
     if let Some(link) = link {
         content.push(linked("Code", link));
+    }
+    if let Some(link) = now_link {
+        content.push(linked("Code where it fails now", link));
     }
     if let Some(dashboard) = dashboard {
         content.push(linked("In the dashboard", dashboard));
@@ -189,8 +205,16 @@ mod tests {
             sites: Default::default(),
             controllers: Default::default(),
             orders: Default::default(),
+            first_record: None,
+            last_record: Some(crate::ledger::Record {
+                file: "error-blade1-20260923.log".into(),
+                offset: Some(1024),
+                moment: "2026-09-23 10:00:00.000 GMT".into(),
+                location: Some("app_x/cartridge/a.js:12".into()),
+                sha: Some("77aa001".into()),
+            }),
         };
-        let issue = issue(&target, "abc", "prd", &known, None, None);
+        let issue = issue(&target, "abc", "prd", &known, None, None, None);
 
         assert_eq!(issue["fields"]["project"]["key"], "SHOP");
         assert_eq!(
@@ -202,5 +226,8 @@ mod tests {
             .as_array()
             .unwrap();
         assert_eq!(blocks.last().unwrap()["type"], "codeBlock");
+        let text = issue["fields"]["description"].to_string();
+        assert!(text.contains("Fails at app_x/cartridge/a.js:12 now"));
+        assert!(text.contains("error-blade1-20260923.log, 2026-09-23 10:00:00.000 GMT"));
     }
 }

@@ -545,3 +545,63 @@ fn keeps_the_latest_orders_a_signature_failed() {
     assert!(!orders.contains_key("GE00000004"));
     assert_eq!(orders["GE00000104"], "2026-09-22T01:44:00Z");
 }
+
+#[test]
+fn the_last_record_follows_the_line_it_fails_at_now() {
+    let first = found(FAILURE);
+    let moved = found(
+        &FAILURE
+            .replace("21:38:04", "22:00:00")
+            .replace("a.js:10", "a.js:14"),
+    );
+    assert_eq!(first.signature.id, moved.signature.id, "one signature");
+
+    let mut mine = Ledger::default();
+    mine.observe_local(&first, false);
+    let known = &mine.known_signatures[&first.signature.id];
+    assert_eq!(known.moved_to(), None);
+    assert_eq!(known.first_record, known.last_record);
+
+    mine.observe_local(&moved, false);
+    let known = &mine.known_signatures[&first.signature.id];
+    assert_eq!(known.moved_to(), Some("app_x/cartridge/scripts/a.js:14"));
+    let (first, last) = (
+        known.first_record.as_ref().unwrap(),
+        known.last_record.as_ref().unwrap(),
+    );
+    assert_eq!(first.moment, "2026-09-22 21:38:04.112 GMT");
+    assert_eq!(last.moment, "2026-09-22 22:00:00.112 GMT");
+    assert_eq!(last.file, "error-blade1-20260922.log");
+}
+
+#[test]
+fn a_read_in_any_order_points_at_its_earliest_and_latest_record() {
+    let late = FAILURE.replace("21:38:04", "23:00:00");
+    let early = FAILURE.replace("21:38:04", "20:00:00");
+    let finding = found(&format!("{FAILURE}\n{late}\n{early}"));
+    assert_eq!(finding.count, 3);
+    assert!(finding.first_record.unwrap().moment.contains("20:00:00"));
+    assert!(finding.last_record.unwrap().moment.contains("23:00:00"));
+
+    // Learned in a baseline that read a later file first.
+    let mut team = Ledger::default();
+    team.observe(&found(&late), None, false);
+    team.observe(&found(&early), None, false);
+    let known = team.known_signatures.values().next().unwrap();
+    assert!(
+        known
+            .first_record
+            .as_ref()
+            .unwrap()
+            .moment
+            .contains("20:00:00")
+    );
+    assert!(
+        known
+            .last_record
+            .as_ref()
+            .unwrap()
+            .moment
+            .contains("23:00:00")
+    );
+}

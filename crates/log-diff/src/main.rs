@@ -7,6 +7,7 @@ mod local;
 mod normalize;
 mod notify;
 mod output;
+mod show;
 mod summary;
 mod team;
 
@@ -41,6 +42,7 @@ Examples:
   log-diff ack                         list what is pending; `ack <id>` or `ack --all` to clear it
   log-diff list --muted --baseline     what is never reported, most important first
   log-diff unmute <id>                 hear of a muted one again
+  log-diff show <id>                   its last record as the instance logged it, stack and request
   log-diff run --config dev/dw.json    read DEV, keeping the team's ledger on this machine
   log-diff run --state ledger.json --sha 9451cff --build 4821
                                        CI: record a deploy and update the team's ledger
@@ -151,6 +153,18 @@ Inside a project, it stops the         one for the sandbox in dw.json. Anywhere 
     List(ListArgs),
     /// Hear of muted signatures again, or start watching baseline ones
     Unmute(UnmuteArgs),
+    /// Print a signature's last record as the instance logged it: the whole stack, the request
+    #[command(
+        long_about = "Print a signature's last record - or its first, with --first - as the \
+        instance logged it: unscrubbed, with every frame of the stack and the request dump the \
+        ledgers leave out.\n\nThe ledgers keep where each record is - the log file, the byte \
+        it starts at and its moment - and never what it said. The record is read again from the \
+        instance in dw.json, from its log folder or its log_archive, while the instance keeps \
+        it, and printed, never written anywhere.\n\nYour ledger is looked in, then the team's; \
+        a signature only the team knows needs --config with the dw.json of the instance its \
+        ledger reads."
+    )]
+    Show(ShowArgs),
     /// Print the shell completion script: bash, zsh, fish, powershell or elvish
     #[command(
         long_about = "Print the shell completion script for SHELL on stdout.\n\n\
@@ -427,6 +441,25 @@ struct ListArgs {
 }
 
 #[derive(Args)]
+struct ShowArgs {
+    /// The signature id, or the start of it
+    #[arg(value_name = "ID")]
+    id: String,
+    /// The first record of it instead of the last
+    #[arg(long)]
+    first: bool,
+    /// Path to dw.json of the instance that logged it (default: the nearest one)
+    #[arg(long, short = 'c', value_name = "PATH", value_hint = ValueHint::FilePath)]
+    config: Option<PathBuf>,
+    /// Your own ledger
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    state: Option<PathBuf>,
+    /// The team's ledger: a path, or a URL (default: the one `run` keeps on this machine)
+    #[arg(long, value_name = "PATH|URL", env = "LOG_DIFF_SHARED")]
+    shared: Option<String>,
+}
+
+#[derive(Args)]
 struct UnmuteArgs {
     /// Signature ids, or the start of them - muted or baseline ones
     #[arg(value_name = "ID", required_unless_present = "all")]
@@ -586,6 +619,38 @@ async fn run(cli: Cli) -> Result<i32> {
             local::list(&state, &wanted, args.limit)?;
             Ok(0)
         }
+        Command::Show(args) => {
+            let config = Config::load(args.config, None)?;
+            let dav = Dav::new(&config)?;
+            let mine = ledger::Ledger::load(&args.state.unwrap_or_else(default_state))?;
+            let shared = args
+                .shared
+                .filter(|shared| !shared.trim().is_empty())
+                .or_else(|| {
+                    let here = team_on_this_machine();
+                    here.is_file().then(|| here.to_string_lossy().into_owned())
+                });
+            let team = match shared {
+                Some(source) => {
+                    let cache = sfcc_core::state::log_diff_dir().join("shared-cache.json");
+                    let (team, warning) = ledger::load_shared(&source, &cache).await?;
+                    if let Some(warning) = warning {
+                        status(Tone::Warn, &warning);
+                    }
+                    team
+                }
+                None => ledger::Ledger::default(),
+            };
+            show::show(
+                &dav,
+                &config.hostname,
+                &[("your", &mine), ("the team's", &team)],
+                &args.id,
+                args.first,
+            )
+            .await?;
+            Ok(0)
+        }
         Command::Unmute(args) => {
             let state = args.state.unwrap_or_else(default_state);
             local::unmute(&state, &args.ids, args.all)?;
@@ -730,6 +795,7 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
             label: &item.label,
             exception: item.exception_class.as_deref(),
             location: item.location.as_deref(),
+            moved_to: None,
             example: &item.example,
             count: item.count,
             first_seen: &item.first_seen,
@@ -762,6 +828,7 @@ async fn ci_run(args: RunArgs) -> Result<i32> {
             label: &spike.label,
             exception: spike.exception_class.as_deref(),
             location: spike.location.as_deref(),
+            moved_to: None,
             example: &spike.example,
             count: spike.today,
             first_seen: "",
@@ -974,6 +1041,13 @@ async fn ticket(args: TicketArgs) -> Result<i32> {
         known.first_deploy_sha.as_deref(),
         known.location.as_deref(),
     );
+    let now_link = known.moved_to().and_then(|moved| {
+        ci::code_url(
+            args.code_url.as_deref(),
+            known.last_record.as_ref()?.sha.as_deref(),
+            Some(moved),
+        )
+    });
     let dashboard = args
         .dashboard_url
         .filter(|url| !url.trim().is_empty())
@@ -992,6 +1066,7 @@ async fn ticket(args: TicketArgs) -> Result<i32> {
             &environment.name,
             known,
             link.as_deref(),
+            now_link.as_deref(),
             dashboard.as_deref(),
         );
         println!("{}", serde_json::to_string_pretty(&issue)?);
@@ -1004,6 +1079,7 @@ async fn ticket(args: TicketArgs) -> Result<i32> {
         &environment.name,
         known,
         link.as_deref(),
+        now_link.as_deref(),
         dashboard.as_deref(),
     );
     let ticket = jira::create(&target, &issue).await?;

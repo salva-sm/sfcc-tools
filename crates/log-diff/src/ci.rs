@@ -109,8 +109,21 @@ pub async fn run(config: &Config, dav: &Dav, options: &RunOptions) -> Result<Out
         new: Vec::new(),
         spikes: Vec::new(),
     };
-    for finding in live {
+    for mut finding in live {
         ledger.record_daily(&finding);
+        // The code each record's line is a line of, whether or not the deploy is to blame.
+        let deployed = |moment: &str| {
+            ledger
+                .deploy_at(moment)
+                .map(|index| ledger.deploy_log[index].sha.clone())
+        };
+        let (first_sha, last_sha) = (deployed(&finding.first), deployed(&finding.last));
+        if let Some(record) = finding.first_record.as_mut() {
+            record.sha = first_sha;
+        }
+        if let Some(record) = finding.last_record.as_mut() {
+            record.sha = last_sha;
+        }
         let live = match baseline {
             true => None,
             false => ledger.deploy_at(&finding.first),
