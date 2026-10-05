@@ -1,7 +1,7 @@
 # Contributing
 
 Contributions are welcome. This repository has one maintainer, [@salva-sm](https://github.com/salva-sm),
-who reviews and merges every change; the rules below exist so that stays manageable.
+who reviews and approves every change; the rules below exist so that stays manageable.
 
 ## Before you write code
 
@@ -14,8 +14,9 @@ Small fixes (typos, a clear bug with a test that shows it) can go straight to a 
 
 ## Workflow
 
-1. **Fork** the repository. Contributors do not get write access; everything goes
-   through a PR from a fork.
+1. **Collaborators** push their branches to this repository. **Everyone else forks** it.
+   Either way, nothing reaches `main` except through a PR: `main` is protected, and a
+   PR needs CI to pass and the maintainer's approval before it can be merged.
 2. **Branch from an up-to-date `main`**, one branch per change:
    `feature/<short-name>`, `fix/<short-name>` or `docs/<short-name>`.
 3. **Keep the PR small and about one thing.** One crate where possible. No drive-by
@@ -24,13 +25,15 @@ Small fixes (typos, a clear bug with a test that shows it) can go straight to a 
 4. **Run the checks locally** (below) before pushing.
 5. **Open the PR against `main`**, as a draft if it is not ready for review. Fill in the
    template, link the issue (`Closes #12`).
-6. **Keep it current by rebasing** on `main` (`git pull --rebase upstream main`), not by
+6. **Keep it current by rebasing** on `main` (`git pull --rebase origin main`, or `upstream main`
+   from a fork), not by
    merging `main` into your branch.
 7. After review, push fixes as new commits so the review can see what changed. Do not
    force-push while a review is in progress unless asked.
 
-The maintainer merges with **squash**, so your branch's commit history does not need to
-be tidy; the PR title becomes the commit message.
+PRs are merged with **squash**, so your branch's commit history does not need to be
+tidy; the PR title becomes the commit message. Pushing after the approval dismisses it,
+and the PR needs approving again.
 
 ## What the maintainer does, not you
 
