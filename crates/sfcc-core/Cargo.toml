@@ -14,6 +14,8 @@ testing = ["webdav", "tokio/net", "tokio/io-util", "tokio/rt"]
 completions = ["dep:clap", "dep:clap_complete"]
 daemon = ["dep:libc"]
 ocapi = ["dep:reqwest", "dep:tokio"]
+# The Sandbox API client; what a state allows needs no HTTP and is always there.
+ods = ["dep:reqwest", "dep:tokio"]
 
 [dependencies]
 anyhow = "1.0.104"

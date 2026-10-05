@@ -7,10 +7,11 @@ pub mod config;
 pub mod daemon;
 #[cfg(feature = "webdav")]
 pub mod logs;
-#[cfg(any(feature = "webdav", feature = "ocapi"))]
+#[cfg(any(feature = "webdav", feature = "ocapi", feature = "ods"))]
 mod oauth;
 #[cfg(feature = "ocapi")]
 pub mod ocapi;
+pub mod ods;
 pub mod state;
 #[cfg(feature = "testing")]
 pub mod testing;
