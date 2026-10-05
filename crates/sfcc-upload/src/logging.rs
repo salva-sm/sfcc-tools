@@ -118,6 +118,16 @@ pub fn warn(message: impl AsRef<str>) {
     line("!", YELLOW, message.as_ref());
 }
 
+/// A warning on stderr, for what is about the tool rather than the command's output.
+pub fn notice(message: impl AsRef<str>) {
+    crate::errout!(
+        "{} {} {}",
+        prefix(),
+        paint(YELLOW, &format!("{:<3}", "!")),
+        message.as_ref()
+    );
+}
+
 pub fn error(message: impl AsRef<str>) {
     crate::errout!(
         "{} {} {}",

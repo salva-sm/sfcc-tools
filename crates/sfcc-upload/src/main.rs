@@ -13,6 +13,7 @@ mod sandbox;
 mod scan;
 mod sync_status;
 mod tail;
+mod update;
 mod watch;
 mod webdav;
 
@@ -38,6 +39,7 @@ Examples:
   sfcc-upload activity                   what the background watcher has been doing
   sfcc-upload logger                     follow the sandbox log, where server errors land
   sfcc-upload sandbox start              start the on-demand sandbox when ODS stopped it
+  sfcc-upload self-update                replace every tool here with the latest release's
   sfcc-upload push --cartridge int_analytics --code-version test1
 
 Configuration comes from the nearest dw.json (hostname, credentials, code-version,
@@ -183,6 +185,24 @@ enum Command {
         \x20 sfcc-upload completions powershell | Out-String | Invoke-Expression"
     )]
     Completions(CompletionsArgs),
+    /// Replace sfcc-upload, and the tools installed next to it, with the latest release's
+    #[command(
+        long_about = "Replace sfcc-upload, and every tool of the release installed in the \
+        same folder (log-diff, sfcc-tui, isml-lsp, sfcc-dap), with the latest release's.\n\n\
+        What is already running keeps the old version until it restarts. Every other command \
+        says when a newer release is out, asking GitHub at most once a day."
+    )]
+    SelfUpdate(SelfUpdateArgs),
+}
+
+#[derive(Args)]
+struct SelfUpdateArgs {
+    /// Only say whether a newer release is out
+    #[arg(long)]
+    check: bool,
+    /// Replace them even when they are the latest, or were built from source
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Args)]
@@ -362,6 +382,10 @@ async fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
     logging::configure_color(&cli.color);
+    if let Command::SelfUpdate(args) = &cli.command {
+        return update::run(args.check, args.force).await;
+    }
+    update::notice().await;
     // A watcher is found by its pid file, so stopping one needs no dw.json.
     if let Command::Stop(args) = &cli.command {
         return stop(&cli, args.all);
@@ -453,7 +477,7 @@ async fn run(cli: Cli) -> Result<()> {
             tail::follow(&ctx, options).await
         }
         // Handled above, before dw.json.
-        Command::Completions(_) => Ok(()),
+        Command::Completions(_) | Command::SelfUpdate(_) => Ok(()),
         Command::Errors(args) => {
             let ctx = Ctx::new(config, jobs)?;
             let levels = tail::parse_levels(&args.level);

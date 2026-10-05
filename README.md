@@ -66,6 +66,11 @@ curl -L https://github.com/salva-sm/sfcc-tools/releases/latest/download/log-diff
 Or all of them at once, into one folder: [`tools/install-all.ps1`](tools/install-all.ps1) on
 Windows, [`tools/install-all.sh`](tools/install-all.sh) elsewhere.
 
+**Updating** — `sfcc-upload self-update` replaces it, and every other tool in the same
+folder, with the latest release's. Until then, each `sfcc-upload` run says when a newer one
+is out, asking GitHub at most once a day. What is already running (a watcher, the editor
+task, Zed's language server) keeps the old version until it restarts.
+
 **Zed extensions** — download `isml-<version>.zip` or `b2c-debug-<version>.zip` from the
 same release, unzip anywhere and run the `install.cmd` inside. The ISML extension finds
 `isml-lsp` on your `PATH`, or downloads its own copy when it is not there.
