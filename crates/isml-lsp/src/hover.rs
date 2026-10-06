@@ -2,8 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
+use lsp_types::Url;
+
 use crate::api;
 use crate::reference::Reference;
+use crate::resolve::Override;
 use crate::routes::{Effect, Link, Route};
 use crate::workspace::Workspace;
 
@@ -57,6 +60,69 @@ pub fn module_markdown(reference: &Reference) -> Option<String> {
         class.constants.len()
     ));
     Some(out)
+}
+
+/// Which copy of a `*/` module or a template each storefront runs. Nothing without a
+/// recorded cartridge path: the order would be a guess, and `Go to Definition` lists them.
+pub fn overrides_markdown(
+    title: &str,
+    overrides: &[Override],
+    workspace: &Workspace,
+    current: &Path,
+) -> Option<String> {
+    if overrides.is_empty() || workspace.paths.is_empty() {
+        return None;
+    }
+    // A template can exist in several locale folders of one cartridge; the
+    // path chooses between cartridges, so each is listed once.
+    let mut copies: Vec<&Override> = Vec::new();
+    for candidate in overrides {
+        if !copies
+            .iter()
+            .any(|seen| seen.cartridge == candidate.cartridge)
+        {
+            copies.push(candidate);
+        }
+    }
+
+    let mut out = format!("**`{title}`**\n");
+    for path in &workspace.paths {
+        let mut ranked: Vec<(Option<usize>, &Override)> = copies
+            .iter()
+            .map(|candidate| (path.rank(&candidate.cartridge), *candidate))
+            .collect();
+        ranked.sort_by_key(|(rank, _)| rank.unwrap_or(usize::MAX));
+
+        out.push_str(&format!("\n`{}`\n", path.label));
+        out.push_str("\n| | Cartridge | |\n| --- | --- | --- |\n");
+        for (index, (rank, candidate)) in ranked.iter().enumerate() {
+            let effect = match rank {
+                None => "not in this path",
+                Some(_) if index == 0 => "runs",
+                Some(_) => "overridden",
+            };
+            let here = match candidate.hit.path == current {
+                true => " ← this file",
+                false => "",
+            };
+            out.push_str(&format!(
+                "| {} | {} | {}{} |\n",
+                index + 1,
+                linked(&candidate.cartridge, &candidate.hit.path),
+                effect,
+                here
+            ));
+        }
+    }
+    Some(out)
+}
+
+/// The cartridge name, linked to its copy so the hover opens it.
+fn linked(cartridge: &str, file: &Path) -> String {
+    match Url::from_file_path(file) {
+        Ok(url) => format!("[`{cartridge}`]({url})"),
+        Err(()) => format!("`{cartridge}`"),
+    }
 }
 
 fn kind_label(kind: api::MemberKind) -> &'static str {
@@ -240,6 +306,57 @@ mod tests {
         let text = markdown(&route(), &chains, &here).unwrap();
         assert!(text.contains("← this file"));
         assert!(text.contains("nothing here records a cartridge path"));
+    }
+
+    fn copy(cartridge: &str) -> Override {
+        Override {
+            cartridge: cartridge.into(),
+            hit: copy_path(cartridge).into(),
+        }
+    }
+
+    fn copy_path(cartridge: &str) -> PathBuf {
+        std::env::temp_dir()
+            .join(cartridge)
+            .join("productHelpers.js")
+    }
+
+    fn linked_copy(cartridge: &str) -> String {
+        let url = Url::from_file_path(copy_path(cartridge)).unwrap();
+        format!("[`{cartridge}`]({url})")
+    }
+
+    #[test]
+    fn says_which_copy_each_storefront_runs() {
+        let settings = serde_json::json!({
+            "cartridge_path": {
+                "site_a": "app_na:app_brand:app_storefront_base",
+                "site_b": "app_brand:app_storefront_base",
+            }
+        });
+        let workspace = Workspace::scan(&[], &settings);
+        let copies = [
+            copy("app_brand"),
+            copy("app_na"),
+            copy("app_storefront_base"),
+        ];
+        let here = copy_path("app_brand");
+        let text = overrides_markdown("*/cartridge/x", &copies, &workspace, &here).unwrap();
+
+        let (na, brand) = (linked_copy("app_na"), linked_copy("app_brand"));
+        let site_a = text.split("`site_b`").next().unwrap();
+        assert!(site_a.contains(&format!("| 1 | {na} | runs |")));
+        assert!(site_a.contains(&format!("| 2 | {brand} | overridden ← this file |")));
+        let site_b = text.split("`site_b`").nth(1).unwrap();
+        assert!(site_b.contains(&format!("| 1 | {brand} | runs ← this file |")));
+        assert!(site_b.contains(&format!("| 3 | {na} | not in this path |")));
+    }
+
+    #[test]
+    fn says_nothing_about_overrides_without_a_cartridge_path() {
+        let workspace = Workspace::scan(&[], &serde_json::Value::Null);
+        let copies = [copy("app_brand")];
+        assert!(overrides_markdown("*/cartridge/x", &copies, &workspace, Path::new("x")).is_none());
     }
 
     #[test]

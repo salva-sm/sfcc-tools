@@ -169,6 +169,16 @@ impl Server {
         if let Some(text) = hover::module_markdown(&reference) {
             return Some(text);
         }
+        let title = match &reference {
+            reference::Reference::Module(path) | reference::Reference::Template(path) => {
+                Some(path.as_str())
+            }
+            _ => None,
+        };
+        if let Some(title) = title {
+            let overrides = resolve::overrides(&reference, file, &self.workspace);
+            return hover::overrides_markdown(title, &overrides, &self.workspace, file);
+        }
         let route = hover::route_of(&reference, file)?;
         let chains = hover::chains(&route, &self.workspace);
         hover::markdown(&route, &chains, file)
