@@ -7,19 +7,21 @@ use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification,
     PublishDiagnostics,
 };
-use lsp_types::request::{Completion, GotoDefinition, HoverRequest, Request as RequestTrait};
+use lsp_types::request::{
+    Completion, GotoDefinition, HoverRequest, References, Request as RequestTrait,
+};
 use lsp_types::{
     CompletionList, CompletionOptions, CompletionParams, CompletionResponse, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
     InitializeParams, Location, MarkupContent, MarkupKind, OneOf, Position,
-    PublishDiagnosticsParams, Range, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Url,
+    PublishDiagnosticsParams, Range, ReferenceParams, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
 };
 
 use crate::complete::{self, Completer};
 use crate::metadata::Metadata;
 use crate::workspace::Workspace;
-use crate::{diagnose, errors, hover, live, reference, resolve, sync, validate};
+use crate::{diagnose, errors, hover, live, reference, references, resolve, sync, validate};
 
 pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
@@ -27,6 +29,7 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
     let capabilities = serde_json::to_value(ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         definition_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
             // `<` opens a tag, `.` reaches a custom attribute, a quote opens an
@@ -107,6 +110,9 @@ impl Server {
             Completion::METHOD => cast::<Completion>(request)
                 .ok()
                 .and_then(|(_, params)| serde_json::to_value(self.completion(params)?).ok()),
+            References::METHOD => cast::<References>(request)
+                .ok()
+                .and_then(|(_, params)| serde_json::to_value(self.references(params)?).ok()),
             HoverRequest::METHOD => cast::<HoverRequest>(request)
                 .ok()
                 .and_then(|(_, params)| serde_json::to_value(self.hover(params)?).ok()),
@@ -238,6 +244,37 @@ impl Server {
             .collect();
 
         (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
+    }
+
+    fn references(&self, params: ReferenceParams) -> Option<Vec<Location>> {
+        let position = params.text_document_position;
+        let uri = position.text_document.uri;
+        let file = uri.to_file_path().ok()?;
+        let text = self.documents.get(&uri)?;
+        let query = references::Query {
+            file: &file,
+            text,
+            offset: char_offset_at(text, position.position)?,
+            include_declaration: params.context.include_declaration,
+        };
+        let open: HashMap<PathBuf, &str> = self
+            .documents
+            .iter()
+            .filter_map(|(uri, text)| Some((uri.to_file_path().ok()?, text.as_str())))
+            .collect();
+
+        let locations: Vec<Location> = references::find(&query, &self.workspace, &open)
+            .into_iter()
+            .filter_map(|found| {
+                let target = Url::from_file_path(&found.path).ok()?;
+                let range = Range::new(
+                    Position::new(found.line, found.start),
+                    Position::new(found.line, found.end),
+                );
+                Some(Location::new(target, range))
+            })
+            .collect();
+        (!locations.is_empty()).then_some(locations)
     }
 
     /// The document whose diagnostics are now stale, if any.

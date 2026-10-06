@@ -11,6 +11,7 @@ pub mod isml;
 pub mod live;
 pub mod metadata;
 pub mod reference;
+pub mod references;
 pub mod resolve;
 pub mod routes;
 pub mod server;
