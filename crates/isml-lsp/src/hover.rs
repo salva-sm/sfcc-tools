@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use lsp_types::Url;
+
 use crate::api;
 use crate::reference::Reference;
 use crate::resolve::Override;
@@ -104,15 +106,23 @@ pub fn overrides_markdown(
                 false => "",
             };
             out.push_str(&format!(
-                "| {} | `{}` | {}{} |\n",
+                "| {} | {} | {}{} |\n",
                 index + 1,
-                candidate.cartridge,
+                linked(&candidate.cartridge, &candidate.hit.path),
                 effect,
                 here
             ));
         }
     }
     Some(out)
+}
+
+/// The cartridge name, linked to its copy so the hover opens it.
+fn linked(cartridge: &str, file: &Path) -> String {
+    match Url::from_file_path(file) {
+        Ok(url) => format!("[`{cartridge}`]({url})"),
+        Err(()) => format!("`{cartridge}`"),
+    }
 }
 
 fn kind_label(kind: api::MemberKind) -> &'static str {
@@ -301,8 +311,19 @@ mod tests {
     fn copy(cartridge: &str) -> Override {
         Override {
             cartridge: cartridge.into(),
-            hit: PathBuf::from(format!("{cartridge}/productHelpers.js")).into(),
+            hit: copy_path(cartridge).into(),
         }
+    }
+
+    fn copy_path(cartridge: &str) -> PathBuf {
+        std::env::temp_dir()
+            .join(cartridge)
+            .join("productHelpers.js")
+    }
+
+    fn linked_copy(cartridge: &str) -> String {
+        let url = Url::from_file_path(copy_path(cartridge)).unwrap();
+        format!("[`{cartridge}`]({url})")
     }
 
     #[test]
@@ -319,15 +340,16 @@ mod tests {
             copy("app_na"),
             copy("app_storefront_base"),
         ];
-        let here = PathBuf::from("app_brand/productHelpers.js");
+        let here = copy_path("app_brand");
         let text = overrides_markdown("*/cartridge/x", &copies, &workspace, &here).unwrap();
 
+        let (na, brand) = (linked_copy("app_na"), linked_copy("app_brand"));
         let site_a = text.split("`site_b`").next().unwrap();
-        assert!(site_a.contains("| 1 | `app_na` | runs |"));
-        assert!(site_a.contains("| 2 | `app_brand` | overridden ← this file |"));
+        assert!(site_a.contains(&format!("| 1 | {na} | runs |")));
+        assert!(site_a.contains(&format!("| 2 | {brand} | overridden ← this file |")));
         let site_b = text.split("`site_b`").nth(1).unwrap();
-        assert!(site_b.contains("| 1 | `app_brand` | runs ← this file |"));
-        assert!(site_b.contains("| 3 | `app_na` | not in this path |"));
+        assert!(site_b.contains(&format!("| 1 | {brand} | runs ← this file |")));
+        assert!(site_b.contains(&format!("| 3 | {na} | not in this path |")));
     }
 
     #[test]
