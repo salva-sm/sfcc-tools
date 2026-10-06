@@ -16,8 +16,8 @@ Three pieces, each buildable on its own:
 - **`../../crates/isml-lsp/`** — a library plus the thin binary that serves it. It knows
   what no general editor can: SFCC paths, the ISML tag set, the `dw.*` API, the object
   metadata checked into the repository, and the cartridge path that decides which
-  `server.append` runs. It answers `textDocument/definition`, `textDocument/completion`,
-  `textDocument/hover` and `textDocument/publishDiagnostics`.
+  `server.append` runs. It answers `textDocument/definition`, `textDocument/references`,
+  `textDocument/completion`, `textDocument/hover` and `textDocument/publishDiagnostics`.
 
 ## Install
 
@@ -93,9 +93,50 @@ bundles are offered instead.
 
 The server is registered for **ISML and JavaScript**, because `require('*/cartridge/...')`
 is just as unnavigable in a controller as in a template. It only ever answers when the
-cursor is on one of the paths above, so it never competes with the TypeScript server. To
+cursor is on one of the paths above, or for [Find All References](#who-calls-a-function)
+on an exported function, so it rarely competes with the TypeScript server. To
 turn it off for JavaScript, remove `"JavaScript"` from `languages` in
 `extensions/isml/extension.toml`, or disable the `isml-lsp` server in your Zed settings.
+
+## Who calls a function
+
+`Find All References` on a function a cartridge script exports lists every use that
+reaches that copy of it, in scripts and templates. Put the cursor on the definition
+(`function total(`, `total: total`, `exports.total =`, an override's `base.total =`) or on
+any use; from a use, the copies it resolves to are searched, as `Go to Definition` would
+pick them.
+
+| A use like | Counts when |
+| ---------- | ----------- |
+| `var helpers = require('...'); helpers.total()` | the require reaches the file |
+| `require('...').total()`, also inside `${...}` in a template | same |
+| `var { total } = require('...'); total()` | same |
+| `var base = module.superModule; base.total()` | the file is an override of this one |
+| `total()` inside the defining file | always |
+
+Which file a require reaches follows the same rules as `Go to Definition`: `~/` and
+`app_brand/...` only their own cartridge, `./` relative to the file, `*/` and
+`module.superModule` the cartridge path. A copy to the left that defines `total` itself
+hides this one: a `*/` caller only counts in a storefront where, walking the path from
+its start, no copy before this one redefines `total`; an override's `base.total()` only
+when nothing between it and this copy does. An override that hands the parent's function
+on unchanged (`module.exports = base`, `total: base.total`) hides nothing. A caller counts
+only in the storefronts whose path holds its cartridge.
+
+```
+var base = module.superModule;      // app_brand: hides the base copy from `*/` callers
+base.total = function (basket) {
+    return base.total(basket);      // ...but this call reaches it, and is listed
+};
+module.exports = base;
+```
+
+With no cartridge path recorded, every caller of every copy is listed.
+
+It reads the text, not a JavaScript parse: a module bound to a variable, required inline
+or destructured is followed; one passed as an argument, stored on an object or
+reassigned is not, and neither is client code under `cartridge/client/`. Commented-out
+calls are skipped in scripts, not in templates.
 
 ## What it completes
 

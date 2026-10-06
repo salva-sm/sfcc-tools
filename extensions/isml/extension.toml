@@ -1,6 +1,6 @@
 id = "isml"
 name = "ISML (Salesforce B2C Commerce)"
-description = "ISML templates in Zed: syntax highlighting, completion for the ISML tag set and for the custom attributes your metadata defines, and go-to-definition on template=, require() and Resource.msg paths."
+description = "ISML templates in Zed: syntax highlighting, completion for the ISML tag set and for the custom attributes your metadata defines, and go-to-definition on template=, require() and Resource.msg paths, and find-references on the functions cartridge scripts export."
 version = "0.6.0"
 schema_version = 1
 authors = ["salva-sm"]
