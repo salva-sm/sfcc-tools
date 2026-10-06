@@ -42,22 +42,28 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
 
     let initialize_params = connection.initialize(capabilities)?;
     let params: InitializeParams = serde_json::from_value(initialize_params)?;
+    // Nothing is ever sent on it: dropping it is what tells the pollers to stop.
+    let (stop, stopped) = crossbeam_channel::bounded::<()>(0);
     sync::report(
         workspace_roots(&params),
         sync::Options::from_settings(params.initialization_options.as_ref()),
         connection.sender.clone(),
+        stopped.clone(),
     );
     errors::report(
         workspace_roots(&params),
         errors::Options::from_settings(params.initialization_options.as_ref()),
         connection.sender.clone(),
+        stopped,
     );
 
     let server = Server::new(params);
     server.run(&connection)?;
 
-    // The writer thread ends when the last sender goes, and the connection
-    // holds one: without this, join() blocks and the process outlives Zed.
+    // The writer thread ends when the last sender goes. The pollers hold one each until
+    // `stop` goes, and the connection holds one: without these, join() blocks and the
+    // process outlives Zed.
+    drop(stop);
     drop(connection);
     io_threads.join()?;
     Ok(())
