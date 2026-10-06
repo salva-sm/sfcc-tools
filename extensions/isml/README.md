@@ -53,16 +53,42 @@ Ctrl/cmd-click (or `Go to Definition`) on:
 | ----------- | -------- |
 | `<isinclude template="account/dashboard"/>` | `<cartridge>/cartridge/templates/default/account/dashboard.isml` |
 | `<isdecorate template="...">`, `<ismodule template="...">` | same |
-| `require('*/cartridge/scripts/x')` | that file in **every** cartridge that has it |
+| `require('*/cartridge/scripts/x')` | the copy the cartridge path runs (see below) |
 | `require('~/cartridge/scripts/x')` | the current cartridge only |
 | `require('./sibling')`, `require('../x')` | relative to the file |
 | `require('app_brand/cartridge/...')` | that cartridge |
 | `require('server')` and other bare names | `cartridges/modules/<name>` |
 | `Resource.msg('key', 'bundle')`, `msgf`, `i18nMessage` | the `.properties` line defining the key |
 
-Cartridge overrides are all returned, ordered with the current file's cartridge first, so
-Zed shows the override chain in a picker instead of guessing one. Resource keys resolve to
-the exact line; if no bundle defines the key, the candidate bundles are offered instead.
+A `*/` path is relative to the start of the cartridge path, wherever the `require` is, so
+the leftmost cartridge with the file is the one that runs; templates and resource keys
+resolve along the path the same way. When a [cartridge path is
+recorded](#where-the-order-comes-from), only what runs is returned:
+
+- with `storefront` set, that storefront's copy, so Zed jumps straight to it;
+- without it, one location when every storefront runs the same file, and one per
+  storefront when they differ.
+
+With no cartridge path recorded the order is not knowable, so every override is returned,
+the current file's cartridge first, and Zed shows them in a picker instead of guessing one.
+Hover the path to see, per storefront, which copy runs and which are overridden:
+
+```
+*/cartridge/scripts/helpers/productHelpers
+
+storefront_a
+  1  app_brand_na         runs
+  2  app_brand            overridden
+  3  app_storefront_base  overridden
+
+storefront_b
+  1  app_brand            runs
+  2  app_storefront_base  overridden
+  3  app_brand_na         not in this path
+```
+
+Resource keys resolve to the exact line; if no bundle defines the key, the candidate
+bundles are offered instead.
 
 The server is registered for **ISML and JavaScript**, because `require('*/cartridge/...')`
 is just as unnavigable in a controller as in a template. It only ever answers when the
@@ -275,6 +301,26 @@ A colon-joined string or an array, whichever reads better; leftmost wins, as in 
 Manager. A single path instead of an object works too, and a name given here replaces the
 site archive of the same name. This is read once, at startup — restart the server after
 editing it.
+
+`storefront` names the path you work on, so `Go to Definition` on a `*/` require, a
+template or a resource key jumps to what that storefront runs even where the others run
+something else. Being personal, it belongs in your own Zed settings rather than the
+project's:
+
+```json
+{
+    "lsp": {
+        "isml-lsp": {
+            "initialization_options": {
+                "storefront": "storefront_a"
+            }
+        }
+    }
+}
+```
+
+If it names no recorded path, or its path has no copy of the file, the other
+storefronts' copies are offered as if it were unset.
 
 With none of the three, the chain is still listed — every cartridge that declares the
 route — but unordered, and it says so instead of guessing who wins.

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::api;
 use crate::reference::Reference;
+use crate::resolve::Override;
 use crate::routes::{Effect, Link, Route};
 use crate::workspace::Workspace;
 
@@ -56,6 +57,61 @@ pub fn module_markdown(reference: &Reference) -> Option<String> {
         class.properties.len(),
         class.constants.len()
     ));
+    Some(out)
+}
+
+/// Which copy of a `*/` module or a template each storefront runs. Nothing without a
+/// recorded cartridge path: the order would be a guess, and `Go to Definition` lists them.
+pub fn overrides_markdown(
+    title: &str,
+    overrides: &[Override],
+    workspace: &Workspace,
+    current: &Path,
+) -> Option<String> {
+    if overrides.is_empty() || workspace.paths.is_empty() {
+        return None;
+    }
+    // A template can exist in several locale folders of one cartridge; the
+    // path chooses between cartridges, so each is listed once.
+    let mut copies: Vec<&Override> = Vec::new();
+    for candidate in overrides {
+        if !copies
+            .iter()
+            .any(|seen| seen.cartridge == candidate.cartridge)
+        {
+            copies.push(candidate);
+        }
+    }
+
+    let mut out = format!("**`{title}`**\n");
+    for path in &workspace.paths {
+        let mut ranked: Vec<(Option<usize>, &Override)> = copies
+            .iter()
+            .map(|candidate| (path.rank(&candidate.cartridge), *candidate))
+            .collect();
+        ranked.sort_by_key(|(rank, _)| rank.unwrap_or(usize::MAX));
+
+        out.push_str(&format!("\n`{}`\n", path.label));
+        out.push_str("\n| | Cartridge | |\n| --- | --- | --- |\n");
+        for (index, (rank, candidate)) in ranked.iter().enumerate() {
+            let effect = match rank {
+                None => "not in this path",
+                Some(_) if index == 0 => "runs",
+                Some(_) => "overridden",
+            };
+            let here = match candidate.hit.path == current {
+                true => " ← this file",
+                false => "",
+            };
+            out.push_str(&format!(
+                "| {} | `{}` | {}{} |\n",
+                index + 1,
+                candidate.cartridge,
+                effect,
+                here
+            ));
+        }
+    }
     Some(out)
 }
 
@@ -240,6 +296,45 @@ mod tests {
         let text = markdown(&route(), &chains, &here).unwrap();
         assert!(text.contains("← this file"));
         assert!(text.contains("nothing here records a cartridge path"));
+    }
+
+    fn copy(cartridge: &str) -> Override {
+        Override {
+            cartridge: cartridge.into(),
+            hit: PathBuf::from(format!("{cartridge}/productHelpers.js")).into(),
+        }
+    }
+
+    #[test]
+    fn says_which_copy_each_storefront_runs() {
+        let settings = serde_json::json!({
+            "cartridge_path": {
+                "site_a": "app_na:app_brand:app_storefront_base",
+                "site_b": "app_brand:app_storefront_base",
+            }
+        });
+        let workspace = Workspace::scan(&[], &settings);
+        let copies = [
+            copy("app_brand"),
+            copy("app_na"),
+            copy("app_storefront_base"),
+        ];
+        let here = PathBuf::from("app_brand/productHelpers.js");
+        let text = overrides_markdown("*/cartridge/x", &copies, &workspace, &here).unwrap();
+
+        let site_a = text.split("`site_b`").next().unwrap();
+        assert!(site_a.contains("| 1 | `app_na` | runs |"));
+        assert!(site_a.contains("| 2 | `app_brand` | overridden ← this file |"));
+        let site_b = text.split("`site_b`").nth(1).unwrap();
+        assert!(site_b.contains("| 1 | `app_brand` | runs ← this file |"));
+        assert!(site_b.contains("| 3 | `app_na` | not in this path |"));
+    }
+
+    #[test]
+    fn says_nothing_about_overrides_without_a_cartridge_path() {
+        let workspace = Workspace::scan(&[], &serde_json::Value::Null);
+        let copies = [copy("app_brand")];
+        assert!(overrides_markdown("*/cartridge/x", &copies, &workspace, Path::new("x")).is_none());
     }
 
     #[test]
