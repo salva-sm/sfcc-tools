@@ -25,8 +25,8 @@ use crate::complete::{self, Completer};
 use crate::metadata::Metadata;
 use crate::workspace::Workspace;
 use crate::{
-    diagnose, errors, hover, live, members, reference, references, resolve, signatures, sync,
-    validate,
+    custom, diagnose, errors, hover, live, members, reference, references, resolve, signatures,
+    sync, types, validate,
 };
 
 pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
@@ -153,7 +153,8 @@ impl Server {
                 items,
             }));
         }
-        let context = complete::context_at(text, offset, is_isml(&uri))?;
+        let context = complete::context_at(text, offset, is_isml(&uri))
+            .or_else(|| self.typed_context(&file, text, offset))?;
         let completer = Completer {
             workspace: &self.workspace,
             metadata: &self.metadata,
@@ -180,6 +181,12 @@ impl Server {
             .or_else(|| {
                 let definitions = self.members_at(&file, text, position.position)?;
                 members::markdown(&definitions)
+            })
+            .or_else(|| {
+                let open = self.open();
+                let typing = types::Typing::new(&file, text, &self.workspace, &open);
+                let (class, name) = typing.member_at(char_offset_at(text, position.position)?)?;
+                hover::api_member_markdown(&class, &name)
             });
         let value = match (live::markdown(&file, line, column), docs) {
             (Some(live), Some(docs)) => format!(
@@ -287,6 +294,23 @@ impl Server {
         };
 
         (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
+    }
+
+    /// Completion the type of the receiver decides: `basket.custom.` from the metadata,
+    /// `basket.` from the API, when neither the variable's name nor a `require` says.
+    fn typed_context(&self, file: &Path, text: &str, offset: usize) -> Option<complete::Context> {
+        let open = self.open();
+        let typing = types::Typing::new(file, text, &self.workspace, &open);
+        if let Some((class, typed)) = typing.pending_custom(offset) {
+            let short = class.rsplit('.').next().unwrap_or(&class);
+            let types = custom::types_named(short)?;
+            return Some(complete::Context::CustomAttribute(custom::Pending {
+                types,
+                typed,
+            }));
+        }
+        let (class, typed) = typing.pending_member(offset)?;
+        Some(complete::Context::DwMember { class, typed })
     }
 
     /// After `helpers.`: what the cartridge module exports, as the path builds it.

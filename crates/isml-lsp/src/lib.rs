@@ -19,5 +19,6 @@ pub mod script;
 pub mod server;
 pub mod signatures;
 pub mod sync;
+pub mod types;
 pub mod validate;
 pub mod workspace;

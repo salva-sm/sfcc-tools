@@ -282,9 +282,26 @@ var id = Site.getCurrent();
 //            Returns the current site.
 ```
 
-Completion after the dot works off the `require` bindings in the open document, so it
-follows whatever you named the import. Hover works on the member and on the module path
-in the `require` itself.
+Completion after the dot, hover and signature help work on whatever the text says an
+expression is, not only on the name you gave the `require`:
+
+| In the code | Taken as |
+| ----------- | -------- |
+| `var Site = require('dw/system/Site')` | `dw.system.Site` |
+| `Site.getCurrent().` | what `getCurrent()` returns: `dw.system.Site` |
+| `var basket = BasketMgr.getCurrentBasket();` then `basket.` | `dw.order.Basket` |
+| `basket.defaultShipment.` | the property's type: `dw.order.Shipment` |
+| `@param {dw.order.Basket} cart` above the function, then `cart.` | `dw.order.Basket` |
+| `/** @type {dw.catalog.Product} */` above `var thing = ...` | `dw.catalog.Product` |
+| `request.`, `session.`, `customer.`, `response.` | the platform's globals |
+| `var cart = cartHelpers.current();` | the `@returns` of the copy of `current` that [runs](#the-function-behind-a-module-member) |
+
+A class has the members of the classes it extends: `basket.` offers `LineItemCtnr`'s
+`getDefaultShipment()` as well as `Basket`'s own. A variable takes the type of its
+closest declaration above the cursor; a branch, a reassignment or a value passed in
+without a `@param` leave it untyped, and an untyped receiver gets nothing rather than a
+guess. `x.custom.` uses the same type when the variable's name does not give one away.
+Hover also works on the module path in the `require` itself.
 
 Nothing is fetched at run time and there is no `node_modules` in the loop; the index is
 parsed on the first question and never if you do not ask one. Regenerating it after a
