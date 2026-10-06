@@ -138,6 +138,40 @@ or destructured is followed; one passed as an argument, stored on an object or
 reassigned is not, and neither is client code under `cartridge/client/`. Commented-out
 calls are skipped in scripts, not in templates.
 
+## The function behind a module member
+
+`Go to Definition` and hover also work on a member of a cartridge module:
+`helpers.total(...)`, `require('...').total(...)`, a name destructured from a require, or
+an override's `base.total(...)`. They follow the cartridge path to the copy that runs. A
+copy that inherits its parent's function sends the search on to the next copy to its right
+in that path:
+
+- `module.exports = base`;
+- an object made from the parent (`Object.create(base)`, `Object.assign({}, base)`);
+- a `total: base.total` key.
+
+With `storefront` set, only that storefront's definition is returned; otherwise one per
+distinct definition.
+
+The hover shows the function's signature, its `/** */` comment and where it is defined:
+
+````
+```js
+total(basket, options)
+```
+
+Adds up the basket.
+
+*@param* {dw.order.Basket} basket - the basket
+*@returns* {number} the total
+
+Defined in `app_brand`, run by `storefront_a`, `storefront_b`
+````
+
+The cartridge name links to the file. These answers come from the text, like
+[Find All References](#who-calls-a-function), so they carry no inferred types. What a
+function returns is whatever its `@returns` says.
+
 ## What it completes
 
 Zed falls back to HTML in a template, which offers `<is:include>` and other tags that do
