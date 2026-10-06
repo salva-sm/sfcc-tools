@@ -71,7 +71,8 @@ recorded](#where-the-order-comes-from), only what runs is returned:
 
 With no cartridge path recorded the order is not knowable, so every override is returned,
 the current file's cartridge first, and Zed shows them in a picker instead of guessing one.
-Hover the path to see, per storefront, which copy runs and which are overridden:
+Hover the path to see, per storefront, which copy runs and which are overridden; each
+cartridge name in it opens that cartridge's copy:
 
 ```
 */cartridge/scripts/helpers/productHelpers
