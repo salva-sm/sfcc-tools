@@ -17,7 +17,8 @@ Three pieces, each buildable on its own:
   what no general editor can: SFCC paths, the ISML tag set, the `dw.*` API, the object
   metadata checked into the repository, and the cartridge path that decides which
   `server.append` runs. It answers `textDocument/definition`, `textDocument/references`,
-  `textDocument/completion`, `textDocument/hover` and `textDocument/publishDiagnostics`.
+  `textDocument/completion`, `textDocument/signatureHelp`, `textDocument/hover` and
+  `textDocument/publishDiagnostics`.
 
 ## Install
 
@@ -167,6 +168,15 @@ Adds up the basket.
 
 Defined in `app_brand`, run by `storefront_a`, `storefront_b`
 ````
+
+Typing `helpers.` completes what the module exports as the cartridge path builds it. Each
+copy contributes its own functions, then its parent's while it inherits them. Every
+suggestion carries its signature and documentation. With `storefront` set, only that
+storefront's are offered.
+
+Inside the parentheses of a call, signature help shows the parameters and highlights the
+one the cursor is on. It works on such a member, with each `@param`'s type and text, and
+on a method of a `dw.*` class the file requires (`PriceBookMgr.getPriceBook(`).
 
 The cartridge name links to the file. These answers come from the text, like
 [Find All References](#who-calls-a-function), so they carry no inferred types. What a

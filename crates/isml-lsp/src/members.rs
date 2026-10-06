@@ -47,10 +47,93 @@ pub fn at(
     else {
         return Vec::new();
     };
+    let chains = chains(&origin, file, workspace);
+    resolved(&chains, &name, workspace, open)
+}
 
+/// A member a module offers after `helpers.`, with where it is defined.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offered {
+    pub name: String,
+    pub definitions: Vec<Definition>,
+}
+
+/// What the module before the dot at `offset` exports, as the cartridge path builds it:
+/// each copy's own names, then its parent's while it inherits them. With the number of
+/// characters of the member already typed.
+pub fn offered(
+    file: &Path,
+    text: &str,
+    offset: usize,
+    workspace: &Workspace,
+    open: &HashMap<PathBuf, &str>,
+) -> Option<(Vec<Offered>, usize)> {
+    let chars = code(file, text);
+    let (origin, typed) = pending_member(&chars, offset)?;
+    let mut chains = chains(&origin, file, workspace);
+    if let Some(chosen) = &workspace.storefront {
+        if chains
+            .iter()
+            .any(|(label, _)| label.as_ref() == Some(chosen))
+        {
+            chains.retain(|(label, _)| label.as_ref() == Some(chosen));
+        }
+    }
+
+    // Every copy is read once, however many names it is asked about.
+    let mut texts: HashMap<PathBuf, String> = HashMap::new();
+    for path in chains.iter().flat_map(|(_, chain)| chain) {
+        if !texts.contains_key(path) {
+            if let Some(text) = read(path, open) {
+                texts.insert(path.clone(), text);
+            }
+        }
+    }
+    let loaded: HashMap<PathBuf, &str> = texts
+        .iter()
+        .map(|(path, text)| (path.clone(), text.as_str()))
+        .collect();
+
+    let mut names: Vec<String> = Vec::new();
+    for (_, chain) in &chains {
+        for path in chain {
+            let Some(text) = loaded.get(path) else {
+                break;
+            };
+            let chars = code(path, text);
+            for name in exported_names(&chars) {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            if !inherits_all(&chars) {
+                break;
+            }
+        }
+    }
+    let offered = names
+        .into_iter()
+        .map(|name| Offered {
+            definitions: resolved(&chains, &name, workspace, &loaded),
+            name,
+        })
+        .filter(|offered| !offered.definitions.is_empty())
+        .collect();
+    Some((offered, typed))
+}
+
+/// The definition each chain reaches, one per distinct file, labelled with the storefronts
+/// that reach it: the chosen storefront's only, when it has one.
+fn resolved(
+    chains: &[(Option<String>, Vec<PathBuf>)],
+    name: &str,
+    workspace: &Workspace,
+    open: &HashMap<PathBuf, &str>,
+) -> Vec<Definition> {
     let mut found: Vec<Definition> = Vec::new();
-    for (storefront, chain) in chains(&origin, file, workspace) {
-        let Some(mut definition) = defined_along(&chain, &name, workspace, open) else {
+    for (storefront, chain) in chains {
+        let storefront = storefront.clone();
+        let Some(mut definition) = defined_along(chain, name, workspace, open) else {
             continue;
         };
         if let (Some(chosen), Some(label)) = (&workspace.storefront, &storefront) {
@@ -571,5 +654,84 @@ mod tests {
             "```js\ntotal(basket)\n```\n\nAdds up.\n\nDefined in [`app_brand`](file:"
         ));
         assert!(text.ends_with(", run by `site_a`, `site_b`"));
+    }
+
+    fn offered_names(workspace: &Workspace, root: &Path, typed: &str) -> Vec<String> {
+        let path = root.join("cartridges/app_brand").join(CART);
+        let text = format!("{CALLER}{typed}");
+        let (offered, _) = offered(
+            &path,
+            &text,
+            text.chars().count(),
+            workspace,
+            &HashMap::new(),
+        )
+        .unwrap();
+        offered
+            .into_iter()
+            .map(|offered| {
+                let storefronts: Vec<String> = offered
+                    .definitions
+                    .iter()
+                    .map(|definition| {
+                        format!(
+                            "{}:{}",
+                            definition.cartridge,
+                            definition.storefronts.join(",")
+                        )
+                    })
+                    .collect();
+                format!("{} {}", offered.name, storefronts.join(" "))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn offers_what_each_copy_exports_and_inherits() {
+        let root = checkout(
+            "isml-lsp-members-offered",
+            &[
+                ("app_storefront_base", HELPER, DOCUMENTED),
+                ("app_na", HELPER, PASSES_ON),
+                ("app_brand", CART, CALLER),
+            ],
+        );
+        let found = offered_names(&workspace(&root, None), &root, "helpers.");
+        assert_eq!(
+            found,
+            [
+                "other app_na:site_a",
+                "total app_storefront_base:site_a,site_b"
+            ]
+        );
+    }
+
+    #[test]
+    fn offers_only_the_chosen_storefront() {
+        let root = checkout(
+            "isml-lsp-members-offered-chosen",
+            &[
+                ("app_storefront_base", HELPER, DOCUMENTED),
+                ("app_na", HELPER, PASSES_ON),
+                ("app_brand", CART, CALLER),
+            ],
+        );
+        let found = offered_names(&workspace(&root, Some("site_b")), &root, "helpers.to");
+        assert_eq!(found, ["total app_storefront_base:site_b"]);
+    }
+
+    #[test]
+    fn a_copy_that_does_not_inherit_hides_its_parent_names() {
+        let own = "module.exports = {\n    mine: function (a) {}\n};\n";
+        let root = checkout(
+            "isml-lsp-members-offered-own",
+            &[
+                ("app_storefront_base", HELPER, DOCUMENTED),
+                ("app_brand", HELPER, own),
+                ("app_brand", CART, CALLER),
+            ],
+        );
+        let found = offered_names(&workspace(&root, None), &root, "helpers.");
+        assert_eq!(found, ["mine app_brand:site_a,site_b"]);
     }
 }
