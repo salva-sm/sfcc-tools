@@ -10,10 +10,15 @@ Install both.
 
 ## Install
 
-The extension is not in the Zed registry yet. From Zed's command palette:
+The extension is not in the Zed registry yet. Two ways in:
+
+**From a release zip** — nothing to build, no toolchain: download `lemminx-<version>.zip`
+from [Releases](https://github.com/salva-sm/sfcc-tools/releases), unzip it anywhere and run
+`install.cmd`.
+
+**From source** — needs Rust with the `wasm32-wasip2` target: from Zed's command palette,
 **`zed: install dev extension`** and pick this `extensions/lemminx` folder
-(**`zed: reload extensions`** if it is already installed). Building it needs Rust with the
-`wasm32-wasip2` target.
+(**`zed: reload extensions`** if it is already installed).
 
 The server binary is found in this order:
 

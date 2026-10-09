@@ -72,9 +72,10 @@ folder, with the latest release's. Until then, each `sfcc-upload` run says when 
 is out, asking GitHub at most once a day. What is already running (a watcher, the editor
 task, Zed's language server) keeps the old version until it restarts.
 
-**Zed extensions** — download `isml-<version>.zip` or `b2c-debug-<version>.zip` from the
-same release, unzip anywhere and run the `install.cmd` inside. The ISML extension finds
-`isml-lsp` on your `PATH`, or downloads its own copy when it is not there.
+**Zed extensions** — download `isml-<version>.zip`, `b2c-debug-<version>.zip` or
+`lemminx-<version>.zip` from the same release, unzip anywhere and run the `install.cmd`
+inside. The ISML extension finds `isml-lsp` on your `PATH`, or downloads its own copy when
+it is not there; the LemMinX one does the same with Red Hat's LemMinX binary.
 
 **From source:**
 
