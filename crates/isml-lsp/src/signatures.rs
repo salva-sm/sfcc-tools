@@ -12,6 +12,7 @@ use lsp_types::{
 use crate::api;
 use crate::members::{self, Definition};
 use crate::script::{code, ident_ending_at, skip_space_back};
+use crate::types::Typing;
 use crate::workspace::Workspace;
 
 /// How far back an unclosed `(` is looked for: a call spans a few lines, not a file.
@@ -36,7 +37,10 @@ pub fn help(
     let call = call_at(&chars, offset)?;
     let definitions = members::at(file, text, call.name_start, workspace, open);
     let signatures: Vec<SignatureInformation> = if definitions.is_empty() {
-        api_signature(text, &chars, call.name_start)
+        let typing = Typing::new(file, text, workspace, open);
+        typing
+            .member_at(call.name_start)
+            .and_then(|(class, name)| api_signature(&class, &name))
             .into_iter()
             .collect()
     } else {
@@ -102,18 +106,9 @@ fn cartridge_signature(definition: &Definition) -> Option<SignatureInformation> 
     })
 }
 
-/// `PriceBookMgr.getApplicablePriceBooks(`: the method's shape from the platform reference.
-fn api_signature(text: &str, chars: &[char], name_start: usize) -> Option<SignatureInformation> {
-    let line_start = chars[..name_start]
-        .iter()
-        .rposition(|c| *c == '\n')
-        .map_or(0, |index| index + 1);
-    let line: String = chars[line_start..]
-        .iter()
-        .take_while(|c| **c != '\n')
-        .collect();
-    let (class, name) = api::member_at(&line, name_start - line_start, text)?;
-    let (member, kind) = api::api().class(&class)?.member(&name)?;
+/// `basket.getProductLineItems(`: the method's shape from the platform reference.
+fn api_signature(class: &str, name: &str) -> Option<SignatureInformation> {
+    let (member, kind) = api::api().member(class, name)?;
     if kind != api::MemberKind::Method {
         return None;
     }
@@ -291,5 +286,19 @@ mod tests {
             .label
             .contains("assignPriceBookToSite(priceBook"));
         assert_eq!(help.active_parameter, Some(1));
+    }
+
+    #[test]
+    fn helps_with_a_method_of_a_typed_variable() {
+        let text = "var BasketMgr = require('dw/order/BasketMgr');\nvar cart = BasketMgr.getCurrentBasket();\ncart.getProductLineItems(";
+        let help = help(
+            Path::new("Cart.js"),
+            text,
+            text.chars().count(),
+            &Workspace::default(),
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert!(help.signatures[0].label.starts_with("getProductLineItems("));
     }
 }

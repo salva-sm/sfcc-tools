@@ -79,6 +79,14 @@ pub struct Pending {
     pub typed: usize,
 }
 
+/// The object type a class stands for, when its attributes are in the metadata: `Basket`.
+pub fn types_named(class: &str) -> Option<&'static [&'static str]> {
+    SUBJECTS
+        .iter()
+        .map(|(_, types)| *types)
+        .find(|types| types.len() == 1 && types[0] == class)
+}
+
 pub fn types_of(receiver: &str) -> Option<&'static [&'static str]> {
     let lowered = receiver.to_ascii_lowercase();
     SUBJECTS

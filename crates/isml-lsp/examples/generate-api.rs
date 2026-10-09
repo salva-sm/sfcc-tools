@@ -22,6 +22,9 @@ struct Class {
     properties: Vec<Member>,
     #[serde(rename = "m", skip_serializing_if = "Vec::is_empty")]
     methods: Vec<Member>,
+    /// The class this one extends, whose members it has too.
+    #[serde(rename = "e", skip_serializing_if = "String::is_empty")]
+    extends: String,
 }
 
 #[derive(serde::Serialize)]
@@ -106,7 +109,24 @@ fn read_class(file: &Path) -> Option<(String, Class)> {
         }
     }
 
-    Some((format!("{package}.{name}"), class))
+    let qualified = format!("{package}.{name}");
+    class.extends = section(&text, "## Inheritance Hierarchy")
+        .and_then(|body| parent_in(&body, &qualified))
+        .unwrap_or_default();
+    Some((qualified, class))
+}
+
+/// The entry listed just above the class in its hierarchy. A bare `Object` is left out:
+/// what it adds every class has.
+fn parent_in(hierarchy: &str, qualified: &str) -> Option<String> {
+    let entries: Vec<&str> = hierarchy
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("- "))
+        .map(str::trim)
+        .collect();
+    let own = entries.iter().position(|entry| *entry == qualified)?;
+    let parent = entries.get(own.checked_sub(1)?)?;
+    parent.contains('.').then(|| parent.to_string())
 }
 
 /// The text of a `### Name` block: `**Type:** X` or `**Signature:** X`, then
