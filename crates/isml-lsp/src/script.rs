@@ -210,6 +210,39 @@ pub(crate) fn passes_parent_on(
     matches!(chars.get(end), None | Some(',' | '}'))
 }
 
+/// Every name the file exports, in the order written: assigned to `exports`, the exported
+/// object or the parent, or a key of the exported literal.
+pub(crate) fn exported_names(chars: &[char]) -> Vec<String> {
+    let mut receivers = parent_aliases(chars);
+    receivers.extend(exported_objects(chars));
+    receivers.push("exports".to_string());
+    let mut names: Vec<String> = Vec::new();
+    let mut add = |name: String| {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    };
+    for dot in (0..chars.len()).filter(|index| chars[*index] == '.') {
+        let at = skip_space(chars, dot + 1);
+        let Some(name) = ident_at(chars, at) else {
+            continue;
+        };
+        if !is_assignment(chars, at + name.chars().count()) {
+            continue;
+        }
+        let receiver = ident_ending_at(chars, skip_space_back(chars, dot));
+        if receiver.is_some_and(|(_, receiver)| receivers.contains(&receiver)) {
+            add(name);
+        }
+    }
+    if let Some((open, close)) = exports_literal(chars) {
+        for (_, key) in literal_keys(chars, open, close) {
+            add(key);
+        }
+    }
+    names
+}
+
 /// The aliases of `module.superModule`: `var base = module.superModule`.
 pub(crate) fn parent_aliases(chars: &[char]) -> Vec<String> {
     spans(chars)
@@ -290,21 +323,25 @@ pub(crate) fn exports_literal(chars: &[char]) -> Option<(usize, usize)> {
 /// `name: base.name` key.
 pub(crate) fn inherits(chars: &[char], name: &str) -> bool {
     let parents = parent_aliases(chars);
-    if parents.is_empty() {
-        return false;
-    }
     let parent_names: Vec<&str> = parents.iter().map(String::as_str).collect();
-    if let Some((open, close)) = exports_literal(chars) {
-        if literal_keys(chars, open, close)
+    let passed_on = exports_literal(chars).is_some_and(|(open, close)| {
+        literal_keys(chars, open, close)
             .into_iter()
             .any(|(at, key)| {
                 key == name
                     && passes_parent_on(chars, at + key.chars().count(), name, &parent_names)
             })
-        {
-            return true;
-        }
+    });
+    passed_on || inherits_all(chars)
+}
+
+/// Whether everything the parent exports is exported here too, unless redefined.
+pub(crate) fn inherits_all(chars: &[char]) -> bool {
+    let parents = parent_aliases(chars);
+    if parents.is_empty() {
+        return false;
     }
+    let parent_names: Vec<&str> = parents.iter().map(String::as_str).collect();
     let mentions_parent = |(start, end): (usize, usize)| {
         parent_names
             .iter()
@@ -475,6 +512,52 @@ pub(crate) struct MemberAt {
     pub(crate) member: Member,
 }
 
+enum Receiver {
+    /// `exports.` or `module.exports.`: this file.
+    Exports,
+    Module(Origin),
+}
+
+/// What the expression ending just before the `.` at `dot` is: a module bound to a name,
+/// required inline, or `module.superModule`.
+fn receiver_before(chars: &[char], dot: usize, spans: &[Span]) -> Option<Receiver> {
+    let receiver_end = skip_space_back(chars, dot);
+    if receiver_end > 0 && chars[receiver_end - 1] == ')' {
+        return spans
+            .iter()
+            .find(|span| span.end == receiver_end)
+            .map(|span| Receiver::Module(span.origin.clone()));
+    }
+    let (receiver_start, receiver) = ident_ending_at(chars, receiver_end)?;
+    if receiver == "exports" {
+        return Some(Receiver::Exports);
+    }
+    if receiver == "superModule" && preceded_by_module(chars, receiver_start) {
+        return Some(Receiver::Module(Origin::Super));
+    }
+    spans
+        .iter()
+        .find(|span| matches!(&span.bound, Bound::Alias(alias) if *alias == receiver))
+        .map(|span| Receiver::Module(span.origin.clone()))
+}
+
+/// `helpers.` with the cursor after the dot, a member possibly half typed: the module, and
+/// how many characters of the member are typed.
+pub(crate) fn pending_member(chars: &[char], offset: usize) -> Option<(Origin, usize)> {
+    let offset = offset.min(chars.len());
+    let mut start = offset;
+    while start > 0 && is_ident(chars[start - 1]) {
+        start -= 1;
+    }
+    if start == 0 || chars[start - 1] != '.' {
+        return None;
+    }
+    match receiver_before(chars, start - 1, &spans(chars))? {
+        Receiver::Module(origin) => Some((origin, offset - start)),
+        Receiver::Exports => None,
+    }
+}
+
 /// The exported function the identifier at `offset` names, if it names one.
 pub(crate) fn member_at(chars: &[char], offset: usize) -> Option<MemberAt> {
     let (start, name) = word_at(chars, offset)?;
@@ -488,25 +571,9 @@ pub(crate) fn member_at(chars: &[char], offset: usize) -> Option<MemberAt> {
 
     let before = skip_space_back(chars, start);
     if before > 0 && chars[before - 1] == '.' {
-        let receiver_end = skip_space_back(chars, before - 1);
-        let origin = if receiver_end > 0 && chars[receiver_end - 1] == ')' {
-            spans
-                .iter()
-                .find(|span| span.end == receiver_end)
-                .map(|span| span.origin.clone())?
-        } else {
-            let (receiver_start, receiver) = ident_ending_at(chars, receiver_end)?;
-            if receiver == "exports" {
-                return here(name);
-            }
-            if receiver == "superModule" && preceded_by_module(chars, receiver_start) {
-                Origin::Super
-            } else {
-                spans
-                    .iter()
-                    .find(|span| matches!(&span.bound, Bound::Alias(alias) if *alias == receiver))
-                    .map(|span| span.origin.clone())?
-            }
+        let origin = match receiver_before(chars, before - 1, &spans)? {
+            Receiver::Exports => return here(name),
+            Receiver::Module(origin) => origin,
         };
         // `base.foo = function` is this file overriding `foo`, not a use of the parent's.
         if origin == Origin::Super && is_assignment(chars, start + name.chars().count()) {
@@ -705,5 +772,24 @@ mod tests {
 
         let unrelated = chars("var base = module.superModule;\nmodule.exports = { a: 1 };\n");
         assert!(!inherits(&unrelated, "other"));
+    }
+
+    #[test]
+    fn lists_every_exported_name_once() {
+        let text = chars("var base = module.superModule;\nvar helpers = {\n    a: a,\n    b: b\n};\nhelpers.c = function () {};\nbase.d = function () {};\nexports.e = 1;\nlocal.f = 2;\nmodule.exports = helpers;\n");
+        assert_eq!(exported_names(&text), ["c", "d", "e", "a", "b"]);
+    }
+
+    #[test]
+    fn finds_the_module_before_a_dot_being_completed() {
+        let text = chars("var helpers = require('*/cartridge/scripts/x');\nhelpers.to");
+        let (origin, typed) = pending_member(&text, text.len()).unwrap();
+        assert_eq!(origin, Origin::Require("*/cartridge/scripts/x".into()));
+        assert_eq!(typed, 2);
+
+        let inline = chars("require('~/cartridge/scripts/x').");
+        assert_eq!(pending_member(&inline, inline.len()).unwrap().1, 0);
+        let unknown = chars("other.to");
+        assert!(pending_member(&unknown, unknown.len()).is_none());
     }
 }

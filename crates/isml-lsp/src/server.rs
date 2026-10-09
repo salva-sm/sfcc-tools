@@ -9,20 +9,24 @@ use lsp_types::notification::{
 };
 use lsp_types::request::{
     Completion, GotoDefinition, HoverRequest, References, Request as RequestTrait,
+    SignatureHelpRequest,
 };
 use lsp_types::{
-    CompletionList, CompletionOptions, CompletionParams, CompletionResponse, GotoDefinitionParams,
+    CompletionItem, CompletionItemKind, CompletionList, CompletionOptions, CompletionParams,
+    CompletionResponse, CompletionTextEdit, Documentation, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
     InitializeParams, Location, MarkupContent, MarkupKind, OneOf, Position,
-    PublishDiagnosticsParams, Range, ReferenceParams, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    PublishDiagnosticsParams, Range, ReferenceParams, ServerCapabilities, SignatureHelp,
+    SignatureHelpOptions, SignatureHelpParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextEdit, Url,
 };
 
 use crate::complete::{self, Completer};
 use crate::metadata::Metadata;
 use crate::workspace::Workspace;
 use crate::{
-    diagnose, errors, hover, live, members, reference, references, resolve, sync, validate,
+    diagnose, errors, hover, live, members, reference, references, resolve, signatures, sync,
+    validate,
 };
 
 pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
@@ -32,6 +36,10 @@ pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
+        signature_help_provider: Some(SignatureHelpOptions {
+            trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+            ..Default::default()
+        }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
             // `<` opens a tag, `.` reaches a custom attribute, a quote opens an
@@ -118,6 +126,9 @@ impl Server {
             Completion::METHOD => cast::<Completion>(request)
                 .ok()
                 .and_then(|(_, params)| serde_json::to_value(self.completion(params)?).ok()),
+            SignatureHelpRequest::METHOD => cast::<SignatureHelpRequest>(request)
+                .ok()
+                .and_then(|(_, params)| serde_json::to_value(self.signature_help(params)?).ok()),
             References::METHOD => cast::<References>(request)
                 .ok()
                 .and_then(|(_, params)| serde_json::to_value(self.references(params)?).ok()),
@@ -136,6 +147,12 @@ impl Server {
         let offset = char_offset_at(text, position.position)?;
         let file = uri.to_file_path().ok()?;
 
+        if let Some(items) = self.member_items(&file, text, offset, position.position) {
+            return Some(CompletionResponse::List(CompletionList {
+                is_incomplete: false,
+                items,
+            }));
+        }
         let context = complete::context_at(text, offset, is_isml(&uri))?;
         let completer = Completer {
             workspace: &self.workspace,
@@ -270,6 +287,62 @@ impl Server {
         };
 
         (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
+    }
+
+    /// After `helpers.`: what the cartridge module exports, as the path builds it.
+    fn member_items(
+        &self,
+        file: &Path,
+        text: &str,
+        offset: usize,
+        cursor: Position,
+    ) -> Option<Vec<CompletionItem>> {
+        let (offered, typed) = members::offered(file, text, offset, &self.workspace, &self.open())?;
+        let typed_width: u32 = text
+            .chars()
+            .skip(offset - typed)
+            .take(typed)
+            .map(|c| c.len_utf16() as u32)
+            .sum();
+        let range = Range::new(
+            Position::new(cursor.line, cursor.character.saturating_sub(typed_width)),
+            cursor,
+        );
+        let items: Vec<CompletionItem> = offered
+            .into_iter()
+            .map(|offered| {
+                let signature = offered
+                    .definitions
+                    .iter()
+                    .find_map(|definition| definition.signature.clone());
+                CompletionItem {
+                    label: offered.name.clone(),
+                    kind: Some(match signature {
+                        Some(_) => CompletionItemKind::FUNCTION,
+                        None => CompletionItemKind::PROPERTY,
+                    }),
+                    detail: signature,
+                    documentation: members::markdown(&offered.definitions).map(|value| {
+                        Documentation::MarkupContent(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value,
+                        })
+                    }),
+                    text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(range, offered.name))),
+                    ..Default::default()
+                }
+            })
+            .collect();
+        (!items.is_empty()).then_some(items)
+    }
+
+    fn signature_help(&self, params: SignatureHelpParams) -> Option<SignatureHelp> {
+        let position = params.text_document_position_params;
+        let uri = position.text_document.uri;
+        let file = uri.to_file_path().ok()?;
+        let text = self.documents.get(&uri)?;
+        let offset = char_offset_at(text, position.position)?;
+        signatures::help(&file, text, offset, &self.workspace, &self.open())
     }
 
     /// Where the member of a cartridge module under the cursor is defined.
