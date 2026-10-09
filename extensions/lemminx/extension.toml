@@ -1,0 +1,11 @@
+id = "lemminx"
+name = "XML Language Server (LemMinX)"
+description = "Completion, validation and hover for XML from XSD and DTD, through Eclipse LemMinX: XML catalogs, file associations and the rest of LemMinX's settings, with paths relative to the project."
+version = "0.1.0"
+schema_version = 1
+authors = ["salva-sm"]
+repository = "https://github.com/salva-sm/sfcc-tools"
+
+[language_servers.lemminx]
+name = "LemMinX"
+languages = ["XML"]

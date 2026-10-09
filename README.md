@@ -43,6 +43,7 @@ These are the pieces that close those gaps. No instance, no network, no `node_mo
 | 🌳 | **[`grammar`](grammar)** | `tree-sitter-isml` — the only tree-sitter grammar for ISML there is |
 | ✏️ | **[`extensions/isml`](extensions/isml)** | Zed extension wiring the grammar and `isml-lsp` together |
 | 🧩 | **[`extensions/b2c-debug`](extensions/b2c-debug)** | Zed extension registering `sfcc-dap` as a debug adapter |
+| 📐 | **[`extensions/lemminx`](extensions/lemminx)** | Zed extension running Eclipse LemMinX: XML completion and validation from the metadata XSDs |
 
 Each has its own README. This one only says how they fit together.
 
