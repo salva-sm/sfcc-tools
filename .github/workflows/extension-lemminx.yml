@@ -1,0 +1,71 @@
+name: Extension zip (lemminx)
+
+# Reproduces Zed's `install dev extension` build. Zed also strips custom sections,
+# a size optimisation only: `zed:api-version` survives either way.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Excluded from the cargo workspace, so it has its own target directory.
+  EXT: extensions/lemminx
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the extension id and version
+        id: manifest
+        run: |
+          sed -nE 's/^id = "(.*)"$/id=\1/p;s/^version = "(.*)"$/version=\1/p' \
+            "$EXT/extension.toml" | head -2 >> "$GITHUB_OUTPUT"
+
+      - name: Build the extension
+        working-directory: extensions/lemminx
+        run: |
+          rustup target add wasm32-wasip2
+          cargo build --release --target wasm32-wasip2
+
+      - name: Assemble the package
+        env:
+          ID: ${{ steps.manifest.outputs.id }}
+        run: |
+          mkdir -p "stage/$ID"
+          cp "$EXT/extension.toml" "stage/$ID/"
+          cp "$EXT/target/wasm32-wasip2/release/zed_lemminx.wasm" "stage/$ID/extension.wasm"
+          cp "$EXT/README.md" "stage/$ID/"
+          cp tools/packaging/install.ps1 tools/packaging/install.cmd stage/
+          ( cd stage && zip -qr "../$ID-${{ steps.manifest.outputs.version }}.zip" . )
+          unzip -l "$ID-${{ steps.manifest.outputs.version }}.zip"
+
+      # A green run has to mean the zip is usable, since nobody reads the logs.
+      - name: Check the package
+        env:
+          ID: ${{ steps.manifest.outputs.id }}
+        run: |
+          for file in extension.toml extension.wasm README.md; do
+            test -f "stage/$ID/$file" || { echo "missing $file"; exit 1; }
+          done
+          for helper in install.ps1 install.cmd; do
+            test -f "stage/$helper" || { echo "missing $helper"; exit 1; }
+          done
+          grep -qa 'zed:api-version' "stage/$ID/extension.wasm" \
+            || { echo 'extension.wasm has no zed:api-version section'; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-lemminx-zip
+          path: "*.zip"
+
+      - name: Attach it to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.zip"

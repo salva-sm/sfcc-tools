@@ -43,6 +43,7 @@ These are the pieces that close those gaps. No instance, no network, no `node_mo
 | 🌳 | **[`grammar`](grammar)** | `tree-sitter-isml` — the only tree-sitter grammar for ISML there is |
 | ✏️ | **[`extensions/isml`](extensions/isml)** | Zed extension wiring the grammar and `isml-lsp` together |
 | 🧩 | **[`extensions/b2c-debug`](extensions/b2c-debug)** | Zed extension registering `sfcc-dap` as a debug adapter |
+| 📐 | **[`extensions/lemminx`](extensions/lemminx)** | Zed extension running Eclipse LemMinX: XML completion and validation from the metadata XSDs |
 
 Each has its own README. This one only says how they fit together.
 
@@ -71,9 +72,10 @@ folder, with the latest release's. Until then, each `sfcc-upload` run says when 
 is out, asking GitHub at most once a day. What is already running (a watcher, the editor
 task, Zed's language server) keeps the old version until it restarts.
 
-**Zed extensions** — download `isml-<version>.zip` or `b2c-debug-<version>.zip` from the
-same release, unzip anywhere and run the `install.cmd` inside. The ISML extension finds
-`isml-lsp` on your `PATH`, or downloads its own copy when it is not there.
+**Zed extensions** — download `isml-<version>.zip`, `b2c-debug-<version>.zip` or
+`lemminx-<version>.zip` from the same release, unzip anywhere and run the `install.cmd`
+inside. The ISML extension finds `isml-lsp` on your `PATH`, or downloads its own copy when
+it is not there; the LemMinX one does the same with Red Hat's LemMinX binary.
 
 **From source:**
 

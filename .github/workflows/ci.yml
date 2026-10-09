@@ -54,3 +54,19 @@ jobs:
       - run: rustup target add wasm32-wasip2
       - run: cargo build --release --target wasm32-wasip2
         working-directory: extensions/isml
+
+  lemminx:
+    name: extension lemminx
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # Excluded from the cargo workspace, so it is checked from its own directory.
+        working-directory: extensions/lemminx
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add wasm32-wasip2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      # The same target the Zed extension registry builds with.
+      - run: cargo build --release --target wasm32-wasip2
