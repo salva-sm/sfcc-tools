@@ -1,8 +1,11 @@
 mod active;
+mod checkout;
 mod daemon;
 mod errors;
 mod githook;
 mod guard;
+mod handoff;
+mod lock;
 mod logging;
 mod manifest;
 mod ocapi;
@@ -24,7 +27,7 @@ use push::{Ctx, PushOptions, human_bytes};
 use sfcc_core::config::{Config, Credentials};
 use sfcc_core::ods::Operation;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use watch::WatchOptions;
 use webdav::{Availability, Ready};
@@ -273,6 +276,13 @@ struct PushArgs {
     /// Make the code version active once the upload finishes
     #[arg(long)]
     activate: bool,
+    /// Hand the push to the running watcher without waiting; with none, give up at once when
+    /// the sandbox does not answer
+    #[arg(long)]
+    no_wait: bool,
+    /// Upload from this checkout although another one last uploaded to the code version
+    #[arg(long)]
+    take_over: bool,
 }
 
 #[derive(Args)]
@@ -410,27 +420,7 @@ async fn run(cli: Cli) -> Result<()> {
     }
 
     match cli.command {
-        Command::Push(args) => {
-            let ctx = Ctx::new(config, jobs)?;
-            let options = PushOptions {
-                full: args.full,
-                dry_run: args.dry_run,
-                show_progress: true,
-                overwrite: match args.overwrite {
-                    true => guard::Overwrite::Always,
-                    false => guard::Overwrite::Ask,
-                },
-            };
-            push::push(&ctx, options).await?;
-            if args.dry_run {
-                return Ok(());
-            }
-            match args.activate {
-                true => activate(&ctx.config, None).await?,
-                false => active::ensure(&ctx.config).await,
-            }
-            Ok(())
-        }
+        Command::Push(args) => push_command(config, jobs, &args).await,
         Command::Watch(args) => {
             // A detached watcher runs `watch` too, under the pid it is recorded with.
             if let Some(pid) = daemon::running_pid(&config).filter(|pid| *pid != std::process::id())
@@ -495,6 +485,165 @@ async fn run(cli: Cli) -> Result<()> {
     }
 }
 
+async fn push_command(mut config: Config, jobs: usize, args: &PushArgs) -> Result<()> {
+    let options = PushOptions {
+        full: args.full,
+        dry_run: args.dry_run,
+        show_progress: true,
+        overwrite: match args.overwrite {
+            true => guard::Overwrite::Always,
+            false => guard::Overwrite::Ask,
+        },
+    };
+    if args.dry_run {
+        push::push(&Ctx::new(config, jobs)?, options).await?;
+        return Ok(());
+    }
+
+    let mut redirected = false;
+    loop {
+        match lock::take(&config, lock::Kind::Push).await? {
+            Err(watcher)
+                if checkout::same_folder(
+                    Path::new(&watcher.cartridges),
+                    &config.cartridges_dir,
+                ) =>
+            {
+                hand_over(&config, &watcher, args).await?;
+                break;
+            }
+            Err(watcher) => {
+                let refusal = checkout::refusal(&config, &watcher.cartridges);
+                config.code_version = redirect(&config, &refusal, redirected, false)?;
+                redirected = true;
+            }
+            Ok(held) => {
+                let ctx = Ctx::new(config.clone(), jobs)?;
+                let mut manifest = manifest::Manifest::load(&ctx.manifest_path);
+                if let Some(owner) = checkout::other(&config, &manifest)
+                    && !args.take_over
+                {
+                    drop(held);
+                    let refusal = checkout::refusal(&config, &owner);
+                    config.code_version = redirect(&config, &refusal, redirected, true)?;
+                    redirected = true;
+                    continue;
+                }
+                if checkout::claim(&config, &mut manifest) {
+                    manifest.save(&ctx.manifest_path)?;
+                }
+                if args.no_wait
+                    && let Availability::Unavailable(reason) = ctx.dav.availability().await
+                {
+                    logging::warn(format!(
+                        "sandbox unavailable ({reason}) - nothing uploaded; `sfcc-upload push` once it answers"
+                    ));
+                    return Ok(());
+                }
+                push::push_with(&ctx, &mut manifest, options).await?;
+                drop(held);
+                break;
+            }
+        }
+    }
+
+    if args.activate {
+        return activate(&config, None).await;
+    }
+    match redirected {
+        true => logging::info(format!(
+            "{} is not the active code version - `sfcc-upload activate {}` makes the storefront run it",
+            config.code_version, config.code_version
+        )),
+        false => active::ensure(&config).await,
+    }
+    Ok(())
+}
+
+async fn hand_over(config: &Config, watcher: &lock::Owner, args: &PushArgs) -> Result<()> {
+    let mut overwrite = args.overwrite;
+    loop {
+        let request = handoff::submit(config, args.full, overwrite)?;
+        if args.no_wait {
+            logging::info(format!(
+                "handed to {}, which uploads it",
+                watcher.describe()
+            ));
+            return Ok(());
+        }
+        logging::info(format!("handed to {} - waiting for it", watcher.describe()));
+        match handoff::reply(config, &request, watcher).await? {
+            handoff::Reply::Down { reason } => {
+                let why = sandbox::not_running(config)
+                    .await
+                    .unwrap_or_else(|| "the watcher pushes as soon as it answers".to_string());
+                bail!("{reason} - {why}");
+            }
+            handoff::Reply::Failed { error } => bail!(error),
+            handoff::Reply::Done {
+                uploaded,
+                deleted,
+                held,
+            } => {
+                logging::ok(format!(
+                    "{uploaded} uploaded, {deleted} deleted, by the watcher"
+                ));
+                if held.is_empty() {
+                    return Ok(());
+                }
+                logging::warn(format!(
+                    "{} file(s) changed on the sandbox since this checkout last uploaded them:",
+                    held.len()
+                ));
+                for path in &held {
+                    logging::warn(format!("  {path}"));
+                }
+                if !overwrite
+                    && guard::interactive()
+                    && confirm("Overwrite them with your version? [y/N] ")?
+                {
+                    overwrite = true;
+                    continue;
+                }
+                logging::warn(
+                    "left as the sandbox has them - `sfcc-upload push --overwrite` replaces them",
+                );
+                return Ok(());
+            }
+        }
+    }
+}
+
+fn redirect(config: &Config, refusal: &str, again: bool, can_take_over: bool) -> Result<String> {
+    let own = checkout::branch_version(config).filter(|_| !again);
+    if let Some(own) = own
+        && guard::interactive()
+    {
+        logging::warn(refusal);
+        if confirm(&format!(
+            "Upload to a code version of its own, {own}? [y/N] "
+        ))? {
+            return Ok(own);
+        }
+    }
+    let take_over = match can_take_over {
+        true => "\n  or upload from this checkout anyway: `sfcc-upload push --take-over`",
+        false => "\n  or stop the watcher that uploads from there: `sfcc-upload stop --all`",
+    };
+    bail!("{refusal}\n  {}{take_over}", checkout::way_out(config))
+}
+
+async fn exclusive(config: &Config) -> Result<lock::Held> {
+    match lock::take(config, lock::Kind::Push).await? {
+        Ok(held) => Ok(held),
+        Err(watcher) => bail!(
+            "{} uploads to {} - `sfcc-upload stop` it first, or it puts the files back",
+            watcher.describe(),
+            config.code_version
+        ),
+    }
+}
+
 async fn remove_remote(config: Config, jobs: usize, args: RmArgs) -> Result<()> {
     let ctx = Ctx::new(config, jobs)?;
     let path = args.path.trim_matches('/').to_string();
@@ -509,6 +658,7 @@ async fn remove_remote(config: Config, jobs: usize, args: RmArgs) -> Result<()> 
         return Ok(());
     }
 
+    let _uploader = exclusive(&ctx.config).await?;
     ctx.dav
         .wait_until_ready(Some(Duration::from_secs(120)))
         .await?;
@@ -540,6 +690,14 @@ async fn list_remote(config: Config, jobs: usize, path: Option<String>) -> Resul
 }
 
 fn start_detached(config: &Config, spawn: daemon::SpawnArgs) -> Result<()> {
+    // A detached watcher that cannot have the lock would only say so in its log.
+    if let lock::Taken::By(Some(owner)) = lock::try_take(config, lock::Kind::Watcher)? {
+        bail!(
+            "{} already uploads to {} - one at a time",
+            owner.describe(),
+            config.code_version
+        );
+    }
     let pid = daemon::start(config, spawn)?;
     logging::ok(format!("watcher running in the background (pid {pid})"));
     crate::out!("  log:  {}", daemon::of(config).log.display());
@@ -755,6 +913,7 @@ async fn clean(config: Config, jobs: usize, args: CleanArgs) -> Result<()> {
         return Ok(());
     }
 
+    let _uploader = exclusive(&ctx.config).await?;
     ctx.dav
         .wait_until_ready(Some(Duration::from_secs(120)))
         .await?;

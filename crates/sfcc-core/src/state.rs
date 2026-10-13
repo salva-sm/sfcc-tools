@@ -133,6 +133,9 @@ pub mod upload {
         pub files: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub detail: Option<String>,
+        /// Why the sandbox did not answer the watcher's last probe.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub down: Option<String>,
         pub at: i64,
     }
 
@@ -171,6 +174,22 @@ pub mod upload {
         uploader_dir()
             .join("marks")
             .join(format!("{identity}.json"))
+    }
+
+    pub fn lock_path(identity: &str) -> PathBuf {
+        uploader_dir()
+            .join("locks")
+            .join(format!("{identity}.lock"))
+    }
+
+    pub fn owner_path(identity: &str) -> PathBuf {
+        uploader_dir()
+            .join("locks")
+            .join(format!("{identity}.json"))
+    }
+
+    pub fn requests_dir(identity: &str) -> PathBuf {
+        uploader_dir().join("requests").join(identity)
     }
 }
 
@@ -371,11 +390,13 @@ mod tests {
             code_version: "version1".into(),
             files: 7,
             detail: None,
+            down: None,
             at: 1_700_000_000,
         };
         let body = serde_json::to_string(&status).unwrap();
         assert!(body.contains(r#""state":"uploading""#));
         assert!(!body.contains("detail"));
+        assert!(!body.contains("down"));
         assert_eq!(
             serde_json::from_str::<upload::Status>(&body).unwrap(),
             status

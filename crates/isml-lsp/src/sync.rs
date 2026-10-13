@@ -262,6 +262,7 @@ mod tests {
             code_version: "version1".into(),
             files: 7,
             detail: None,
+            down: None,
             at,
         }
     }

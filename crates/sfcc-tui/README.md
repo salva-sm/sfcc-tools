@@ -6,9 +6,9 @@ needs nothing running. It reads the state the tools already write for the editor
 them for anything that acts.
 
 ```
-┌ Watchers ─────────────────────────────────────────────────────────────────────────┐
-│  STATE      SANDBOX    ODS        VERSION          CHECKOUT     BEAT              │
-│▶ synced     sbx-001    started    version1         shop         7s                │
+┌ ▶ Watchers ───────────────────────────────────────────────────────────────────────┐
+│  STATE             SANDBOX    ODS        VERSION          CHECKOUT     BEAT       │
+│▶ synced            sbx-001    started    version1         shop         7s         │
 └───────────────────────────────────────────────────────────────────────────────────┘
 ┌ SFCC errors · log-diff ──────────────────────────────┐┌ Debugging ────────────────┐
 │LOG-DIFF   SANDBOX    CHECKOUT   PENDING  NEW  CHECKED││STATE     CHECKOUT         │
@@ -18,8 +18,8 @@ them for anything that acts.
 │[09:56:19] OK  version1 already up to date                                         │
 │[10:02:41] ->  app_shop/cartridge/controllers/Cart.js uploaded                     │
 └───────────────────────────────────────────────────────────────────────────────────┘
- Tab focus  ↑↓ move  l sandbox log  d log-diff  w watch errors  p push  x stop  e errors
- S stop sandbox  R restart sandbox  q quit
+ Tab focus  ↑↓ move  a uploads  l sandbox log  o sandbox status  d log-diff  p push  x stop
+ q quit
 ```
 
 ## Keys
@@ -31,6 +31,10 @@ listed only when the panel holds more lines than it shows, and `End` once it is 
 With one watcher there is nothing for the arrows to choose, so they scroll the panel
 whichever has the focus. A key that is not listed does nothing.
 
+The block with the focus has a cyan border and a title led by `▶`. The panel shown keeps its
+key in the list, lit in cyan like a tab. While the panel has the focus, the chosen watcher
+stays marked with `▷`: the panel is that watcher's.
+
 Always there:
 
 | Key | |
@@ -38,7 +42,7 @@ Always there:
 | `Tab` | Focus the watchers or the panel below |
 | `↑` `↓` / `j` `k` | Choose a watcher, or scroll the panel. `PgUp` `PgDn` by page, `End` to follow |
 | `a` | The panel shows the watcher's uploads |
-| `l` | The panel shows the sandbox log: `sfcc-upload logger`, run inside, stopped with the TUI. A `●` after it says that log is being followed |
+| `l` | The panel shows the sandbox log: `sfcc-upload logger`, run inside, stopped with the TUI. `(live)` after it says that log is being followed |
 | `o` | The panel shows the sandbox's state as ODS reports it, asked again when it opens. Only for an on-demand sandbox |
 | `d` | The panel shows the log of `log-diff start`'s watcher |
 | `q` / `Esc` / `Ctrl-C` | Quit |
@@ -47,8 +51,8 @@ Only in the panel they belong to:
 
 | Panel | Key | |
 | :-- | :-- | :-- |
-| Uploads (`a`) | `s` / `x` | `sfcc-upload start` / `stop` for the chosen watcher's checkout |
-| | `p` | `sfcc-upload push`, with the terminal handed over so it can ask before overwriting |
+| Uploads (`a`) | `s` / `x` | `sfcc-upload start` / `stop` for the chosen watcher's checkout. For a `stalled` one, `s` restarts it |
+| | `p` | `sfcc-upload push`, with the terminal handed over so it can ask before overwriting. With the watcher running, it is the watcher that uploads. With the sandbox known to be down, `p` says so and takes a second press |
 | log-diff (`d`) | `w` | `log-diff start`, or `stop` when it runs |
 | | `e` | `log-diff list --pending`, the same way |
 | Sandbox (`o`) | `S` | Start the watcher's on-demand sandbox when it is stopped, stop it when it is started |
@@ -60,6 +64,17 @@ Starting it does not, but spends realm credits while it runs - hence upper case 
 The LOG-DIFF column says `watching` for a watcher `log-diff start` left running, `in a task`
 for one in a terminal or an editor task, `stopped` otherwise. A debug session whose adapter no
 longer answers shows as `gone`.
+
+## The STATE column
+
+What the watcher is doing: `synced`, `uploading`, `failed` (changes queued, or files held),
+or `stopped`. Two more say something is wrong with it, not with the code:
+
+| State | |
+| :-- | :-- |
+| `waiting (SB down)` | It runs, but the sandbox does not answer its probes. It uploads what is queued once it does |
+| `stopped (SB down)` | No watcher, and ODS says the sandbox is not started: `o` shows it, `S` there starts it |
+| `stalled` | Its process is alive but has stopped beating. `s` restarts it |
 
 ## The ODS column
 

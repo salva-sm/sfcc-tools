@@ -60,6 +60,21 @@ pub async fn describe_for_status(config: &Config) -> String {
     }
 }
 
+/// What ODS says about a sandbox that did not answer, when it will not come back by itself.
+pub async fn not_running(config: &Config) -> Option<String> {
+    let label = label(config).ok()?;
+    let (_, sandbox) = find(config, &label).await.ok()?;
+    record(&label, &sandbox);
+    match sandbox.state.as_str() {
+        "started" => None,
+        state if state != "stopping" && ods::is_transition(state) => None,
+        state if Operation::Start.allowed_in(state) => Some(format!(
+            "ODS says {label} is {state} - `sfcc-upload sandbox start`, or S in sfcc-tui, starts it"
+        )),
+        state => Some(format!("ODS says {label} is {state}")),
+    }
+}
+
 fn label(config: &Config) -> Result<String> {
     ods::label(&config.hostname).with_context(|| {
         format!(

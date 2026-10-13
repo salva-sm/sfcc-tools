@@ -1,6 +1,8 @@
 //! A save while the sandbox is down, against a WebDAV server in memory.
 
 use super::*;
+use crate::handoff::{Reply, Request};
+use crate::push::push;
 use crate::sync_status::{State, Status, status_path};
 use sfcc_core::testing::MockDav;
 
@@ -60,7 +62,15 @@ async fn a_save_while_the_sandbox_is_down_is_queued_said_and_sent_when_it_is_bac
 
     // Still down: probed, not uploaded, and the wait grows.
     pending.insert(checkout.save("app_x/cartridge/b.js", "two"));
-    retry_queued(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+    retry_queued(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut Backlog::default(),
+        None,
+        &mut retry,
+    )
+    .await;
     assert_eq!(retry.map(|retry| retry.delay), Some(RETRY_FIRST * 2));
     assert!(
         checkout
@@ -71,7 +81,15 @@ async fn a_save_while_the_sandbox_is_down_is_queued_said_and_sent_when_it_is_bac
     );
 
     server.set_down(false);
-    retry_queued(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+    retry_queued(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut Backlog::default(),
+        None,
+        &mut retry,
+    )
+    .await;
     assert!(pending.is_empty());
     assert!(retry.is_none());
     assert_eq!(checkout.status().state, State::Synced);
@@ -155,7 +173,7 @@ async fn a_file_someone_else_wrote_since_is_neither_overwritten_nor_deleted() {
         overwrite: Overwrite::Never,
     };
     let stats = push(ctx, options).await.unwrap();
-    assert_eq!((stats.uploaded, stats.deleted, stats.held), (0, 0, 2));
+    assert_eq!((stats.uploaded, stats.deleted, stats.held.len()), (0, 0, 2));
     assert_eq!(on_server(&server, A_JS).as_deref(), Some("theirs"));
 
     let options = PushOptions {
@@ -163,7 +181,90 @@ async fn a_file_someone_else_wrote_since_is_neither_overwritten_nor_deleted() {
         ..options
     };
     let stats = push(ctx, options).await.unwrap();
-    assert_eq!((stats.uploaded, stats.deleted, stats.held), (1, 1, 0));
+    assert_eq!((stats.uploaded, stats.deleted, stats.held.len()), (1, 1, 0));
     assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine, third"));
     assert_eq!(on_server(&server, B_JS), None);
+}
+
+fn handed(full: bool) -> Request {
+    Request {
+        id: "test".to_string(),
+        full,
+        overwrite: false,
+    }
+}
+
+#[tokio::test]
+async fn a_push_handed_over_while_the_sandbox_is_down_is_owed_and_done_when_it_is_back() {
+    let server = MockDav::start().await;
+    let checkout = Checkout::new("handed", &server);
+    let ctx = &checkout.ctx;
+    let mut manifest = Manifest::load(&ctx.manifest_path);
+    let (mut pending, mut backlog, mut retry) = (BTreeSet::new(), Backlog::default(), None);
+    checkout.save("app_x/cartridge/a.js", "one");
+
+    server.set_down(true);
+    let reply = serve(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut backlog,
+        &mut retry,
+        &handed(false),
+    )
+    .await;
+    assert!(matches!(reply, Reply::Down { ref reason } if reason.contains("HTTP 503")));
+    assert!(backlog.push.is_some() && retry.is_some());
+    let status = checkout.status();
+    assert!(status.down.unwrap().contains("HTTP 503"));
+    assert!(status.detail.unwrap().contains("the push is queued"));
+
+    let requests = server.requests().len();
+    let reply = serve(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut backlog,
+        &mut retry,
+        &handed(false),
+    )
+    .await;
+    assert!(matches!(reply, Reply::Down { .. }));
+    assert_eq!(server.requests().len(), requests);
+    assert!(retry.unwrap().at <= tokio::time::Instant::now());
+
+    server.set_down(false);
+    retry_queued(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut backlog,
+        None,
+        &mut retry,
+    )
+    .await;
+    assert!(backlog.push.is_none() && retry.is_none());
+    assert_eq!(on_server(&server, A_JS).as_deref(), Some("one"));
+    let status = checkout.status();
+    assert_eq!((status.state, status.down), (State::Synced, None));
+
+    checkout.save("app_x/cartridge/b.js", "two");
+    let reply = serve(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut backlog,
+        &mut retry,
+        &handed(false),
+    )
+    .await;
+    assert_eq!(
+        reply,
+        Reply::Done {
+            uploaded: 1,
+            deleted: 0,
+            held: Vec::new()
+        }
+    );
+    assert_eq!(on_server(&server, B_JS).as_deref(), Some("two"));
 }

@@ -32,6 +32,7 @@ struct Watcher {
     identity: String,
     status: upload::Status,
     heartbeat: Option<i64>,
+    process: bool,
     /// `zzzz-001`, when the watcher's host is an on-demand sandbox.
     label: Option<String>,
     /// What `sfcc-upload sandbox` last recorded about it.
@@ -42,6 +43,36 @@ impl Watcher {
     fn running(&self) -> bool {
         self.heartbeat
             .is_some_and(|age| age <= state::STALE_SECONDS)
+    }
+
+    fn stalled(&self) -> bool {
+        self.process && !self.running()
+    }
+
+    /// The watcher's probe while it runs, ODS otherwise.
+    fn sandbox_down(&self) -> Option<String> {
+        if self.running() {
+            return self.status.down.clone();
+        }
+        let ods = self.sandbox.as_ref().filter(|it| it.is_known())?;
+        (ods.state != "started").then(|| format!("ODS says {}", ods.state))
+    }
+
+    fn state(&self) -> (String, Color) {
+        let down = self.sandbox_down().is_some();
+        let (state, colour) = match (self.running(), self.status.state) {
+            _ if self.stalled() => ("stalled", Color::Red),
+            (true, _) if down => ("waiting", Color::Red),
+            (false, _) => ("stopped", Color::DarkGray),
+            (true, upload::State::Synced) => ("synced", Color::Green),
+            (true, upload::State::Uploading) => ("uploading", Color::Yellow),
+            (true, upload::State::Failed) => ("failed", Color::Red),
+            (true, upload::State::Stopped) => ("stopped", Color::DarkGray),
+        };
+        match down {
+            true => (format!("{state} (SB down)"), Color::Red),
+            false => (state.to_string(), colour),
+        }
     }
 
     fn errors_watched(&self) -> bool {
@@ -147,6 +178,17 @@ enum View {
     LogDiff,
 }
 
+impl View {
+    fn name(self) -> &'static str {
+        match self {
+            View::Uploads => "uploads",
+            View::SandboxLog => "sandbox log",
+            View::SandboxStatus => "sandbox status",
+            View::LogDiff => "log-diff",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 enum Focus {
     #[default]
@@ -206,8 +248,10 @@ impl App {
             .into_iter()
             .map(|(identity, status)| {
                 let label = ods::label(&status.hostname);
+                let files = upload::daemon(&identity);
                 Watcher {
-                    heartbeat: upload::daemon(&identity).heartbeat_age(),
+                    heartbeat: files.heartbeat_age(),
+                    process: daemon::running(&files).is_some(),
                     sandbox: label.as_deref().and_then(sandbox::of),
                     label,
                     identity,
@@ -334,7 +378,10 @@ impl App {
             Action::Follow => text(self.scroll > 0, "follow"),
             Action::Uploads => text(selected && self.view != View::Uploads, "uploads"),
             Action::SandboxLog => match self.sandbox_log.is_some() {
-                true => text(selected && self.view != View::SandboxLog, "sandbox log ●"),
+                true => text(
+                    selected && self.view != View::SandboxLog,
+                    "sandbox log (live)",
+                ),
                 false => text(selected, "sandbox log"),
             },
             Action::SandboxStatus => text(
@@ -347,9 +394,14 @@ impl App {
                 false => "watch errors".to_string(),
             }),
             Action::Push => text(selected, "push"),
-            Action::StartWatcher => watcher
-                .filter(|it| !it.running())
-                .map(|_| "start".to_string()),
+            Action::StartWatcher => {
+                watcher
+                    .filter(|it| !it.running())
+                    .map(|it| match it.stalled() {
+                        true => "restart".to_string(),
+                        false => "start".to_string(),
+                    })
+            }
             Action::StopWatcher => watcher
                 .filter(|it| it.running())
                 .map(|_| "stop".to_string()),
@@ -366,9 +418,11 @@ impl App {
         }
     }
 
-    /// Taking the sandbox down asks for its key twice: everyone on it loses it.
+    /// Taking the sandbox down asks for its key twice: everyone on it loses it. So does a push
+    /// to a sandbox known to be down.
     fn needs_confirmation(&self, action: Action) -> bool {
         match action {
+            Action::Push => self.current().is_some_and(|it| it.sandbox_down().is_some()),
             Action::RestartSandbox => true,
             Action::PowerSandbox => self
                 .current()
@@ -385,10 +439,14 @@ impl App {
             return true;
         }
         self.armed = Some(action);
-        self.notice = Some(format!(
-            "{} again to {what} - any other key cancels",
-            action.keys()
-        ));
+        let down = self.current().and_then(Watcher::sandbox_down);
+        self.notice = Some(match (action, down) {
+            (Action::Push, Some(why)) => format!(
+                "the sandbox is down ({why}) - {} again to push anyway, any other key cancels",
+                action.keys()
+            ),
+            _ => format!("{} again to {what} - any other key cancels", action.keys()),
+        });
         false
     }
 
@@ -423,7 +481,12 @@ impl App {
                 false => self.quietly(&["log-diff", "start"]),
             },
             Action::Push => return Some(&["sfcc-upload", "push"]),
-            Action::StartWatcher => self.quietly(&["sfcc-upload", "start"]),
+            Action::StartWatcher => {
+                if self.current().is_some_and(Watcher::stalled) {
+                    self.quietly(&["sfcc-upload", "stop"]);
+                }
+                self.quietly(&["sfcc-upload", "start"]);
+            }
             Action::StopWatcher => self.quietly(&["sfcc-upload", "stop"]),
             Action::Errors => return Some(&["log-diff", "list", "--pending"]),
             Action::PowerSandbox => {
@@ -753,17 +816,17 @@ fn draw(frame: &mut Frame, app: &mut App) {
     let [errors_area, sessions_area] =
         Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).areas(middle);
 
-    let border = |focus: Focus| match app.focus == focus {
-        true => Style::new().fg(Color::Cyan),
-        false => Style::new(),
+    let focus = app.focus;
+    let block = move |of: Focus, title: String| match focus == of {
+        true => Block::bordered()
+            .title(Span::from(format!(" ▶{title}")).style(Style::new().fg(Color::Cyan).bold()))
+            .border_style(Style::new().fg(Color::Cyan)),
+        false => Block::bordered()
+            .title(title)
+            .border_style(Style::new().fg(Color::DarkGray)),
     };
-    let (watcher_border, panel_border) = (border(Focus::Watchers), border(Focus::Panel));
     frame.render_stateful_widget(
-        watcher_table(app).block(
-            Block::bordered()
-                .title(" Watchers ")
-                .border_style(watcher_border),
-        ),
+        watcher_table(app).block(block(Focus::Watchers, " Watchers ".to_string())),
         watchers,
         &mut app.selected,
     );
@@ -784,13 +847,18 @@ fn draw(frame: &mut Frame, app: &mut App) {
         up => format!("{title}· {up} lines up, End to follow "),
     };
     frame.render_widget(
-        Paragraph::new(shown).block(Block::bordered().title(title).border_style(panel_border)),
+        Paragraph::new(shown).block(block(Focus::Panel, title)),
         panel,
     );
 
     let help: Vec<Span> = SHOWN
         .iter()
-        .filter_map(|action| Some(key(action.keys(), app.label(*action)?)))
+        .filter_map(|action| match shows(*action) {
+            Some(view) if view == app.view && app.current().is_some() => {
+                Some(open(action.keys(), view.name()))
+            }
+            _ => Some(key(action.keys(), app.label(*action)?)),
+        })
         .collect();
     frame.render_widget(Paragraph::new(wrapped(help, keys.width)), keys);
 
@@ -812,13 +880,7 @@ fn watcher_table(app: &App) -> Table<'static> {
         .watchers
         .iter()
         .map(|watcher| {
-            let (state, colour) = match (watcher.running(), watcher.status.state) {
-                (false, _) => ("stopped", Color::DarkGray),
-                (true, upload::State::Synced) => ("synced", Color::Green),
-                (true, upload::State::Uploading) => ("uploading", Color::Yellow),
-                (true, upload::State::Failed) => ("failed", Color::Red),
-                (true, upload::State::Stopped) => ("stopped", Color::DarkGray),
-            };
+            let (state, colour) = watcher.state();
             let detail = match (&watcher.status.detail, watcher.status.files) {
                 (Some(detail), _) => detail.clone(),
                 (None, 0) => String::new(),
@@ -838,10 +900,10 @@ fn watcher_table(app: &App) -> Table<'static> {
             ])
         })
         .collect();
-    Table::new(
+    let table = Table::new(
         rows,
         [
-            Constraint::Length(10),
+            Constraint::Length(17),
             Constraint::Length(10),
             Constraint::Length(10),
             Constraint::Length(16),
@@ -852,9 +914,15 @@ fn watcher_table(app: &App) -> Table<'static> {
     )
     .header(header(&[
         "STATE", "SANDBOX", "ODS", "VERSION", "CHECKOUT", "BEAT", "",
-    ]))
-    .row_highlight_style(Style::new().reversed())
-    .highlight_symbol("▶ ")
+    ]));
+    match app.focus {
+        Focus::Watchers => table
+            .row_highlight_style(Style::new().reversed())
+            .highlight_symbol("▶ "),
+        Focus::Panel => table
+            .row_highlight_style(Style::new().add_modifier(Modifier::BOLD))
+            .highlight_symbol("▷ "),
+    }
 }
 
 /// The sandbox's state as ODS last reported it: red when it cannot take an upload.
@@ -958,6 +1026,21 @@ fn header(names: &[&'static str]) -> Row<'static> {
 
 fn key(name: &'static str, what: String) -> Span<'static> {
     Span::from(format!(" {name} {what} ")).style(Style::new().fg(Color::Black).bg(Color::Gray))
+}
+
+fn open(name: &'static str, what: &str) -> Span<'static> {
+    Span::from(format!(" {name} {what} "))
+        .style(Style::new().fg(Color::Black).bg(Color::Cyan).bold())
+}
+
+fn shows(action: Action) -> Option<View> {
+    match action {
+        Action::Uploads => Some(View::Uploads),
+        Action::SandboxLog => Some(View::SandboxLog),
+        Action::SandboxStatus => Some(View::SandboxStatus),
+        Action::LogDiff => Some(View::LogDiff),
+        _ => None,
+    }
 }
 
 /// The keys on as many lines as the width needs, never splitting one across two.
@@ -1065,9 +1148,11 @@ mod tests {
                 code_version: "develop".into(),
                 files: 0,
                 detail: None,
+                down: None,
                 at: 0,
             },
             heartbeat: Some(1),
+            process: false,
             label: Some("zzzz-005".into()),
             sandbox: state.map(|state| sandbox::Status {
                 label: "zzzz-005".into(),
@@ -1259,5 +1344,80 @@ mod tests {
     #[test]
     fn shows_a_log_line_without_its_colours() {
         assert_eq!(strip_ansi("\u{1b}[32mOK\u{1b}[0m done"), "OK done");
+    }
+
+    #[test]
+    fn the_state_says_when_the_sandbox_is_down_and_when_the_watcher_hangs() {
+        let mut stopped = watcher_on(Some("stopped"), None);
+        stopped.heartbeat = None;
+        assert_eq!(stopped.state().0, "stopped (SB down)");
+        assert_eq!(watcher_on(Some("started"), None).state().0, "synced");
+
+        let mut waiting = watcher_on(Some("started"), None);
+        waiting.status.down = Some("sandbox unavailable (operation timed out)".into());
+        assert_eq!(waiting.state().0, "waiting (SB down)");
+        let mut synced = watcher_on(Some("stopped"), None);
+        synced.status.down = None;
+        assert_eq!(synced.state().0, "synced");
+
+        let mut hung = watcher_on(Some("started"), None);
+        (hung.heartbeat, hung.process) = (Some(5352), true);
+        assert_eq!(hung.state().0, "stalled");
+        let mut app = App {
+            watchers: vec![hung],
+            ..App::default()
+        };
+        app.selected.select(Some(0));
+        assert_eq!(app.label(Action::StartWatcher).as_deref(), Some("restart"));
+    }
+
+    #[test]
+    fn a_push_to_a_sandbox_known_to_be_down_asks_twice() {
+        let mut stopped = watcher_on(Some("stopped"), None);
+        stopped.heartbeat = None;
+        let mut app = App {
+            watchers: vec![stopped],
+            ..App::default()
+        };
+        app.selected.select(Some(0));
+        assert!(!app.confirmed(Action::Push, "push"));
+        assert!(app.notice.as_deref().unwrap().contains("ODS says stopped"));
+        assert!(app.confirmed(Action::Push, "push"));
+
+        app.watchers = vec![watcher_on(Some("started"), None)];
+        assert!(app.confirmed(Action::Push, "push"));
+    }
+
+    #[test]
+    fn the_focus_and_the_panel_shown_are_marked() {
+        let mut app = App {
+            watchers: vec![watcher_on(Some("started"), None)],
+            ..App::default()
+        };
+        app.selected.select(Some(0));
+        let screen = |app: &mut App| {
+            let mut terminal = ratatui::Terminal::new(TestBackend::new(140, 24)).unwrap();
+            terminal.draw(|frame| draw(frame, app)).unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            (0..buffer.area.height)
+                .map(|y| {
+                    (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let watchers = screen(&mut app);
+        assert!(watchers.contains("▶ Watchers"));
+        assert!(watchers.contains(" Uploads · develop "));
+        assert!(!watchers.contains("▶ Uploads"));
+        assert!(watchers.contains(" a uploads "));
+
+        app.show(View::LogDiff);
+        let panel = screen(&mut app);
+        assert!(panel.contains("▶ log-diff · develop"));
+        assert!(!panel.contains("▶ Watchers"));
+        assert!(panel.contains(" d log-diff "));
     }
 }
