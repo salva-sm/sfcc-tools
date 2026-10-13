@@ -89,6 +89,9 @@ Stop the watchers first (`sfcc-upload stop --all`, the editor task, `sfcc-tui`):
 does not replace a running `.exe`. With the `windows-gnu` toolchain, the linker cannot
 open a path with letters outside ASCII; `cargo install --git` builds under `%TEMP%`, which
 holds the user name, so give it a folder of its own: `--target-dir C:/cargo-target`.
+`isml-lsp` also compiles tree-sitter's JavaScript parser, which is C: on `windows-gnu` that
+needs a `gcc` on the `PATH` (MSYS2's `mingw-w64-x86_64-gcc`, for one) or `CC` pointing at
+another C compiler.
 
 ## Suggested tasks
 
