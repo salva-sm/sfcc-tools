@@ -10,7 +10,7 @@ const HOOK_BODY: &str = r#"#!/bin/sh
 # sfcc-upload: upload what the branch switch changed
 [ "$3" = "1" ] || exit 0
 command -v sfcc-upload >/dev/null 2>&1 || exit 0
-sfcc-upload push || true
+sfcc-upload push --no-wait || true
 "#;
 
 pub fn install(config: &Config, force: bool) -> Result<PathBuf> {

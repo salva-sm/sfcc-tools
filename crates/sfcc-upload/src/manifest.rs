@@ -25,6 +25,9 @@ pub struct Entry {
 pub struct Manifest {
     #[serde(default)]
     pub files: HashMap<String, Entry>,
+    /// The cartridges folder that uploaded these files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cartridges: Option<String>,
 }
 
 impl Manifest {
@@ -41,7 +44,11 @@ impl Manifest {
                 .with_context(|| format!("cannot create {}", parent.display()))?;
         }
         let serialized = serde_json::to_string(self).context("cannot serialize the manifest")?;
-        std::fs::write(path, serialized).with_context(|| format!("cannot write {}", path.display()))
+        // Read halfway, it would pass for empty.
+        let partial = path.with_extension(format!("{}.tmp", std::process::id()));
+        std::fs::write(&partial, serialized)
+            .with_context(|| format!("cannot write {}", partial.display()))?;
+        std::fs::rename(&partial, path).with_context(|| format!("cannot write {}", path.display()))
     }
 
     pub fn is_unchanged(&self, relative: &str, size: u64, modified_millis: i64) -> bool {

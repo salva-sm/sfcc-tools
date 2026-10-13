@@ -2,7 +2,7 @@ use crate::guard::{self, Overwrite};
 use crate::logging::{self, Change};
 use crate::manifest::{Entry, Manifest, hash_file, manifest_path};
 use crate::scan::{Ignore, LocalFile, cartridge_directories, scan};
-use crate::webdav::{Dav, Ready};
+use crate::webdav::{Availability, Dav, Ready};
 use anyhow::{Context, Result, bail};
 use futures::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -18,6 +18,7 @@ const CHUNK_FILES: usize = 400;
 const INLINE_PUT_FILES: usize = 8;
 const INLINE_PUT_BYTES: u64 = 2 * 1024 * 1024;
 const COMPRESSION_LEVEL: i64 = 1;
+const PATIENCE: Duration = Duration::from_secs(600);
 
 pub struct Ctx {
     pub config: Config,
@@ -56,23 +57,31 @@ pub struct Stats {
     pub deleted: usize,
     pub bytes: u64,
     pub elapsed: Duration,
-    pub held: usize,
+    pub held: Vec<String>,
 }
 
 pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
+    let mut manifest = Manifest::load(&ctx.manifest_path);
+    push_with(ctx, &mut manifest, options).await
+}
+
+/// Against a manifest already in memory, such as the watcher's.
+pub async fn push_with(ctx: &Ctx, manifest: &mut Manifest, options: PushOptions) -> Result<Stats> {
     let started = Instant::now();
-    let mut manifest = if options.full {
-        Manifest::default()
-    } else {
-        Manifest::load(&ctx.manifest_path)
-    };
+    if options.full {
+        let checkout = manifest.cartridges.take();
+        *manifest = Manifest {
+            cartridges: checkout,
+            ..Manifest::default()
+        };
+    }
     let files = scan(&ctx.config, &ctx.ignore)?;
 
-    let mut changed = select_changed(&files, &manifest);
+    let mut changed = select_changed(&files, manifest);
     let mut removed = if options.full {
         Vec::new()
     } else {
-        select_removed(&files, &manifest)
+        select_removed(&files, manifest)
     };
 
     if changed.is_empty() && removed.is_empty() {
@@ -100,18 +109,25 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
             deleted: removed.len(),
             bytes,
             elapsed: started.elapsed(),
-            held: 0,
+            held: Vec::new(),
         });
     }
 
-    ctx.dav
-        .wait_until_ready(Some(Duration::from_secs(600)))
-        .await?;
+    match ctx.dav.availability().await {
+        Availability::Ready => {}
+        Availability::Unavailable(reason) => {
+            if let Some(why) = crate::sandbox::not_running(&ctx.config).await {
+                bail!("sandbox unavailable ({reason}) - {why}");
+            }
+            ctx.dav.wait_until_ready(Some(PATIENCE)).await?;
+        }
+        _ => ctx.dav.wait_until_ready(Some(PATIENCE)).await?,
+    }
     ctx.dav.mkcol(ctx.dav.base_url()).await?;
 
     let mut held = Vec::new();
     if !options.full {
-        let settled = guard::settle(ctx, &manifest, changed, removed, options.overwrite).await?;
+        let settled = guard::settle(ctx, manifest, changed, removed, options.overwrite).await?;
         (changed, removed, held) = (settled.upserts, settled.removals, settled.held);
     }
     let bytes: u64 = changed.iter().map(|file| file.size).sum();
@@ -120,7 +136,7 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
         clear_remote_cartridges(ctx).await?;
     }
 
-    forget_files(&mut manifest, &changed);
+    forget_files(manifest, &changed);
     let progress = build_progress(changed.len(), options.show_progress);
     let outcome = upload_files(ctx, changed, progress.as_ref()).await;
     if let Some(bar) = progress {
@@ -140,7 +156,7 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
         manifest.record(relative, entry);
     }
     if !options.full {
-        guard::remember(ctx, &mut manifest, &sent).await;
+        guard::remember(ctx, manifest, &sent).await;
     }
 
     let mut deleted = 0;
@@ -165,7 +181,7 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
         deleted,
         bytes,
         elapsed: started.elapsed(),
-        held: held.len(),
+        held,
     };
     logging::ok(format!(
         "{} uploaded, {} deleted, {} in {:.1}s",
@@ -174,10 +190,10 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
         human_bytes(stats.bytes),
         stats.elapsed.as_secs_f64()
     ));
-    if stats.held > 0 {
+    if !stats.held.is_empty() {
         logging::warn(format!(
             "{} file(s) left as the sandbox has them - `sfcc-upload push --overwrite` replaces them",
-            stats.held
+            stats.held.len()
         ));
     }
     Ok(stats)

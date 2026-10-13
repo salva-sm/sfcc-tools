@@ -164,7 +164,7 @@ fn modified_seconds(text: &str) -> Option<i64> {
         .map(|moment| moment.timestamp())
 }
 
-fn interactive() -> bool {
+pub fn interactive() -> bool {
     use std::io::IsTerminal;
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }

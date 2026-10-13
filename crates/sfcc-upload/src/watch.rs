@@ -1,16 +1,19 @@
 use crate::active;
+use crate::checkout;
 use crate::daemon;
 use crate::guard::{self, Overwrite};
+use crate::handoff::{self, Reply, Request};
+use crate::lock;
 use crate::logging::{self, Change};
 use crate::manifest::Manifest;
 use crate::problems;
 use crate::push::{
-    Ctx, PushOptions, delete_paths, forget_files, push, select_changed, upload_files,
+    Ctx, PushOptions, Stats, delete_paths, forget_files, push_with, select_changed, upload_files,
 };
 use crate::reload::{Browser, worth_reloading};
 use crate::scan::{LocalFile, collect_files, describe};
 use crate::sync_status;
-use crate::webdav::{Availability, Ready};
+use crate::webdav::Availability;
 use anyhow::{Context, Result, bail};
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{NoCache, new_debouncer_opt};
@@ -28,6 +31,7 @@ const BURST_PATHS: usize = 25;
 // After a failure: probe after this, doubling up to RETRY_MAX; a save probes at once.
 const RETRY_FIRST: Duration = Duration::from_secs(10);
 const RETRY_MAX: Duration = Duration::from_secs(60);
+const REQUESTS_EVERY: Duration = Duration::from_millis(300);
 
 #[derive(Debug, Clone, Copy)]
 pub struct WatchOptions {
@@ -37,22 +41,68 @@ pub struct WatchOptions {
     pub problems: bool,
 }
 
+/// What waits for the sandbox besides the saves.
+#[derive(Debug, Default)]
+struct Backlog {
+    push: Option<PushOptions>,
+    activate: bool,
+    /// So a push handed over is answered at once, not after a probe times out.
+    down: Option<String>,
+}
+
+/// On a task of its own, so a watcher waiting or uploading is not taken for gone.
+struct Beating(tokio::task::JoinHandle<()>);
+
+impl Drop for Beating {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+fn beat(heartbeat: sfcc_core::state::Daemon) -> Beating {
+    Beating(tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(sfcc_core::state::HEARTBEAT_EVERY);
+        loop {
+            ticker.tick().await;
+            heartbeat.beat();
+        }
+    }))
+}
+
 pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
-    let heartbeat = daemon::of(&ctx.config);
-    heartbeat.beat();
+    let _uploader = match lock::take(&ctx.config, lock::Kind::Watcher).await? {
+        Ok(held) => held,
+        Err(owner) => bail!(
+            "{} already uploads to {} - one watcher at a time; `sfcc-upload stop` ends a background one",
+            owner.describe(),
+            ctx.config.code_version
+        ),
+    };
+    let mut manifest = Manifest::load(&ctx.manifest_path);
+    if let Some(owner) = checkout::other(&ctx.config, &manifest) {
+        bail!(
+            "{}\n  {}",
+            checkout::refusal(&ctx.config, &owner),
+            checkout::way_out(&ctx.config)
+        );
+    }
+    checkout::claim(&ctx.config, &mut manifest);
+    handoff::clear_replies(&ctx.config);
+    let _beating = beat(daemon::of(&ctx.config));
+
     sync_status::publish(&ctx.config, sync_status::State::Uploading);
     if options.problems {
         problems::enable();
     }
     problems::begin("uploading");
-
-    if let Err(error) = initial_sync(&ctx, options).await {
-        problems::failed([], &ctx.config.dw_json, &format!("{error:#}"));
-        return Err(error);
+    let first = ctx.dav.availability().await;
+    if let Availability::Unauthorized = first {
+        let reason = "the sandbox rejected the credentials from dw.json (HTTP 401/403)";
+        problems::failed([], &ctx.config.dw_json, reason);
+        bail!(reason);
     }
-    problems::synced();
-    sync_status::publish(&ctx.config, sync_status::State::Synced);
 
+    // Before the first push, so no save is missed while it runs or waits.
     let (sender, mut receiver) = unbounded_channel::<Vec<PathBuf>>();
     // No file-id cache: with it, on a 9,000-file checkout, most of a 200-file deletion never
     // came out of the debouncer - no error, no rescan. Only paths are used here anyway.
@@ -79,8 +129,6 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
         .watch(&ctx.config.cartridges_dir, RecursiveMode::Recursive)
         .with_context(|| format!("cannot watch {}", ctx.config.cartridges_dir.display()))?;
 
-    let mut ticker = tokio::time::interval(sfcc_core::state::HEARTBEAT_EVERY);
-
     logging::ok(format!(
         "watching {} -> {}",
         ctx.config.cartridges_dir.display(),
@@ -97,14 +145,51 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
         None => None,
     };
 
-    let mut manifest = Manifest::load(&ctx.manifest_path);
     let mut pending: BTreeSet<PathBuf> = BTreeSet::new();
     let mut retry: Option<Retry> = None;
+    let mut backlog = Backlog {
+        push: options.initial_push.then_some(PushOptions {
+            full: options.full,
+            dry_run: false,
+            show_progress: !options.problems,
+            overwrite: Overwrite::Never,
+        }),
+        activate: true,
+        down: None,
+    };
+    let browser = browser.as_ref();
+    match first {
+        Availability::Unavailable(reason) => {
+            let not_ready = NotReady {
+                reason: format!("sandbox unavailable ({reason})"),
+                down: true,
+            };
+            backlog.down = Some(not_ready.reason.clone());
+            fail(
+                &ctx,
+                &pending,
+                backlog.push.is_some(),
+                &not_ready,
+                &mut retry,
+            );
+        }
+        _ => {
+            retry_queued(
+                &ctx,
+                &mut manifest,
+                &mut pending,
+                &mut backlog,
+                browser,
+                &mut retry,
+            )
+            .await
+        }
+    }
 
+    let mut requests = tokio::time::interval(REQUESTS_EVERY);
     loop {
         let due = retry.map(|retry| retry.at);
         tokio::select! {
-            _ = ticker.tick() => heartbeat.beat(),
             _ = tokio::signal::ctrl_c() => {
                 logging::info("stopping the watcher");
                 manifest.save(&ctx.manifest_path)?;
@@ -112,7 +197,13 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
                 return Ok(());
             }
             _ = sleep_until(due), if due.is_some() => {
-                retry_queued(&ctx, &mut manifest, &mut pending, browser.as_ref(), &mut retry).await;
+                retry_queued(&ctx, &mut manifest, &mut pending, &mut backlog, browser, &mut retry).await;
+            }
+            _ = requests.tick() => {
+                for request in handoff::take(&ctx.config) {
+                    let reply = serve(&ctx, &mut manifest, &mut pending, &mut backlog, &mut retry, &request).await;
+                    handoff::answer(&ctx.config, &request, &reply);
+                }
             }
             batch = receiver.recv() => {
                 let Some(paths) = batch else {
@@ -123,30 +214,109 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
                 pending.extend(paths);
                 drain_into(&mut receiver, &mut pending).await;
                 match retry {
-                    None => attempt(&ctx, &mut manifest, &mut pending, browser.as_ref(), &mut retry).await,
-                    Some(_) => retry_queued(&ctx, &mut manifest, &mut pending, browser.as_ref(), &mut retry).await,
+                    None => attempt(&ctx, &mut manifest, &mut pending, browser, &mut retry).await,
+                    Some(_) => retry_queued(&ctx, &mut manifest, &mut pending, &mut backlog, browser, &mut retry).await,
                 }
             }
         }
     }
 }
 
-async fn initial_sync(ctx: &Ctx, options: WatchOptions) -> Result<()> {
-    ctx.dav.wait_until_ready(None).await?;
-    if options.initial_push {
-        push(
-            ctx,
-            PushOptions {
-                full: options.full,
-                dry_run: false,
-                show_progress: !options.problems,
-                overwrite: Overwrite::Never,
-            },
-        )
-        .await?;
+async fn serve(
+    ctx: &Ctx,
+    manifest: &mut Manifest,
+    pending: &mut BTreeSet<PathBuf>,
+    backlog: &mut Backlog,
+    retry: &mut Option<Retry>,
+    request: &Request,
+) -> Reply {
+    let options = PushOptions {
+        full: request.full,
+        dry_run: false,
+        show_progress: false,
+        overwrite: match request.overwrite {
+            true => Overwrite::Always,
+            false => Overwrite::Never,
+        },
+    };
+    logging::info(match request.full {
+        true => "push --full handed over",
+        false => "push handed over",
+    });
+    let owe = |backlog: &mut Backlog| {
+        let owed = backlog.push.get_or_insert(PushOptions {
+            overwrite: Overwrite::Never,
+            ..options
+        });
+        owed.full |= request.full;
+    };
+    // Probed again now, so a sandbox just started gets its push straight away.
+    if let Some(reason) = backlog.down.clone() {
+        owe(backlog);
+        if let Some(due) = retry.as_mut() {
+            due.at = tokio::time::Instant::now();
+        }
+        return Reply::Down { reason };
     }
-    active::ensure(&ctx.config).await;
-    Ok(())
+    if let Err(not_ready) = probe(ctx).await {
+        owe(backlog);
+        backlog.down = not_ready.down.then(|| not_ready.reason.clone());
+        fail(ctx, pending, true, &not_ready, retry);
+        return Reply::Down {
+            reason: not_ready.reason,
+        };
+    }
+    match catch_up(ctx, manifest, pending, backlog, retry, Some(options)).await {
+        Ok(stats) => Reply::Done {
+            uploaded: stats.uploaded,
+            deleted: stats.deleted,
+            held: stats.held,
+        },
+        Err(error) => Reply::Failed { error },
+    }
+}
+
+/// A push scans the whole checkout, so it takes the queued saves along.
+async fn catch_up(
+    ctx: &Ctx,
+    manifest: &mut Manifest,
+    pending: &mut BTreeSet<PathBuf>,
+    backlog: &mut Backlog,
+    retry: &mut Option<Retry>,
+    asked: Option<PushOptions>,
+) -> std::result::Result<Stats, String> {
+    let owed = backlog.push;
+    let Some(options) = asked.or(owed) else {
+        return Ok(Stats::default());
+    };
+    let options = PushOptions {
+        full: options.full || owed.is_some_and(|owed| owed.full),
+        ..options
+    };
+    sync_status::publish_uploading(&ctx.config, pending.len());
+    problems::begin("uploading");
+    match push_with(ctx, manifest, options).await {
+        Ok(stats) => {
+            backlog.push = None;
+            pending.clear();
+            if retry.take().is_some() {
+                logging::ok("sandbox is back - the queued changes are uploaded");
+            }
+            report(ctx, &stats.held);
+            if std::mem::take(&mut backlog.activate) {
+                active::ensure(&ctx.config).await;
+            }
+            Ok(stats)
+        }
+        Err(error) => {
+            let not_ready = NotReady {
+                reason: format!("{error:#}"),
+                down: false,
+            };
+            fail(ctx, pending, owed.is_some(), &not_ready, retry);
+            Err(not_ready.reason)
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -187,19 +357,27 @@ async fn attempt(
             if retry.take().is_some() {
                 logging::ok("sandbox is back - the queued changes are uploaded");
             }
-            match synced.held.is_empty() {
-                true => {
-                    problems::synced();
-                    sync_status::publish(&ctx.config, sync_status::State::Synced);
-                }
-                false => hold(ctx, &synced.held),
-            }
+            report(ctx, &synced.held);
             refresh_browser(browser, &synced.sent).await;
         }
         Err(error) => {
             pending.extend(touched);
-            fail(ctx, pending, format!("{error:#}"), retry);
+            let not_ready = NotReady {
+                reason: format!("{error:#}"),
+                down: false,
+            };
+            fail(ctx, pending, false, &not_ready, retry);
         }
+    }
+}
+
+fn report(ctx: &Ctx, held: &[String]) {
+    match held.is_empty() {
+        true => {
+            problems::synced();
+            sync_status::publish(&ctx.config, sync_status::State::Synced);
+        }
+        false => hold(ctx, held),
     }
 }
 
@@ -222,43 +400,78 @@ async fn retry_queued(
     ctx: &Ctx,
     manifest: &mut Manifest,
     pending: &mut BTreeSet<PathBuf>,
+    backlog: &mut Backlog,
     browser: Option<&Browser>,
     retry: &mut Option<Retry>,
 ) {
-    match probe(ctx).await {
-        Ok(()) => attempt(ctx, manifest, pending, browser, retry).await,
-        Err(reason) => {
-            problems::begin("retrying");
-            fail(ctx, pending, reason, retry)
-        }
+    if let Err(not_ready) = probe(ctx).await {
+        problems::begin("retrying");
+        backlog.down = not_ready.down.then(|| not_ready.reason.clone());
+        fail(ctx, pending, backlog.push.is_some(), &not_ready, retry);
+        return;
+    }
+    backlog.down = None;
+    if backlog.push.is_some() {
+        let _ = catch_up(ctx, manifest, pending, backlog, retry, None).await;
+        return;
+    }
+    attempt(ctx, manifest, pending, browser, retry).await;
+    if retry.is_none() && std::mem::take(&mut backlog.activate) {
+        active::ensure(&ctx.config).await;
     }
 }
 
-fn fail(ctx: &Ctx, pending: &BTreeSet<PathBuf>, reason: String, retry: &mut Option<Retry>) {
+fn fail(
+    ctx: &Ctx,
+    pending: &BTreeSet<PathBuf>,
+    push_owed: bool,
+    not_ready: &NotReady,
+    retry: &mut Option<Retry>,
+) {
     let next = Retry::after(*retry);
+    let queued = match (push_owed, pending.len()) {
+        (true, 0) => "the push is queued".to_string(),
+        (true, changes) => format!("the push and {changes} change(s) are queued"),
+        (false, changes) => format!("{changes} change(s) queued"),
+    };
     let detail = format!(
-        "{reason} - {} change(s) queued, retrying in {}s",
-        pending.len(),
+        "{} - {queued}, retrying in {}s",
+        not_ready.reason,
         next.delay.as_secs()
     );
     logging::error(&detail);
     problems::failed(pending, &ctx.config.dw_json, &detail);
-    sync_status::publish_failure(&ctx.config, detail);
+    match not_ready.down {
+        true => sync_status::publish_down(&ctx.config, detail, not_ready.reason.clone()),
+        false => sync_status::publish_failure(&ctx.config, detail),
+    }
     *retry = Some(next);
 }
 
-async fn probe(ctx: &Ctx) -> std::result::Result<(), String> {
+struct NotReady {
+    reason: String,
+    down: bool,
+}
+
+async fn probe(ctx: &Ctx) -> std::result::Result<(), NotReady> {
+    let refused = |reason: String| NotReady {
+        reason,
+        down: false,
+    };
     match ctx.dav.availability().await {
         Availability::Ready => Ok(()),
         Availability::MissingCodeVersion => ctx
             .dav
             .mkcol(ctx.dav.base_url())
             .await
-            .map_err(|error| format!("{error:#}")),
-        Availability::Unauthorized => {
-            Err("the sandbox rejected the credentials from dw.json (HTTP 401/403)".to_string())
-        }
-        Availability::Unavailable(reason) => Err(format!("sandbox unavailable ({reason})")),
+            .map_err(|error| refused(format!("{error:#}"))),
+        Availability::Unauthorized => Err(refused(
+            "the sandbox rejected the credentials from dw.json (HTTP 401/403)".to_string(),
+        )),
+        Availability::Unavailable(reason) => Err(NotReady {
+            reason: format!("sandbox unavailable ({reason})"),
+            down: true,
+        }),
     }
 }
 

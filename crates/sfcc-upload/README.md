@@ -68,6 +68,7 @@ sfcc-upload push                # upload what changed since the last sync
 sfcc-upload push --full         # start over: replace every cartridge on the sandbox
 sfcc-upload push --dry-run      # list what would go up, without touching the sandbox
 sfcc-upload push --overwrite    # replace what someone else changed up there, without asking
+sfcc-upload push --no-wait      # hand it to the watcher and return; the git hook does this
 sfcc-upload watch               # push, then upload on every save (foreground)
 sfcc-upload start               # same, detached: survives closing the editor
 sfcc-upload start --reload      # same, and reload the storefront tab after each upload
@@ -265,9 +266,12 @@ shows and refreshes.
 sfcc-upload install-hook
 ```
 
-Writes a `post-checkout` hook that runs `sfcc-upload push` after a branch checkout, so the
-sandbox follows the branch even when the watcher is not running. It costs 0,4 s when nothing
-changed. An existing hook is never replaced unless `--force` is given.
+Writes a `post-checkout` hook that runs `sfcc-upload push --no-wait` after a branch checkout,
+so the sandbox follows the branch even when the watcher is not running. It costs 0,4 s when
+nothing changed. With a watcher running, the push is handed to it and the checkout does not
+wait; with none and the sandbox down, it gives up at once instead of holding git. An existing
+hook is never replaced unless `--force` is given; one written by an older sfcc-upload is
+replaced by running `install-hook` again.
 
 ## dw.json
 
@@ -344,13 +348,31 @@ flight. Small changes go straight up as individual `PUT`s.
 
 **Availability.** Every run probes the code version first. A sleeping sandbox is not an
 error — it waits and resumes, queueing the changes it saw meanwhile. Rejected credentials
-fail immediately.
+fail immediately. A sandbox that ODS reports stopped will not wake up by itself: `push` says
+so at once, with how to start it, instead of waiting ten minutes. A watcher started while the
+sandbox is down watches anyway, keeps beating, answers a handed-over push with why it cannot
+upload, and makes its first push once the sandbox answers.
 
 While watching, a save that does not reach the sandbox — it went down, or refused part of
 the batch — is said at once: on the console, and as `failed` in the status file, with how
 many changes are queued. They are retried after 10 s, then 20, 40 and every minute, and
 straight away on the next save; what did arrive is not sent twice. The watcher does not
 hang in a wait meanwhile: its heartbeat, `stop` and `status` keep working.
+
+**One uploader at a time.** Per sandbox and code version, a single process uploads: the
+watcher, whether `start`ed or run by an editor task, or else one `push`. It holds a lock the
+operating system releases when it ends. A `push` while the watcher runs - yours, an agent's,
+the git hook's - is handed to the watcher, which uploads it against the manifest it keeps and
+answers how it went; two uploaders would each keep a manifest of their own and take the
+other's uploads for someone else's. A second watcher is refused, and two pushes take turns.
+`rm` and `clean` wait for a push, and are refused while a watcher runs.
+
+**Another checkout.** A code version belongs to the cartridges folder that last uploaded to
+it. A push from another one - an agent's worktree, a second clone - would replace its files
+with another branch's, so it is refused. At a terminal it offers a code version of its own,
+named after the branch; anywhere else it says what to run: `push --code-version <branch>`, or
+`push --take-over` to make this checkout the code version's. That code version is not
+activated: the storefront keeps running the one it ran.
 
 **Someone else's change.** Before replacing or deleting a file, sfcc-upload checks that the
 sandbox still holds the version this checkout sent. WebDAV's `getetag` changes on every write,

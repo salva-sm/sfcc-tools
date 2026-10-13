@@ -19,6 +19,7 @@ fn new(config: &Config, state: State) -> Status {
         code_version: config.code_version.clone(),
         files: 0,
         detail: None,
+        down: None,
         at: now_seconds(),
     }
 }
@@ -38,6 +39,15 @@ pub fn publish_uploading(config: &Config, files: usize) {
 pub fn publish_failure(config: &Config, detail: String) {
     let status = Status {
         detail: Some(detail),
+        ..new(config, State::Failed)
+    };
+    state::write(&status_path(config), &status);
+}
+
+pub fn publish_down(config: &Config, detail: String, reason: String) {
+    let status = Status {
+        detail: Some(detail),
+        down: Some(reason),
         ..new(config, State::Failed)
     };
     state::write(&status_path(config), &status);
