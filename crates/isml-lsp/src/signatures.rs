@@ -13,6 +13,7 @@ use tree_sitter::Node;
 use crate::api;
 use crate::js::{Parsed, Script};
 use crate::members::{self, Definition};
+use crate::types::Types;
 use crate::workspace::Workspace;
 
 /// The call the cursor is inside: the callee's name, and which argument the cursor is on.
@@ -38,7 +39,17 @@ pub fn help(
     let call = call_at(&script, at)?;
     let definitions = members::of(&script, call.name, file, workspace, open);
     let signatures: Vec<SignatureInformation> = if definitions.is_empty() {
-        api_signature(text, call.name).into_iter().collect()
+        let types = Types {
+            script: &script,
+            file,
+            workspace,
+            open,
+        };
+        types
+            .member_named(call.name)
+            .and_then(|(class, name)| api_signature(&class, &name))
+            .into_iter()
+            .collect()
     } else {
         definitions.iter().filter_map(cartridge_signature).collect()
     };
@@ -150,14 +161,9 @@ fn cartridge_signature(definition: &Definition) -> Option<SignatureInformation> 
     })
 }
 
-/// `PriceBookMgr.getApplicablePriceBooks(`: the method's shape from the platform reference.
-fn api_signature(text: &str, name: Node) -> Option<SignatureInformation> {
-    let start = name.start_byte();
-    let line_start = text[..start].rfind('\n').map_or(0, |index| index + 1);
-    let line = text[line_start..].lines().next().unwrap_or("");
-    let column = text[line_start..start].chars().count();
-    let (class, name) = api::member_at(line, column, text)?;
-    let (member, kind) = api::api().class(&class)?.member(&name)?;
+/// `basket.getProductLineItems(`: the method's shape from the platform reference.
+fn api_signature(class: &str, name: &str) -> Option<SignatureInformation> {
+    let (member, kind) = api::api().member(class, name)?;
     if kind != api::MemberKind::Method {
         return None;
     }
@@ -373,5 +379,19 @@ var y = 2;"
             .label
             .contains("assignPriceBookToSite(priceBook"));
         assert_eq!(help.active_parameter, Some(1));
+    }
+
+    #[test]
+    fn helps_with_a_method_of_a_typed_variable() {
+        let text = "var BasketMgr = require('dw/order/BasketMgr');\nvar cart = BasketMgr.getCurrentBasket();\ncart.getProductLineItems(";
+        let help = help(
+            Path::new("Cart.js"),
+            text,
+            text.chars().count(),
+            &Workspace::default(),
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert!(help.signatures[0].label.starts_with("getProductLineItems("));
     }
 }

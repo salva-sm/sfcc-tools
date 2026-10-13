@@ -9,7 +9,7 @@ use lsp_types::Url;
 
 use tree_sitter::Node;
 
-use crate::js::{Export, Origin, Parsed, Script, Value};
+use crate::js::{Export, Origin, Parsed, Pending, Script, Value};
 use crate::reference::Reference;
 use crate::references::{located, read};
 use crate::resolve;
@@ -89,32 +89,10 @@ pub fn offered(
     workspace: &Workspace,
     open: &HashMap<PathBuf, &str>,
 ) -> Option<(Vec<Offered>, usize)> {
-    let at = byte_offset(text, offset);
-    let typed: Vec<char> = text[..at]
-        .chars()
-        .rev()
-        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
-        .collect();
-    let start = at - typed.iter().map(|c| c.len_utf8()).sum::<usize>();
-    if !text[..start].ends_with('.') {
-        return None;
-    }
-    // `helpers.` with nothing after the dot is not yet a member: give it a name to parse.
-    let patched;
-    let text = match typed.is_empty() {
-        true => {
-            patched = format!("{}x{}", &text[..at], &text[at..]);
-            patched.as_str()
-        }
-        false => text,
-    };
-    let parsed = Parsed::new(file, text)?;
+    let pending = Pending::at(text, offset)?;
+    let parsed = Parsed::new(file, &pending.text)?;
     let script = parsed.script();
-    let property = script.name_at(start)?;
-    let member = script
-        .parent(property)
-        .filter(|parent| parent.kind() == "member_expression")?;
-    let Value::Module(origin) = script.value_of(member.child_by_field_name("object")?)? else {
+    let Value::Module(origin) = script.value_of(pending.receiver(&script)?)? else {
         return None;
     };
 
@@ -154,7 +132,7 @@ pub fn offered(
         })
         .filter(|offered| !offered.definitions.is_empty())
         .collect();
-    (!offered.is_empty()).then_some((offered, typed.len()))
+    (!offered.is_empty()).then_some((offered, pending.typed))
 }
 
 /// Every copy a request may ask about, read and parsed once however many names it is

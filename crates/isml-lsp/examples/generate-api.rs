@@ -1,9 +1,11 @@
 //! Turns the API markdown of the `sfcc-dev-mcp` npm package into the index `isml-lsp` embeds. Regenerate with:
 //!
 //! ```text
-//! npm pack sfcc-dev-mcp && tar -xzf sfcc-dev-mcp-*.tgz
+//! npm pack sfcc-dev-mcp@1.1.0 && tar -xzf sfcc-dev-mcp-1.1.0.tgz
 //! cargo run --example generate-api -- package/dist/docs src/api.json
 //! ```
+//!
+//! The embedded index is 1.1.0's, byte for byte; a later version makes a new one.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -22,6 +24,9 @@ struct Class {
     properties: Vec<Member>,
     #[serde(rename = "m", skip_serializing_if = "Vec::is_empty")]
     methods: Vec<Member>,
+    /// The class this one extends, whose members it has too.
+    #[serde(rename = "e", skip_serializing_if = "String::is_empty")]
+    extends: String,
 }
 
 #[derive(serde::Serialize)]
@@ -106,7 +111,24 @@ fn read_class(file: &Path) -> Option<(String, Class)> {
         }
     }
 
-    Some((format!("{package}.{name}"), class))
+    let qualified = format!("{package}.{name}");
+    class.extends = section(&text, "## Inheritance Hierarchy")
+        .and_then(|body| parent_in(&body, &qualified))
+        .unwrap_or_default();
+    Some((qualified, class))
+}
+
+/// The entry listed just above the class in its hierarchy. A bare `Object` is left out:
+/// what it adds every class has.
+fn parent_in(hierarchy: &str, qualified: &str) -> Option<String> {
+    let entries: Vec<&str> = hierarchy
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("- "))
+        .map(str::trim)
+        .collect();
+    let own = entries.iter().position(|entry| *entry == qualified)?;
+    let parent = entries.get(own.checked_sub(1)?)?;
+    parent.contains('.').then(|| parent.to_string())
 }
 
 /// The text of a `### Name` block: `**Type:** X` or `**Signature:** X`, then

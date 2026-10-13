@@ -27,12 +27,17 @@ pub fn route_of(reference: &Reference, file: &Path) -> Option<Route> {
 
 pub fn member_markdown(line: &str, column: usize, text: &str) -> Option<String> {
     let (class, name) = api::member_at(line, column, text)?;
-    let (member, kind) = api::api().class(&class)?.member(&name)?;
+    api_member_markdown(&class, &name)
+}
+
+/// A member of a `dw.*` class: its shape, description and kind.
+pub fn api_member_markdown(class: &str, name: &str) -> Option<String> {
+    let (member, kind) = api::api().member(class, name)?;
 
     // The signature carries its own `static`, so the class goes on its own
     // line rather than in front of a modifier.
     let shape = match member.shape.is_empty() {
-        true => name.clone(),
+        true => name.to_string(),
         false => member.shape.clone(),
     };
     let mut out = format!("```js\n{class}\n{shape}\n```\n");

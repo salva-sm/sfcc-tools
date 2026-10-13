@@ -42,6 +42,54 @@ impl Parsed {
     }
 }
 
+/// A member being typed with the cursor at its end: `helpers.` or `basket.getTo`.
+pub struct Pending {
+    /// The text to parse: `helpers.` with nothing after the dot is not yet a member, so
+    /// it gets a name.
+    pub text: String,
+    /// Byte offset of the member's name.
+    start: usize,
+    /// How many characters of it are typed.
+    pub typed: usize,
+}
+
+impl Pending {
+    /// `offset` is in characters.
+    pub fn at(text: &str, offset: usize) -> Option<Pending> {
+        let at = text
+            .char_indices()
+            .nth(offset)
+            .map_or(text.len(), |(at, _)| at);
+        let typed: Vec<char> = text[..at]
+            .chars()
+            .rev()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+            .collect();
+        let start = at - typed.iter().map(|c| c.len_utf8()).sum::<usize>();
+        if !text[..start].ends_with('.') {
+            return None;
+        }
+        let text = match typed.is_empty() {
+            true => format!("{}x{}", &text[..at], &text[at..]),
+            false => text.to_string(),
+        };
+        Some(Pending {
+            text,
+            start,
+            typed: typed.len(),
+        })
+    }
+
+    /// What the member is being typed on: `helpers` of `helpers.to`.
+    pub fn receiver<'a>(&self, script: &Script<'a>) -> Option<Node<'a>> {
+        let property = script.name_at(self.start)?;
+        script
+            .parent(property)
+            .filter(|parent| parent.kind() == "member_expression")?
+            .child_by_field_name("object")
+    }
+}
+
 /// Where a module comes from.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Origin {
@@ -843,7 +891,7 @@ impl<'a> Script<'a> {
     /// The `/** */` comment directly above the statement, object entry or method that
     /// holds `name`. A plain `/* */` or `//` comment is not documentation, and nor is one
     /// with code between it and the definition.
-    fn doc_of(&self, name: Node<'a>) -> Option<String> {
+    pub fn doc_of(&self, name: Node<'a>) -> Option<String> {
         let mut item = name;
         while let Some(parent) = self.parent(item) {
             if matches!(
