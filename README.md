@@ -85,6 +85,11 @@ cargo install --path crates/sfcc-dap
 cargo install --path crates/sfcc-tui     # optional
 ```
 
+Stop the watchers first (`sfcc-upload stop --all`, the editor task, `sfcc-tui`): Windows
+does not replace a running `.exe`. With the `windows-gnu` toolchain, the linker cannot
+open a path with letters outside ASCII; `cargo install --git` builds under `%TEMP%`, which
+holds the user name, so give it a folder of its own: `--target-dir C:/cargo-target`.
+
 ## Suggested tasks
 
 Few, because most of it starts on its own. The watcher starts with the editor, its state
