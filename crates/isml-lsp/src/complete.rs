@@ -481,11 +481,9 @@ fn module_items(range: Range) -> Vec<CompletionItem> {
 }
 
 fn member_items(class: &str, range: Range) -> Vec<CompletionItem> {
-    let Some(found) = api::api().class(class) else {
-        return Vec::new();
-    };
-    found
-        .members()
+    api::api()
+        .members(class)
+        .into_iter()
         .map(|(member, kind)| CompletionItem {
             label: member.name.clone(),
             kind: Some(match kind {
