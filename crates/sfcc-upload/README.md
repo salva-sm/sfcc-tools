@@ -271,7 +271,9 @@ so the sandbox follows the branch even when the watcher is not running. It costs
 nothing changed. With a watcher running, the push is handed to it and the checkout does not
 wait; with none and the sandbox down, it gives up at once instead of holding git. An existing
 hook is never replaced unless `--force` is given; one written by an older sfcc-upload is
-replaced by running `install-hook` again.
+replaced by running `install-hook` again. A repository with `core.hooksPath` set runs its
+hooks from that folder, never from `.git/hooks`: there `install-hook` writes nothing and says
+so, since that folder is usually the repository's own.
 
 ## dw.json
 
