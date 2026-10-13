@@ -84,6 +84,27 @@ pub struct Definition {
     values: Vec<usize>,
     /// Where `base.total =` assigns it, when the file defines it on its parent.
     on_parent: Vec<usize>,
+    /// Each place it is defined: the name to jump to, and the function written there.
+    pub sites: Vec<Site>,
+}
+
+/// One definition of an export: the declaration its value names (`function total`) when
+/// there is one, otherwise the exported key or property itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Site {
+    /// Byte range of the name.
+    pub name: (usize, usize),
+    /// Byte range of the function, when the definition is one written out there.
+    function: Option<(usize, usize)>,
+}
+
+/// What a definition says about itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Description {
+    /// `total(basket, options)`, called by the exported name.
+    pub signature: Option<String>,
+    /// The `/** */` block right above it, stars and indentation stripped.
+    pub doc: Option<String>,
 }
 
 pub struct Script<'a> {
@@ -335,6 +356,38 @@ impl<'a> Script<'a> {
         }
     }
 
+    /// The export of a module that `node` uses: `total` in `helpers.total` or
+    /// `require(...).total`, a destructured `total`, or an alias of one. Not the file's own
+    /// `base.total` once it has replaced it, nor `base.total =` replacing it.
+    pub fn export_at(&self, node: Node<'a>) -> Option<(Origin, String)> {
+        let member = self.parent(node).filter(|parent| {
+            parent.kind() == "member_expression"
+                && parent
+                    .child_by_field_name("property")
+                    .is_some_and(|property| property.id() == node.id())
+        });
+        let Some(member) = member else {
+            return match self.value_of(node)? {
+                Value::Export(origin, key) => Some((origin, key)),
+                Value::Module(_) => None,
+            };
+        };
+        let Value::Module(origin) = self.value_of(member.child_by_field_name("object")?)? else {
+            return None;
+        };
+        let name = self.text(node);
+        if origin == Origin::Super {
+            let own = match self.export(name) {
+                Export::Defines(definition) => definition.on_parent,
+                _ => Vec::new(),
+            };
+            if self.is_assigned(member) || self.reads_own(member, &own) {
+                return None;
+            }
+        }
+        Some((origin, name.to_string()))
+    }
+
     /// What a declared name was bound to.
     fn bound_value(&self, declaration: Node<'a>, depth: usize) -> Option<Value> {
         let parent = self.parent(declaration)?;
@@ -561,21 +614,107 @@ impl<'a> Script<'a> {
     /// Records the key that exports `name`, and the function or variable its value names.
     fn define(&self, definition: &mut Definition, key: Node<'a>, value: Option<Node<'a>>) {
         definition.at.push((key.start_byte(), key.end_byte()));
+        let range = |node: Node| (node.start_byte(), node.end_byte());
         let Some(value) = value else {
+            // `total() {}` in an object: the method is the function.
+            let method = self
+                .parent(key)
+                .filter(|parent| parent.kind() == "method_definition");
+            definition.sites.push(Site {
+                name: range(key),
+                function: method.map(range),
+            });
             return;
         };
         if !matches!(value.kind(), "identifier" | "shorthand_property_identifier") {
+            definition.sites.push(Site {
+                name: range(key),
+                function: is_function(value.kind()).then(|| range(value)),
+            });
             return;
         }
         definition.values.push(value.start_byte());
-        if let Some(declaration) = self.declaration_of(value) {
-            if declaration.id() != value.id() {
-                definition
-                    .at
-                    .push((declaration.start_byte(), declaration.end_byte()));
+        match self.declaration_of(value) {
+            Some(declaration) if declaration.id() != value.id() => {
+                definition.at.push(range(declaration));
                 definition.declarations.push(declaration.start_byte());
+                definition.sites.push(Site {
+                    name: range(declaration),
+                    function: self.declared_function(declaration).map(range),
+                });
             }
+            _ => definition.sites.push(Site {
+                name: range(key),
+                function: None,
+            }),
         }
+    }
+
+    /// `function total() {}`, or `var total = function () {}` / an arrow.
+    fn declared_function(&self, declaration: Node<'a>) -> Option<Node<'a>> {
+        let parent = self.parent(declaration)?;
+        match parent.kind() {
+            "function_declaration" | "generator_function_declaration" => Some(parent),
+            "variable_declarator" => parent
+                .child_by_field_name("value")
+                .filter(|value| is_function(value.kind())),
+            _ => None,
+        }
+    }
+
+    /// The signature and documentation of a definition, under the name it is exported as.
+    pub fn describe(&self, site: &Site, name: &str) -> Description {
+        let node = |(start, end): (usize, usize)| self.root.descendant_for_byte_range(start, end);
+        let signature = site.function.and_then(node).and_then(|function| {
+            let parameters = function
+                .child_by_field_name("parameters")
+                .map(|parameters| self.text(parameters).to_string())
+                .or_else(|| {
+                    let single = function.child_by_field_name("parameter")?;
+                    Some(format!("({})", self.text(single)))
+                })?;
+            let parameters = parameters.split_whitespace().collect::<Vec<_>>().join(" ");
+            Some(format!("{name}{parameters}"))
+        });
+        let doc = node(site.name).and_then(|name| self.doc_of(name));
+        Description { signature, doc }
+    }
+
+    /// The `/** */` comment directly above the statement, object entry or method that
+    /// holds `name`. A plain `/* */` or `//` comment is not documentation, and nor is one
+    /// with code between it and the definition.
+    fn doc_of(&self, name: Node<'a>) -> Option<String> {
+        let mut item = name;
+        while let Some(parent) = self.parent(item) {
+            if matches!(
+                parent.kind(),
+                "program" | "statement_block" | "object" | "class_body"
+            ) {
+                break;
+            }
+            item = parent;
+        }
+        let comment = item.prev_named_sibling()?;
+        let text = self.text(comment);
+        if comment.kind() != "comment"
+            || !text.starts_with("/**")
+            || !self.code[comment.end_byte()..item.start_byte()]
+                .trim()
+                .is_empty()
+        {
+            return None;
+        }
+        let body = text.strip_prefix("/**")?.strip_suffix("*/")?;
+        let lines: Vec<&str> = body
+            .lines()
+            .map(|line| {
+                let trimmed = line.trim();
+                let stripped = trimmed.strip_prefix('*').unwrap_or(trimmed);
+                stripped.strip_prefix(' ').unwrap_or(stripped)
+            })
+            .collect();
+        let doc = lines.join("\n").trim().to_string();
+        (!doc.is_empty()).then_some(doc)
     }
 
     /// `base.total`, with `base` the parent module: the parent's own function, unchanged.
@@ -755,6 +894,13 @@ impl<'a> Script<'a> {
         }
         false
     }
+}
+
+fn is_function(kind: &str) -> bool {
+    matches!(
+        kind,
+        "function_expression" | "generator_function" | "arrow_function"
+    )
 }
 
 fn is_name(kind: &str) -> bool {

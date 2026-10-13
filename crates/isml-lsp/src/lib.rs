@@ -10,6 +10,7 @@ pub mod hover;
 pub mod isml;
 pub mod js;
 pub mod live;
+pub mod members;
 pub mod metadata;
 pub mod reference;
 pub mod references;
