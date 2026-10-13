@@ -8,6 +8,7 @@ pub mod diagnose;
 pub mod errors;
 pub mod hover;
 pub mod isml;
+pub mod js;
 pub mod live;
 pub mod metadata;
 pub mod reference;
