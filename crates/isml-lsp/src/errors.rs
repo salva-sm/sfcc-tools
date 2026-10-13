@@ -1,6 +1,6 @@
 //! Pending SFCC error count from log-diff, shown via LSP progress (the only channel Zed renders for an extension).
 
-use crossbeam_channel::{SendError, Sender};
+use crossbeam_channel::{Receiver, SendError, Sender};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -37,7 +37,8 @@ impl Options {
     }
 }
 
-pub fn report(roots: Vec<PathBuf>, options: Options, sender: Sender<Message>) {
+/// Polls until `stop` is dropped, when the server shuts down.
+pub fn report(roots: Vec<PathBuf>, options: Options, sender: Sender<Message>, stop: Receiver<()>) {
     std::thread::spawn(move || {
         if options.autostart {
             for (level, text) in crate::sync::autostart(&roots, "log-diff", "errors") {
@@ -56,7 +57,9 @@ pub fn report(roots: Vec<PathBuf>, options: Options, sender: Sender<Message>) {
                 return;
             }
             shown = message;
-            std::thread::sleep(POLL);
+            if !crate::sync::keep_polling(&stop, POLL) {
+                return;
+            }
         }
     });
 }
@@ -135,6 +138,24 @@ fn create_token(sender: &Sender<Message>) -> Result<(), SendError<Message>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stops_polling_when_the_server_shuts_down() {
+        let (sender, messages) = crossbeam_channel::unbounded();
+        let (stop, stopped) = crossbeam_channel::bounded(0);
+        report(Vec::new(), Options::default(), sender, stopped);
+        drop(stop);
+        // The thread drops its sender on the way out; until then the channel stays connected.
+        loop {
+            match messages.recv_timeout(Duration::from_secs(5)) {
+                Ok(_) => continue,
+                Err(error) => {
+                    assert_eq!(error, crossbeam_channel::RecvTimeoutError::Disconnected);
+                    break;
+                }
+            }
+        }
+    }
 
     fn status(pending: usize, new: usize) -> Status {
         Status {

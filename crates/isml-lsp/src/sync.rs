@@ -1,7 +1,7 @@
 //! Uploader state via LSP progress, Zed's only status channel for an extension.
 //! Only uploading and failed are shown: a progress item that never ends reads as a stuck spinner.
 
-use crossbeam_channel::{SendError, Sender};
+use crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -45,7 +45,8 @@ impl Options {
     }
 }
 
-pub fn report(roots: Vec<PathBuf>, options: Options, sender: Sender<Message>) {
+/// Polls until `stop` is dropped, when the server shuts down.
+pub fn report(roots: Vec<PathBuf>, options: Options, sender: Sender<Message>, stop: Receiver<()>) {
     std::thread::spawn(move || {
         if create_token(&sender).is_err() {
             return;
@@ -74,9 +75,18 @@ pub fn report(roots: Vec<PathBuf>, options: Options, sender: Sender<Message>) {
                 }
             }
             shown = now;
-            std::thread::sleep(POLL);
+            if !keep_polling(&stop, POLL) {
+                return;
+            }
         }
     });
+}
+
+/// Waits out one poll, or says to stop as soon as the server shuts down. Waiting for a send
+/// to fail is not enough: the poller holds a sender, and the writer thread only ends once
+/// every sender is gone, so the process would outlive the editor.
+pub fn keep_polling(stop: &Receiver<()>, poll: Duration) -> bool {
+    matches!(stop.recv_timeout(poll), Err(RecvTimeoutError::Timeout))
 }
 
 /// Only the edges: into a failure, and out of it. Retries in between stay in the status bar.
@@ -253,6 +263,28 @@ fn create_token(sender: &Sender<Message>) -> Result<(), SendError<Message>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stops_polling_when_the_server_shuts_down() {
+        let (sender, messages) = crossbeam_channel::unbounded();
+        let (stop, stopped) = crossbeam_channel::bounded(0);
+        let options = Options {
+            autostart: false,
+            notify: false,
+        };
+        report(Vec::new(), options, sender, stopped);
+        drop(stop);
+        // The thread drops its sender on the way out; until then the channel stays connected.
+        loop {
+            match messages.recv_timeout(Duration::from_secs(5)) {
+                Ok(_) => continue,
+                Err(error) => {
+                    assert_eq!(error, crossbeam_channel::RecvTimeoutError::Disconnected);
+                    break;
+                }
+            }
+        }
+    }
 
     fn status(state: State, at: i64) -> Status {
         Status {
