@@ -16,8 +16,8 @@ Three pieces, each buildable on its own:
 - **`../../crates/isml-lsp/`** — a library plus the thin binary that serves it. It knows
   what no general editor can: SFCC paths, the ISML tag set, the `dw.*` API, the object
   metadata checked into the repository, and the cartridge path that decides which
-  `server.append` runs. It answers `textDocument/definition`, `textDocument/completion`,
-  `textDocument/hover` and `textDocument/publishDiagnostics`.
+  `server.append` runs. It answers `textDocument/definition`, `textDocument/references`,
+  `textDocument/completion`, `textDocument/hover` and `textDocument/publishDiagnostics`.
 
 ## Install
 
@@ -93,9 +93,60 @@ bundles are offered instead.
 
 The server is registered for **ISML and JavaScript**, because `require('*/cartridge/...')`
 is just as unnavigable in a controller as in a template. It only ever answers when the
-cursor is on one of the paths above, so it never competes with the TypeScript server. To
+cursor is on one of the paths above, or for [Find All References](#who-calls-a-function)
+on an exported function, so it rarely competes with the TypeScript server. To
 turn it off for JavaScript, remove `"JavaScript"` from `languages` in
 `extensions/isml/extension.toml`, or disable the `isml-lsp` server in your Zed settings.
+
+## Who calls a function
+
+`Find All References` on a function a cartridge script exports lists every use that
+reaches that copy of it, in scripts and templates. Put the cursor on the definition
+(`function total(`, `total: total`, `exports.total =`, an override's `base.total =`) or on
+any use; from a use, the copies it resolves to are searched, as `Go to Definition` would
+pick them.
+
+| A use like | Counts when |
+| ---------- | ----------- |
+| `var helpers = require('...'); helpers.total()` | the require reaches the file |
+| `require('...').total()`, also inside `${...}` in a template | same |
+| `var { total } = require('...'); total()`, also renamed (`{ total: sum }`) | same |
+| `var t = helpers.total; t()` | same |
+| `var base = module.superModule; base.total()` | the file is an override of this one |
+| `total()` inside the defining file | always |
+
+Which file a require reaches follows the same rules as `Go to Definition`: `~/` and
+`app_brand/...` only their own cartridge, `./` relative to the file, `*/` and
+`module.superModule` the cartridge path. A copy to the left hides this one when it defines
+`total` itself, or exports an object without it (`module.exports = { other: ... }`): a
+`*/` caller only counts in a storefront where, walking the path from its start, no copy
+before this one does either; an override's `base.total` only when nothing between it and
+this copy does. An override that hands the parent's function on unchanged
+(`module.exports = base`, `total: base.total`, `Object.assign({}, base, ...)`) hides
+nothing. A caller counts only in the storefronts whose path holds its cartridge.
+
+```
+var base = module.superModule;      // app_brand: hides the base copy from `*/` callers
+var superTotal = base.total;        // ...but this saves it, and is listed
+base.total = function (basket) {
+    return superTotal(basket);      // ...and so is this call through what it saved
+};
+module.exports = base;
+```
+
+Once `base.total` is replaced, reading it again — from inside a function, or further down
+the file — gets the override's own function, not the parent's: it is listed with the
+override.
+
+With no cartridge path recorded, every caller of every copy is listed.
+
+Scripts are parsed with tree-sitter, and a template's `${...}` and `<isscript>` with them,
+so comments, strings and regular expressions never count, and a name belongs to the
+function that declares it. A module bound to a variable, required inline, destructured
+or aliased is followed; one passed as an argument, stored on an object or reassigned is
+not, and neither is client code under `cartridge/client/`. Each request reads every
+server-side file again (about 300 ms on a checkout of 3,500), so edits are seen at once;
+a file created after the first request is not, until Zed restarts the server.
 
 ## What it completes
 

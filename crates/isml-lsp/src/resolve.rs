@@ -189,7 +189,7 @@ fn modules(module: &str, from: &Path, workspace: &Workspace) -> Vec<Hit> {
 }
 
 /// Every cartridge's copy of a `*/` module.
-fn path_modules(rest: &str, from: &Path, workspace: &Workspace) -> Vec<Override> {
+pub(crate) fn path_modules(rest: &str, from: &Path, workspace: &Workspace) -> Vec<Override> {
     workspace
         .cartridges_from(from)
         .into_iter()
@@ -209,7 +209,7 @@ fn push_module(hits: &mut Vec<Hit>, candidate: &Path) {
 }
 
 /// `x` resolves to `x`, `x.js`, `x.json`, `x.ds` or `x/index.js`, as SFCC does.
-fn existing_module(candidate: &Path) -> Option<PathBuf> {
+pub(crate) fn existing_module(candidate: &Path) -> Option<PathBuf> {
     if candidate.is_file() {
         return Some(candidate.to_path_buf());
     }

@@ -48,6 +48,7 @@ pub struct Workspace {
     templates: OnceLock<Vec<String>>,
     controllers: OnceLock<Controllers>,
     resource_keys: OnceLock<HashSet<String>>,
+    sources: OnceLock<Vec<PathBuf>>,
 }
 
 impl Workspace {
@@ -112,6 +113,18 @@ impl Workspace {
                 collect_keys(&directory, &mut keys);
             }
             keys
+        })
+    }
+
+    /// Every server-side script and template, for Find All References. Built on the first
+    /// request; the files are read again on each, so edits are seen, but new files are not.
+    pub fn sources(&self) -> &[PathBuf] {
+        self.sources.get_or_init(|| {
+            let mut files = Vec::new();
+            for cartridge in &self.cartridges {
+                collect_sources(&cartridge.cartridge_dir(), 0, &mut files);
+            }
+            files
         })
     }
 
@@ -186,6 +199,35 @@ fn collect_keys(directory: &Path, into: &mut HashSet<String>) {
                     into.insert(key.to_string());
                 }
             }
+        }
+    }
+}
+
+/// `client/` is bundled for the browser and `static/` holds the bundles: neither can
+/// require a server script.
+fn collect_sources(dir: &Path, depth: usize, into: &mut Vec<PathBuf>) {
+    const SOURCE_EXTENSIONS: [&str; 3] = ["js", "ds", "isml"];
+    if depth > TEMPLATE_DEPTH {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            let name = entry.file_name();
+            if name != "client" && !SKIPPED.iter().any(|skipped| name == *skipped) {
+                collect_sources(&path, depth + 1, into);
+            }
+            continue;
+        }
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| SOURCE_EXTENSIONS.contains(&extension))
+        {
+            into.push(path);
         }
     }
 }
