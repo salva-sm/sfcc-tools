@@ -438,6 +438,7 @@ async fn run(cli: Cli) -> Result<()> {
                 watch: args.options(),
                 jobs,
                 cartridges: cli.cartridge.clone(),
+                allow_shared_instance: cli.allow_shared_instance,
             };
             start_detached(&config, spawn)
         }

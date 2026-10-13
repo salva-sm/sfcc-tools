@@ -12,6 +12,8 @@ pub struct SpawnArgs {
     pub watch: crate::watch::WatchOptions,
     pub jobs: usize,
     pub cartridges: Vec<String>,
+    /// The watcher checks the instance again, and would refuse it without this.
+    pub allow_shared_instance: bool,
 }
 
 pub fn of(config: &Config) -> Daemon {
@@ -24,7 +26,12 @@ pub fn running_pid(config: &Config) -> Option<u32> {
 
 pub fn start(config: &Config, args: SpawnArgs) -> Result<u32> {
     let executable = std::env::current_exe().context("cannot locate the sfcc-upload executable")?;
-    let mut command = Command::new(executable);
+    let command = watch_command(Command::new(executable), config, &args);
+    let what = format!("a watcher for {}", config.code_version);
+    daemon::start(&of(config), command, &what)
+}
+
+fn watch_command(mut command: Command, config: &Config, args: &SpawnArgs) -> Command {
     command
         .arg("--config")
         .arg(&config.dw_json)
@@ -48,8 +55,10 @@ pub fn start(config: &Config, args: SpawnArgs) -> Result<u32> {
     for cartridge in &args.cartridges {
         command.arg("--cartridge").arg(cartridge);
     }
-    let what = format!("a watcher for {}", config.code_version);
-    daemon::start(&of(config), command, &what)
+    if args.allow_shared_instance {
+        command.arg("--allow-shared-instance");
+    }
+    command
 }
 
 pub fn stop(config: &Config) -> Result<Option<u32>> {
@@ -138,4 +147,39 @@ pub fn follow(config: &Config, lines: usize) -> Result<()> {
 
 pub fn describe_state(config: &Config) -> String {
     daemon::describe(&of(config))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sfcc_core::testing::MockDav;
+
+    fn arguments(command: &Command) -> Vec<String> {
+        command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_watcher_gets_the_permission_start_was_given() {
+        let config = MockDav::start().await.config();
+        let mut args = SpawnArgs {
+            watch: crate::watch::WatchOptions {
+                initial_push: true,
+                full: false,
+                reload_port: None,
+                problems: false,
+            },
+            jobs: 4,
+            cartridges: Vec::new(),
+            allow_shared_instance: true,
+        };
+        let allowed = arguments(&watch_command(Command::new("x"), &config, &args));
+        assert!(allowed.contains(&"--allow-shared-instance".to_string()));
+
+        args.allow_shared_instance = false;
+        let refused = arguments(&watch_command(Command::new("x"), &config, &args));
+        assert!(!refused.contains(&"--allow-shared-instance".to_string()));
+    }
 }
