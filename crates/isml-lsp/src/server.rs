@@ -21,7 +21,9 @@ use lsp_types::{
 use crate::complete::{self, Completer};
 use crate::metadata::Metadata;
 use crate::workspace::Workspace;
-use crate::{diagnose, errors, hover, live, reference, references, resolve, sync, validate};
+use crate::{
+    diagnose, errors, hover, live, members, reference, references, resolve, sync, validate,
+};
 
 pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
@@ -157,7 +159,11 @@ impl Server {
         let column = char_offset(line, position.position.character as usize);
 
         let docs = hover::member_markdown(line, column, text)
-            .or_else(|| self.reference_hover(&uri, position.position, &file));
+            .or_else(|| self.reference_hover(&uri, position.position, &file))
+            .or_else(|| {
+                let definitions = self.members_at(&file, text, position.position)?;
+                members::markdown(&definitions)
+            });
         let value = match (live::markdown(&file, line, column), docs) {
             (Some(live), Some(docs)) => format!(
                 "{live}
@@ -238,18 +244,52 @@ impl Server {
         let position = params.text_document_position_params;
         let uri = position.text_document.uri;
         let file = uri.to_file_path().ok()?;
-        let reference = self.reference_at(&uri, position.position)?;
-
-        let locations: Vec<Location> = resolve::resolve(&reference, &file, &self.workspace)
-            .into_iter()
-            .filter_map(|hit| {
-                let target = Url::from_file_path(&hit.path).ok()?;
-                let start = Position::new(hit.line, 0);
-                Some(Location::new(target, Range::new(start, start)))
-            })
-            .collect();
+        let locations: Vec<Location> = match self.reference_at(&uri, position.position) {
+            Some(reference) => resolve::resolve(&reference, &file, &self.workspace)
+                .into_iter()
+                .filter_map(|hit| {
+                    let target = Url::from_file_path(&hit.path).ok()?;
+                    let start = Position::new(hit.line, 0);
+                    Some(Location::new(target, Range::new(start, start)))
+                })
+                .collect(),
+            None => {
+                let text = self.documents.get(&uri)?;
+                self.members_at(&file, text, position.position)?
+                    .into_iter()
+                    .filter_map(|definition| {
+                        let target = Url::from_file_path(&definition.path).ok()?;
+                        let range = Range::new(
+                            Position::new(definition.line, definition.start),
+                            Position::new(definition.line, definition.end),
+                        );
+                        Some(Location::new(target, range))
+                    })
+                    .collect()
+            }
+        };
 
         (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
+    }
+
+    /// Where the member of a cartridge module under the cursor is defined.
+    fn members_at(
+        &self,
+        file: &Path,
+        text: &str,
+        position: Position,
+    ) -> Option<Vec<members::Definition>> {
+        let offset = char_offset_at(text, position)?;
+        let definitions = members::at(file, text, offset, &self.workspace, &self.open());
+        (!definitions.is_empty()).then_some(definitions)
+    }
+
+    /// The editor's unsaved text by file, which wins over the copy on disk.
+    fn open(&self) -> HashMap<PathBuf, &str> {
+        self.documents
+            .iter()
+            .filter_map(|(uri, text)| Some((uri.to_file_path().ok()?, text.as_str())))
+            .collect()
     }
 
     fn references(&self, params: ReferenceParams) -> Option<Vec<Location>> {
@@ -263,13 +303,7 @@ impl Server {
             offset: char_offset_at(text, position.position)?,
             include_declaration: params.context.include_declaration,
         };
-        let open: HashMap<PathBuf, &str> = self
-            .documents
-            .iter()
-            .filter_map(|(uri, text)| Some((uri.to_file_path().ok()?, text.as_str())))
-            .collect();
-
-        let locations: Vec<Location> = references::find(&query, &self.workspace, &open)
+        let locations: Vec<Location> = references::find(&query, &self.workspace, &self.open())
             .into_iter()
             .filter_map(|found| {
                 let target = Url::from_file_path(&found.path).ok()?;

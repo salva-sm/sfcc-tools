@@ -148,6 +148,46 @@ not, and neither is client code under `cartridge/client/`. Each request reads ev
 server-side file again (about 300 ms on a checkout of 3,500), so edits are seen at once;
 a file created after the first request is not, until Zed restarts the server.
 
+## The function behind a module member
+
+`Go to Definition` and hover also work on a member of a cartridge module:
+`helpers.total(...)`, `require('...').total(...)`, a name destructured from a require or
+saved from one (`var superTotal = base.total`), or an override's `base.total(...)`. They
+follow the cartridge path to the copy that runs. A copy that inherits its parent's
+function sends the search on to the next copy to its right in that path:
+
+- `module.exports = base`;
+- an object made from the parent (`Object.create(base)`, `Object.assign({}, base)`,
+  `{ ...base }`);
+- a `total: base.total` key.
+
+A copy that exports its own object without `total` ends the search: whoever reaches it
+finds nothing.
+
+With `storefront` set, only that storefront's definition is returned; otherwise one per
+distinct definition.
+
+The hover shows the function's signature, its `/** */` comment and where it is defined:
+
+````
+```js
+total(basket, options)
+```
+
+Adds up the basket.
+
+*@param* {dw.order.Basket} basket - the basket
+*@returns* {number} the total
+
+Defined in `app_brand`, run by `storefront_a`, `storefront_b`
+````
+
+The definition is the function the export names (`total: computeTotal` jumps to
+`function computeTotal`), and the documentation is the `/** */` block right above it, with
+nothing in between. The cartridge name links to the file. Like
+[Find All References](#who-calls-a-function), this reads the parsed script and infers no
+types: what a function returns is whatever its `@returns` says.
+
 ## What it completes
 
 Zed falls back to HTML in a template, which offers `<is:include>` and other tags that do

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::js::{Export, Origin, Parsed, Script, Value};
+use crate::js::{Export, Origin, Parsed, Script};
 use crate::reference::Reference;
 use crate::resolve::{self, Override};
 use crate::workspace::{Cartridge, Workspace};
@@ -151,26 +151,7 @@ fn targets_at(
             return here();
         }
     }
-    // The property of `helpers.total`: what `helpers` is.
-    let receiver = script
-        .parent(node)
-        .filter(|parent| parent.kind() == "member_expression")
-        .filter(|member| {
-            member
-                .child_by_field_name("property")
-                .is_some_and(|property| property.id() == node.id())
-        })
-        .and_then(|member| member.child_by_field_name("object"));
-    let (origin, key) = match receiver {
-        Some(object) => match script.value_of(object)? {
-            Value::Module(origin) => (origin, name),
-            Value::Export(..) => return None,
-        },
-        None => match script.value_of(node)? {
-            Value::Export(origin, key) => (origin, key),
-            Value::Module(_) => return None,
-        },
-    };
+    let (origin, key) = script.export_at(node)?;
     Some((key, origin_files(&origin, file, workspace)))
 }
 
@@ -349,7 +330,7 @@ impl Target {
 }
 
 /// Byte ranges as LSP locations: zero-based lines, UTF-16 columns.
-fn located(path: &Path, text: &str, ranges: &[(usize, usize)]) -> Vec<Found> {
+pub(crate) fn located(path: &Path, text: &str, ranges: &[(usize, usize)]) -> Vec<Found> {
     let line_starts: Vec<usize> = std::iter::once(0)
         .chain(text.match_indices('\n').map(|(at, _)| at + 1))
         .collect();
@@ -372,7 +353,7 @@ fn located(path: &Path, text: &str, ranges: &[(usize, usize)]) -> Vec<Found> {
     found
 }
 
-fn read(path: &Path, open: &HashMap<PathBuf, &str>) -> Option<String> {
+pub(crate) fn read(path: &Path, open: &HashMap<PathBuf, &str>) -> Option<String> {
     match open.get(path) {
         Some(text) => Some(text.to_string()),
         None => fs::read_to_string(path).ok(),
