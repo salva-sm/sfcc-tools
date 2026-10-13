@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 use lsp_types::Url;
 
-use crate::js::{Export, Origin, Parsed};
+use tree_sitter::Node;
+
+use crate::js::{Export, Origin, Parsed, Script, Value};
 use crate::reference::Reference;
 use crate::references::{located, read};
 use crate::resolve;
@@ -27,6 +29,8 @@ pub struct Definition {
     pub end: u32,
     /// `total(basket, options)`, when the definition is a function written out there.
     pub signature: Option<String>,
+    /// Each parameter of that function as written, and its name when it has a plain one.
+    pub parameters: Vec<(String, Option<String>)>,
     /// The `/** ... */` block above the definition, without its stars.
     pub doc: Option<String>,
 }
@@ -45,23 +49,159 @@ pub fn at(
         return Vec::new();
     };
     let script = parsed.script();
-    let offset = text
-        .char_indices()
-        .nth(offset)
-        .map_or(text.len(), |(at, _)| at);
-    let Some((origin, name)) = script
-        .name_at(offset)
-        .and_then(|node| script.export_at(node))
-    else {
+    match script.name_at(byte_offset(text, offset)) {
+        Some(node) => of(&script, node, file, workspace, open),
+        None => Vec::new(),
+    }
+}
+
+/// What the member `node` names resolves to, as `at`.
+pub fn of<'a>(
+    script: &Script<'a>,
+    node: Node<'a>,
+    file: &Path,
+    workspace: &Workspace,
+    open: &HashMap<PathBuf, &str>,
+) -> Vec<Definition> {
+    let Some((origin, name)) = script.export_at(node) else {
         return Vec::new();
     };
+    let chains = chains(&origin, file, workspace);
+    let copies = Copies::load(&chains, open);
+    resolved(&chains, &name, workspace, &copies.scripts())
+}
 
+/// A member a module offers after `helpers.`, with where it is defined.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offered {
+    pub name: String,
+    pub definitions: Vec<Definition>,
+}
+
+/// What the module before the dot at `offset` exports, as the cartridge path builds it:
+/// each copy's own names, then its parent's while it inherits them. With the number of
+/// characters of the member already typed. `None` unless the module is a cartridge one, so
+/// `dw.*` and `.custom.` completion still answer.
+pub fn offered(
+    file: &Path,
+    text: &str,
+    offset: usize,
+    workspace: &Workspace,
+    open: &HashMap<PathBuf, &str>,
+) -> Option<(Vec<Offered>, usize)> {
+    let at = byte_offset(text, offset);
+    let typed: Vec<char> = text[..at]
+        .chars()
+        .rev()
+        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+        .collect();
+    let start = at - typed.iter().map(|c| c.len_utf8()).sum::<usize>();
+    if !text[..start].ends_with('.') {
+        return None;
+    }
+    // `helpers.` with nothing after the dot is not yet a member: give it a name to parse.
+    let patched;
+    let text = match typed.is_empty() {
+        true => {
+            patched = format!("{}x{}", &text[..at], &text[at..]);
+            patched.as_str()
+        }
+        false => text,
+    };
+    let parsed = Parsed::new(file, text)?;
+    let script = parsed.script();
+    let property = script.name_at(start)?;
+    let member = script
+        .parent(property)
+        .filter(|parent| parent.kind() == "member_expression")?;
+    let Value::Module(origin) = script.value_of(member.child_by_field_name("object")?)? else {
+        return None;
+    };
+
+    let mut chains = chains(&origin, file, workspace);
+    if let Some(chosen) = &workspace.storefront {
+        if chains
+            .iter()
+            .any(|(label, _)| label.as_ref() == Some(chosen))
+        {
+            chains.retain(|(label, _)| label.as_ref() == Some(chosen));
+        }
+    }
+    let copies = Copies::load(&chains, open);
+    let scripts = copies.scripts();
+    let mut names: Vec<String> = Vec::new();
+    for (_, chain) in &chains {
+        for path in chain {
+            let Some((_, copy)) = scripts.get(path) else {
+                break;
+            };
+            let (exported, inherits) = copy.exported_names();
+            for name in exported {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            if !inherits {
+                break;
+            }
+        }
+    }
+    let offered: Vec<Offered> = names
+        .into_iter()
+        .map(|name| Offered {
+            definitions: resolved(&chains, &name, workspace, &scripts),
+            name,
+        })
+        .filter(|offered| !offered.definitions.is_empty())
+        .collect();
+    (!offered.is_empty()).then_some((offered, typed.len()))
+}
+
+/// Every copy a request may ask about, read and parsed once however many names it is
+/// asked about.
+struct Copies {
+    loaded: HashMap<PathBuf, (String, Parsed)>,
+}
+
+impl Copies {
+    fn load(chains: &[(Option<String>, Vec<PathBuf>)], open: &HashMap<PathBuf, &str>) -> Copies {
+        let mut loaded = HashMap::new();
+        for path in chains.iter().flat_map(|(_, chain)| chain) {
+            if loaded.contains_key(path) {
+                continue;
+            }
+            let Some(text) = read(path, open) else {
+                continue;
+            };
+            if let Some(parsed) = Parsed::new(path, &text) {
+                loaded.insert(path.clone(), (text, parsed));
+            }
+        }
+        Copies { loaded }
+    }
+
+    fn scripts(&self) -> HashMap<PathBuf, (&str, Script<'_>)> {
+        self.loaded
+            .iter()
+            .map(|(path, (text, parsed))| (path.clone(), (text.as_str(), parsed.script())))
+            .collect()
+    }
+}
+
+/// The definition each chain reaches, one per distinct file, labelled with the storefronts
+/// that reach it: the chosen storefront's only, when it has one.
+fn resolved(
+    chains: &[(Option<String>, Vec<PathBuf>)],
+    name: &str,
+    workspace: &Workspace,
+    scripts: &HashMap<PathBuf, (&str, Script)>,
+) -> Vec<Definition> {
     let mut found: Vec<Definition> = Vec::new();
-    for (storefront, chain) in chains(&origin, file, workspace) {
-        let Some(mut definition) = defined_along(&chain, &name, workspace, open) else {
+    for (storefront, chain) in chains {
+        let Some(mut definition) = defined_along(chain, name, workspace, scripts) else {
             continue;
         };
-        if let (Some(chosen), Some(label)) = (&workspace.storefront, &storefront) {
+        if let (Some(chosen), Some(label)) = (&workspace.storefront, storefront) {
             if chosen == label {
                 definition.storefronts = vec![label.clone()];
                 return vec![definition];
@@ -71,14 +211,20 @@ pub fn at(
             .iter_mut()
             .find(|seen| seen.path == definition.path && seen.line == definition.line)
         {
-            Some(seen) => seen.storefronts.extend(storefront),
+            Some(seen) => seen.storefronts.extend(storefront.clone()),
             None => {
-                definition.storefronts = storefront.into_iter().collect();
+                definition.storefronts = storefront.iter().cloned().collect();
                 found.push(definition);
             }
         }
     }
     found
+}
+
+fn byte_offset(text: &str, chars: usize) -> usize {
+    text.char_indices()
+        .nth(chars)
+        .map_or(text.len(), |(at, _)| at)
 }
 
 /// The hover for a member: signature and documentation of each definition, and where it is.
@@ -229,18 +375,16 @@ fn defined_along(
     chain: &[PathBuf],
     name: &str,
     workspace: &Workspace,
-    open: &HashMap<PathBuf, &str>,
+    scripts: &HashMap<PathBuf, (&str, Script)>,
 ) -> Option<Definition> {
     for path in chain {
-        let text = read(path, open)?;
-        let parsed = Parsed::new(path, &text)?;
-        let script = parsed.script();
+        let (text, script) = scripts.get(path)?;
         match script.export(name) {
             Export::Defines(definition) => {
                 // The declaration carries the documentation; `total: total` only names it.
                 let site = definition.sites.first()?;
                 let description = script.describe(site, name);
-                let location = located(path, &text, &[site.name]).into_iter().next()?;
+                let location = located(path, text, &[site.name]).into_iter().next()?;
                 return Some(Definition {
                     storefronts: Vec::new(),
                     cartridge: workspace
@@ -252,6 +396,7 @@ fn defined_along(
                     start: location.start,
                     end: location.end,
                     signature: description.signature,
+                    parameters: description.parameters,
                     doc: description.doc,
                 });
             }
@@ -564,6 +709,105 @@ mod tests {
         assert_eq!(found[0].signature.as_deref(), Some("total(basket)"));
     }
 
+    fn offered_names(workspace: &Workspace, root: &Path, typed: &str) -> Vec<String> {
+        let path = root.join("cartridges/app_brand").join(CART);
+        let text = format!("{CALLER}{typed}");
+        let Some((offered, _)) = offered(
+            &path,
+            &text,
+            text.chars().count(),
+            workspace,
+            &HashMap::new(),
+        ) else {
+            return Vec::new();
+        };
+        offered
+            .into_iter()
+            .map(|offered| {
+                let storefronts: Vec<String> = offered
+                    .definitions
+                    .iter()
+                    .map(|definition| {
+                        format!(
+                            "{}:{}",
+                            definition.cartridge,
+                            definition.storefronts.join(",")
+                        )
+                    })
+                    .collect();
+                format!("{} {}", offered.name, storefronts.join(" "))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn offers_what_each_copy_exports_and_inherits() {
+        let root = checkout(
+            "isml-lsp-members-offered",
+            &[
+                ("app_storefront_base", HELPER, DOCUMENTED),
+                ("app_na", HELPER, PASSES_ON),
+                ("app_brand", CART, CALLER),
+            ],
+        );
+        let found = offered_names(&workspace(&root, None), &root, "helpers.");
+        assert_eq!(
+            found,
+            [
+                "other app_na:site_a",
+                "total app_storefront_base:site_a,site_b"
+            ]
+        );
+    }
+
+    #[test]
+    fn offers_only_the_chosen_storefront() {
+        let root = checkout(
+            "isml-lsp-members-offered-chosen",
+            &[
+                ("app_storefront_base", HELPER, DOCUMENTED),
+                ("app_na", HELPER, PASSES_ON),
+                ("app_brand", CART, CALLER),
+            ],
+        );
+        let found = offered_names(&workspace(&root, Some("site_b")), &root, "helpers.to");
+        assert_eq!(found, ["total app_storefront_base:site_b"]);
+    }
+
+    #[test]
+    fn a_copy_that_does_not_inherit_hides_its_parent_names() {
+        let own = "module.exports = {\n    mine: function (a) {}\n};\n";
+        let root = checkout(
+            "isml-lsp-members-offered-own",
+            &[
+                ("app_storefront_base", HELPER, DOCUMENTED),
+                ("app_brand", HELPER, own),
+                ("app_brand", CART, CALLER),
+            ],
+        );
+        let found = offered_names(&workspace(&root, None), &root, "helpers.");
+        assert_eq!(found, ["mine app_brand:site_a,site_b"]);
+    }
+
+    #[test]
+    fn offers_nothing_for_a_platform_module_or_a_plain_object() {
+        let root = checkout(
+            "isml-lsp-members-offered-none",
+            &[("app_storefront_base", HELPER, DOCUMENTED)],
+        );
+        let workspace = workspace(&root, None);
+        for typed in [
+            "var Site = require('dw/system/Site');\nSite.",
+            "var o = {};\no.",
+            "helpers.total(1).",
+        ] {
+            assert!(
+                offered_names(&workspace, &root, typed).is_empty(),
+                "{typed}"
+            );
+        }
+    }
+
     #[test]
     fn the_hover_says_where_and_for_whom() {
         let definition = Definition {
@@ -574,6 +818,7 @@ mod tests {
             start: 0,
             end: 5,
             signature: Some("total(basket)".into()),
+            parameters: vec![("basket".into(), Some("basket".into()))],
             doc: Some("Adds up.".into()),
         };
         let text = markdown(&[definition]).unwrap();

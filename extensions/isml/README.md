@@ -17,7 +17,8 @@ Three pieces, each buildable on its own:
   what no general editor can: SFCC paths, the ISML tag set, the `dw.*` API, the object
   metadata checked into the repository, and the cartridge path that decides which
   `server.append` runs. It answers `textDocument/definition`, `textDocument/references`,
-  `textDocument/completion`, `textDocument/hover` and `textDocument/publishDiagnostics`.
+  `textDocument/completion`, `textDocument/signatureHelp`, `textDocument/hover` and
+  `textDocument/publishDiagnostics`.
 
 ## Install
 
@@ -184,9 +185,22 @@ Defined in `app_brand`, run by `storefront_a`, `storefront_b`
 
 The definition is the function the export names (`total: computeTotal` jumps to
 `function computeTotal`), and the documentation is the `/** */` block right above it, with
-nothing in between. The cartridge name links to the file. Like
-[Find All References](#who-calls-a-function), this reads the parsed script and infers no
-types: what a function returns is whatever its `@returns` says.
+nothing in between. The cartridge name links to the file.
+
+Typing `helpers.` completes what the module exports as the cartridge path builds it. Each
+copy contributes its own functions, then its parent's while it inherits them; a copy that
+exports its own object hides its parent's names. Every suggestion carries its signature and
+documentation. With `storefront` set, only that storefront's are offered. Only a cartridge
+module answers, so `dw.*` and `.custom.` completion are untouched.
+
+Inside the parentheses of a call, signature help shows the parameters and highlights the
+one the cursor is on, also while the call is still being typed. Commas inside a string, an
+array or a nested call are theirs, not the call's, and a parameter like `b = [1, 2]` or
+`{ a, b }` is one parameter. It works on such a member, with each `@param`'s type and
+text, and on a method of a `dw.*` class the file requires (`PriceBookMgr.getPriceBook(`).
+
+Like [Find All References](#who-calls-a-function), all this reads the parsed script and
+infers no types: what a function returns is whatever its `@returns` says.
 
 ## What it completes
 
