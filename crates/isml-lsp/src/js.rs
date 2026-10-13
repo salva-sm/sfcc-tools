@@ -6,7 +6,7 @@
 //! Block scoping of `let` and `const` is not modelled; nor is a variable reassigned after its
 //! declaration, which keeps the value it was declared with.
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -103,8 +103,19 @@ pub struct Site {
 pub struct Description {
     /// `total(basket, options)`, called by the exported name.
     pub signature: Option<String>,
+    /// Each parameter as written, and the name a `@param` would give it.
+    pub parameters: Vec<(String, Option<String>)>,
     /// The `/** */` block right above it, stars and indentation stripped.
     pub doc: Option<String>,
+}
+
+/// `module.exports = value`, the variable `value` names when it is one, and the object
+/// literal or call behind it.
+#[derive(Clone, Copy)]
+struct Exported<'a> {
+    value: Option<Node<'a>>,
+    local: Option<Node<'a>>,
+    object: Option<Node<'a>>,
 }
 
 pub struct Script<'a> {
@@ -119,6 +130,12 @@ pub struct Script<'a> {
     /// walking down from the root, too slow to do for every name read.
     nodes: Vec<Node<'a>>,
     parents: HashMap<usize, Node<'a>>,
+    /// The assignments, where exports are made: a file is asked about each name it could
+    /// export, and walking every node for each would be most of a completion's cost.
+    assignments: Vec<Node<'a>>,
+    exported: OnceCell<Exported<'a>>,
+    /// Whether `exports` is written to anywhere.
+    writes_exports: OnceCell<bool>,
 }
 
 impl<'a> Script<'a> {
@@ -130,10 +147,16 @@ impl<'a> Script<'a> {
             bound: RefCell::new(HashMap::new()),
             nodes: Vec::new(),
             parents: HashMap::new(),
+            assignments: Vec::new(),
+            exported: OnceCell::new(),
+            writes_exports: OnceCell::new(),
         };
         let mut pending = vec![root];
         while let Some(node) = pending.pop() {
             script.nodes.push(node);
+            if node.kind() == "assignment_expression" {
+                script.assignments.push(node);
+            }
             let mut cursor = node.walk();
             let children: Vec<Node> = node.named_children(&mut cursor).collect();
             for child in children.iter().rev() {
@@ -157,6 +180,15 @@ impl<'a> Script<'a> {
                 let node = self.root.named_descendant_for_byte_range(at, at)?;
                 is_name(node.kind()).then_some(node)
             })
+    }
+
+    /// The smallest named node holding the last character typed before `offset`, spaces
+    /// aside: what a cursor at `offset` is in the middle of.
+    pub fn node_at(&self, offset: usize) -> Option<Node<'a>> {
+        let typed = self.code[..offset.min(self.code.len())].trim_end();
+        let before = typed.chars().next_back()?;
+        let at = typed.len() - before.len_utf8();
+        self.root.named_descendant_for_byte_range(at, at)
     }
 
     /// Every node of the file, in source order.
@@ -425,31 +457,16 @@ impl<'a> Script<'a> {
 
     /// What this file does with `name`, as an export.
     pub fn export(&self, name: &str) -> Export {
-        let nodes = self.nodes();
         let mut definition = Definition::default();
         let mut passes_on = false;
-
-        // `module.exports = ...`: the last one is what callers get.
-        let exported = nodes
-            .iter()
-            .filter(|node| node.kind() == "assignment_expression")
-            .filter_map(|node| {
-                let left = node.child_by_field_name("left")?;
-                self.is_module_exports(left)
-                    .then(|| node.child_by_field_name("right"))
-                    .flatten()
-            })
-            .next_back();
-        // The local object `module.exports = helpers` hands out, if that is what it is.
-        let local = exported
-            .filter(|value| value.kind() == "identifier")
-            .and_then(|value| self.declaration_of(value));
+        let Exported {
+            value: exported,
+            local,
+            object,
+        } = self.exported();
 
         // `exports.total =`, `module.exports.total =`, `helpers.total =`, `base.total =`.
-        for node in nodes
-            .iter()
-            .filter(|node| node.kind() == "assignment_expression")
-        {
+        for node in &self.assignments {
             let (Some(left), Some(right)) = (
                 node.child_by_field_name("left"),
                 node.child_by_field_name("right"),
@@ -469,11 +486,7 @@ impl<'a> Script<'a> {
                 continue;
             }
             let on_parent = self.value_of(object) == Some(Value::Module(Origin::Super));
-            let on_exports = self.is_exports(object)
-                || local.is_some_and(|local| {
-                    self.declaration_of(object)
-                        .is_some_and(|found| found.id() == local.id())
-                });
+            let on_exports = self.receives_exports(object, exported, local);
             if !on_parent && !on_exports {
                 continue;
             }
@@ -489,13 +502,6 @@ impl<'a> Script<'a> {
 
         let mut absent = false;
         if let Some(value) = exported {
-            let object = match value.kind() {
-                "identifier" => local
-                    .and_then(|local| self.parent(local))
-                    .filter(|parent| parent.kind() == "variable_declarator")
-                    .and_then(|declarator| declarator.child_by_field_name("value")),
-                _ => Some(value),
-            };
             match object {
                 Some(object) => match self.exported_object(object, name, &mut definition) {
                     Some(true) => passes_on = true,
@@ -508,7 +514,10 @@ impl<'a> Script<'a> {
                     }
                 }
             }
-        } else if nodes.iter().any(|node| self.is_exports(*node)) {
+        } else if *self
+            .writes_exports
+            .get_or_init(|| self.nodes.iter().any(|node| self.is_exports(*node)))
+        {
             // Only `exports.x = ...` elsewhere: an object without this name.
             absent = true;
         }
@@ -522,6 +531,125 @@ impl<'a> Script<'a> {
         } else {
             Export::Unknown
         }
+    }
+
+    /// What `module.exports` is set to: the last assignment, which is what callers get.
+    fn exported(&self) -> Exported<'a> {
+        *self.exported.get_or_init(|| self.find_exported())
+    }
+
+    fn find_exported(&self) -> Exported<'a> {
+        let value = self
+            .assignments
+            .iter()
+            .filter_map(|node| {
+                let left = node.child_by_field_name("left")?;
+                self.is_module_exports(left)
+                    .then(|| node.child_by_field_name("right"))
+                    .flatten()
+            })
+            .next_back();
+        // The local object `module.exports = helpers` hands out, if that is what it is.
+        let local = value
+            .filter(|value| value.kind() == "identifier")
+            .and_then(|value| self.declaration_of(value));
+        let object = match value.map(|value| value.kind()) {
+            Some("identifier") => local
+                .and_then(|local| self.parent(local))
+                .filter(|parent| parent.kind() == "variable_declarator")
+                .and_then(|declarator| declarator.child_by_field_name("value")),
+            _ => value,
+        };
+        Exported {
+            value,
+            local,
+            object,
+        }
+    }
+
+    /// Every name this file exports itself or hands on from its parent, in the order it
+    /// writes them, and whether it also hands on whatever else its parent exports
+    /// (`module.exports = base`, `Object.create(base)`, `{ ...base }`).
+    pub fn exported_names(&self) -> (Vec<String>, bool) {
+        let Exported {
+            value,
+            local,
+            object,
+        } = self.exported();
+        let mut candidates: Vec<&'a str> = Vec::new();
+        let mut inherits = false;
+        let mut objects: Vec<Node<'a>> = object.into_iter().collect();
+        while let Some(object) = objects.pop() {
+            if self.value_of(object) == Some(Value::Module(Origin::Super)) {
+                inherits = true;
+                continue;
+            }
+            match object.kind() {
+                "object" => {
+                    let mut cursor = object.walk();
+                    let entries: Vec<Node> = object.named_children(&mut cursor).collect();
+                    for entry in entries {
+                        let key = match entry.kind() {
+                            "pair" => entry.child_by_field_name("key"),
+                            "method_definition" => entry.child_by_field_name("name"),
+                            "shorthand_property_identifier" => Some(entry),
+                            "spread_element" => {
+                                objects.extend(entry.named_child(0));
+                                None
+                            }
+                            _ => None,
+                        };
+                        if let Some(key) = key {
+                            candidates.push(key_text(self.text(key)));
+                        }
+                    }
+                }
+                "call_expression" => {
+                    let callee = object
+                        .child_by_field_name("function")
+                        .map(|function| self.text(function));
+                    if matches!(callee, Some("Object.create" | "Object.assign")) {
+                        if let Some(arguments) = object.child_by_field_name("arguments") {
+                            let mut cursor = arguments.walk();
+                            objects.extend(arguments.named_children(&mut cursor));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for node in &self.assignments {
+            let Some(left) = node
+                .child_by_field_name("left")
+                .filter(|left| left.kind() == "member_expression")
+            else {
+                continue;
+            };
+            let (Some(object), Some(property)) = (
+                left.child_by_field_name("object"),
+                left.child_by_field_name("property"),
+            ) else {
+                continue;
+            };
+            let on_exports = self.receives_exports(object, value, local)
+                || self.value_of(object) == Some(Value::Module(Origin::Super));
+            if on_exports {
+                candidates.push(self.text(property));
+            }
+        }
+        let mut names: Vec<String> = Vec::new();
+        for candidate in candidates {
+            if names.iter().any(|name| name == candidate) {
+                continue;
+            }
+            if matches!(
+                self.export(candidate),
+                Export::Defines(_) | Export::PassesOn
+            ) {
+                names.push(candidate.to_string());
+            }
+        }
+        (names, inherits)
     }
 
     /// What the object a file exports does with `name`: `Some(true)` when it hands the
@@ -665,19 +793,51 @@ impl<'a> Script<'a> {
     /// The signature and documentation of a definition, under the name it is exported as.
     pub fn describe(&self, site: &Site, name: &str) -> Description {
         let node = |(start, end): (usize, usize)| self.root.descendant_for_byte_range(start, end);
-        let signature = site.function.and_then(node).and_then(|function| {
-            let parameters = function
-                .child_by_field_name("parameters")
-                .map(|parameters| self.text(parameters).to_string())
-                .or_else(|| {
-                    let single = function.child_by_field_name("parameter")?;
-                    Some(format!("({})", self.text(single)))
-                })?;
-            let parameters = parameters.split_whitespace().collect::<Vec<_>>().join(" ");
-            Some(format!("{name}{parameters}"))
+        let function = site.function.and_then(node);
+        let parameters: Vec<(String, Option<String>)> = function
+            .map(|function| {
+                let nodes: Vec<Node> = match function.child_by_field_name("parameters") {
+                    Some(list) => {
+                        let mut cursor = list.walk();
+                        list.named_children(&mut cursor)
+                            .filter(|parameter| parameter.kind() != "comment")
+                            .collect()
+                    }
+                    None => function
+                        .child_by_field_name("parameter")
+                        .into_iter()
+                        .collect(),
+                };
+                nodes
+                    .into_iter()
+                    .map(|parameter| {
+                        let label = self
+                            .text(parameter)
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let named = match parameter.kind() {
+                            "identifier" => Some(parameter),
+                            "assignment_pattern" => parameter
+                                .child_by_field_name("left")
+                                .filter(|left| left.kind() == "identifier"),
+                            _ => None,
+                        };
+                        (label, named.map(|named| self.text(named).to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let signature = function.map(|_| {
+            let labels: Vec<&str> = parameters.iter().map(|(label, _)| label.as_str()).collect();
+            format!("{name}({})", labels.join(", "))
         });
         let doc = node(site.name).and_then(|name| self.doc_of(name));
-        Description { signature, doc }
+        Description {
+            signature,
+            parameters,
+            doc,
+        }
     }
 
     /// The `/** */` comment directly above the statement, object entry or method that
@@ -731,6 +891,27 @@ impl<'a> Script<'a> {
             && node
                 .child_by_field_name("property")
                 .is_some_and(|property| self.text(property) == "exports")
+    }
+
+    /// Whether a property set on `object` ends up exported: `module.exports.x`, the local
+    /// object `module.exports` is set to, or `exports.x` as long as `module.exports` is not
+    /// replaced (which leaves `exports` pointing at an object nobody gets).
+    fn receives_exports(
+        &self,
+        object: Node<'a>,
+        exported: Option<Node<'a>>,
+        local: Option<Node<'a>>,
+    ) -> bool {
+        if self.is_module_exports(object) {
+            return true;
+        }
+        if self.is_exports(object) {
+            return exported.is_none();
+        }
+        local.is_some_and(|local| {
+            self.declaration_of(object)
+                .is_some_and(|found| found.id() == local.id())
+        })
     }
 
     /// `exports` or `module.exports`, as the receiver of a property.
@@ -1183,6 +1364,50 @@ mod tests {
             texts(text, &parsed.script().local_uses("total")),
             ["1:total"]
         );
+    }
+
+    #[test]
+    fn lists_the_names_a_file_exports_and_whether_it_inherits_the_rest() {
+        let names = |text: &str| parse(text).script().exported_names();
+        assert_eq!(
+            names("function a() {}\nmodule.exports = { a: a, b() {}, c: function () {} };"),
+            (vec!["a".to_string(), "b".into(), "c".into()], false)
+        );
+        assert_eq!(
+            names(
+                "var base = module.superModule;\nbase.d = function () {};\nmodule.exports = base;"
+            ),
+            (vec!["d".to_string()], true)
+        );
+        assert_eq!(
+            names("var base = module.superModule;\nmodule.exports = Object.assign({}, base, { e: 1 });"),
+            (vec!["e".to_string()], true)
+        );
+        assert_eq!(
+            names("var helpers = {};\nhelpers.f = function () {};\nexports.g = 1;\nmodule.exports = helpers;"),
+            (vec!["f".to_string()], false)
+        );
+    }
+
+    #[test]
+    fn reads_each_parameter_whole() {
+        let text = "/** Doc. */\nfunction total(basket, b = [1, 2], { c, d }, ...rest) {}\nmodule.exports = { total: total };";
+        let parsed = parse(text);
+        let script = parsed.script();
+        let Export::Defines(definition) = script.export("total") else {
+            panic!("not defined");
+        };
+        let description = script.describe(&definition.sites[0], "total");
+        assert_eq!(
+            description.signature.as_deref(),
+            Some("total(basket, b = [1, 2], { c, d }, ...rest)")
+        );
+        let names: Vec<Option<&str>> = description
+            .parameters
+            .iter()
+            .map(|(_, name)| name.as_deref())
+            .collect();
+        assert_eq!(names, [Some("basket"), Some("b"), None, None]);
     }
 
     #[test]

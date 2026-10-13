@@ -17,6 +17,7 @@ pub mod references;
 pub mod resolve;
 pub mod routes;
 pub mod server;
+pub mod signatures;
 pub mod sync;
 pub mod validate;
 pub mod workspace;
