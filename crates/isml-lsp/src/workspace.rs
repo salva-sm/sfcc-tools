@@ -40,6 +40,9 @@ pub struct Workspace {
     /// `server` that are required without a `cartridge/` segment.
     pub module_roots: Vec<PathBuf>,
     pub paths: Vec<CartridgePath>,
+    /// The `storefront` setting: the path whose copy `Go to Definition` jumps to
+    /// when the storefronts run different ones.
+    pub storefront: Option<String>,
     /// Built on the first `template="..."` completion, not at startup: most
     /// sessions never ask, and walking every cartridge costs a second.
     templates: OnceLock<Vec<String>>,
@@ -57,6 +60,10 @@ impl Workspace {
         workspace.cartridges.sort_by(|a, b| a.name.cmp(&b.name));
         workspace.cartridges.dedup_by(|a, b| a.root == b.root);
         workspace.paths = cartridgepath::load(roots, settings);
+        workspace.storefront = settings
+            .get("storefront")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
         workspace
     }
 
@@ -67,8 +74,8 @@ impl Workspace {
             .max_by_key(|cartridge| cartridge.root.as_os_str().len())
     }
 
-    /// Every cartridge, with the one owning `file` first: `*/cartridge/...`
-    /// most often means "this cartridge, then the rest of the path".
+    /// Every cartridge, with the one owning `file` first: the order offered when
+    /// no cartridge path is recorded, since the nearest copy is the likeliest.
     pub fn cartridges_from(&self, file: &Path) -> Vec<&Cartridge> {
         let current = self.cartridge_of(file);
         let mut ordered: Vec<&Cartridge> = current.into_iter().collect();
