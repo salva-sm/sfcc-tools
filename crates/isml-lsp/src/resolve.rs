@@ -55,7 +55,7 @@ pub fn overrides(reference: &Reference, from: &Path, workspace: &Workspace) -> V
 
 /// The copy each recorded cartridge path uses: the leftmost cartridge that has one.
 /// Labelled by path, in the order the paths are recorded; a path holding none is left out.
-pub fn winners<'a>(
+fn winners<'a>(
     overrides: &'a [Override],
     workspace: &'a Workspace,
 ) -> Vec<(&'a str, &'a Override)> {
