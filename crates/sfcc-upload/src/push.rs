@@ -192,8 +192,9 @@ pub async fn push_with(ctx: &Ctx, manifest: &mut Manifest, options: PushOptions)
     ));
     if !stats.held.is_empty() {
         logging::warn(format!(
-            "{} file(s) left as the sandbox has them - `sfcc-upload push --overwrite` replaces them",
-            stats.held.len()
+            "{} file(s) left as the sandbox has them - {}",
+            stats.held.len(),
+            guard::OVERWRITE_HINT
         ));
     }
     Ok(stats)

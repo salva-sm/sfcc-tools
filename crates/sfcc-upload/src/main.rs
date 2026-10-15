@@ -592,13 +592,7 @@ async fn hand_over(config: &Config, watcher: &lock::Owner, args: &PushArgs) -> R
                 if held.is_empty() {
                     return Ok(());
                 }
-                logging::warn(format!(
-                    "{} file(s) changed on the sandbox since this checkout last uploaded them:",
-                    held.len()
-                ));
-                for path in &held {
-                    logging::warn(format!("  {path}"));
-                }
+                guard::warn_held(&held);
                 if !overwrite
                     && guard::interactive()
                     && confirm("Overwrite them with your version? [y/N] ")?
@@ -606,9 +600,10 @@ async fn hand_over(config: &Config, watcher: &lock::Owner, args: &PushArgs) -> R
                     overwrite = true;
                     continue;
                 }
-                logging::warn(
-                    "left as the sandbox has them - `sfcc-upload push --overwrite` replaces them",
-                );
+                logging::warn(format!(
+                    "left as the sandbox has them - {}",
+                    guard::OVERWRITE_HINT
+                ));
                 return Ok(());
             }
         }
