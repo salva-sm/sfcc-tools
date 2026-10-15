@@ -58,6 +58,17 @@ pub enum Credentials {
     },
 }
 
+impl Credentials {
+    /// The Business Manager user, or the Account Manager client id: who the instance
+    /// attributes a write to.
+    pub fn user(&self) -> &str {
+        match self {
+            Credentials::Basic { username, .. } => username,
+            Credentials::OAuth { client_id, .. } => client_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub dw_json: PathBuf,

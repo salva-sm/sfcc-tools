@@ -1,11 +1,12 @@
 use crate::active;
 use crate::daemon;
-use crate::guard::{self, Overwrite};
+use crate::guard::{self, Conflict, Overwrite};
+use crate::ledger;
 use crate::logging::{self, Change};
 use crate::manifest::Manifest;
 use crate::problems;
 use crate::push::{
-    Ctx, PushOptions, delete_paths, forget_files, push, select_changed, upload_files,
+    Ctx, PushOptions, delete_paths, etags_of, forget_files, push, select_changed, upload_files,
 };
 use crate::reload::{Browser, worth_reloading};
 use crate::scan::{LocalFile, collect_files, describe};
@@ -179,6 +180,9 @@ async fn attempt(
     browser: Option<&Browser>,
     retry: &mut Option<Retry>,
 ) {
+    // A sibling `push` may have written the manifest since the last attempt; reload so its
+    // etags read as ours, not as someone else's change. Safe: every attempt persists at its end.
+    manifest.reload(&ctx.manifest_path);
     let touched = std::mem::take(pending);
     sync_status::publish_uploading(&ctx.config, touched.len());
     problems::begin(&format!("uploading {} change(s)", touched.len()));
@@ -204,15 +208,18 @@ async fn attempt(
 }
 
 /// Not retried: waiting will not make someone else's change ours.
-fn hold(ctx: &Ctx, held: &[String]) {
+fn hold(ctx: &Ctx, held: &[Conflict]) {
     let detail = format!(
         "{} file(s) changed on the sandbox by someone else, not overwritten - `sfcc-upload push --overwrite` replaces them",
         held.len()
     );
     logging::warn(&detail);
+    for conflict in held {
+        logging::warn(format!("  {} - {}", conflict.path, conflict.who()));
+    }
     let files: Vec<PathBuf> = held
         .iter()
-        .map(|relative| ctx.config.cartridges_dir.join(relative))
+        .map(|conflict| ctx.config.cartridges_dir.join(&conflict.path))
         .collect();
     problems::failed(&files, &ctx.config.dw_json, &detail);
     sync_status::publish_failure(&ctx.config, detail);
@@ -287,7 +294,7 @@ struct Work {
 
 struct Synced {
     sent: Vec<String>,
-    held: Vec<String>,
+    held: Vec<Conflict>,
 }
 
 async fn synchronize(
@@ -348,6 +355,8 @@ async fn transfer(ctx: &Ctx, manifest: &mut Manifest, work: Work) -> Result<Vec<
         }
         logging::changes(Change::Uploaded, &names);
         guard::remember(ctx, manifest, &names).await;
+        let writer = ledger::Writer::here(&ctx.config, ledger::Source::Watcher);
+        ledger::record(&ctx.config.identity(), &writer, etags_of(manifest, &names));
         sent.extend(names);
     }
 

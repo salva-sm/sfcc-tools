@@ -3,6 +3,7 @@ mod daemon;
 mod errors;
 mod githook;
 mod guard;
+mod ledger;
 mod logging;
 mod manifest;
 mod ocapi;
@@ -751,7 +752,7 @@ fn describe_availability(availability: &Availability) -> String {
 
 fn describe_credentials(credentials: &Credentials) -> String {
     match credentials {
-        Credentials::Basic { username, .. } => format!("basic, user {username}"),
-        Credentials::OAuth { client_id, .. } => format!("oauth client {client_id}"),
+        Credentials::Basic { .. } => format!("basic, user {}", credentials.user()),
+        Credentials::OAuth { .. } => format!("oauth client {}", credentials.user()),
     }
 }

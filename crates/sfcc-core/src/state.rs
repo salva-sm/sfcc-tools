@@ -172,6 +172,14 @@ pub mod upload {
             .join("marks")
             .join(format!("{identity}.json"))
     }
+
+    /// Who, on this machine, produced each sandbox etag. Shared by every uploader of this
+    /// identity, so a conflict can name a local writer; a write from elsewhere is absent.
+    pub fn writers_path(identity: &str) -> PathBuf {
+        uploader_dir()
+            .join("writers")
+            .join(format!("{identity}.jsonl"))
+    }
 }
 
 /// What log-diff last found pending on a sandbox.

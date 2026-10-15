@@ -1,4 +1,5 @@
 use crate::guard::{self, Overwrite};
+use crate::ledger;
 use crate::logging::{self, Change};
 use crate::manifest::{Entry, Manifest, hash_file, manifest_path};
 use crate::scan::{Ignore, LocalFile, cartridge_directories, scan};
@@ -141,6 +142,13 @@ pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
     }
     if !options.full {
         guard::remember(ctx, &mut manifest, &sent).await;
+        let writer = ledger::Writer::here(
+            &ctx.config,
+            ledger::Source::Push {
+                interactive: guard::interactive(),
+            },
+        );
+        ledger::record(&ctx.config.identity(), &writer, etags_of(&manifest, &sent));
     }
 
     let mut deleted = 0;
@@ -202,6 +210,15 @@ pub fn forget_files(manifest: &mut Manifest, files: &[LocalFile]) {
     for file in files {
         manifest.forget(&file.relative);
     }
+}
+
+/// The read-back etags of the files just sent, for the write ledger; bulk files have none.
+pub fn etags_of<'a>(
+    manifest: &'a Manifest,
+    sent: &'a [String],
+) -> impl Iterator<Item = String> + 'a {
+    sent.iter()
+        .filter_map(|path| manifest.files.get(path).and_then(|entry| entry.etag.clone()))
 }
 
 pub fn select_removed(files: &[LocalFile], manifest: &Manifest) -> Vec<String> {

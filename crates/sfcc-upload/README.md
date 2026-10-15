@@ -329,6 +329,15 @@ to ask at, or with `n`, it leaves them as they are and sends the rest. The watch
 It leaves them too, and reports `failed` with how many it held, without retrying. `push
 --overwrite` replaces them. `push --full` does not check: starting over replaces everything.
 
+Each listed file says who wrote the version now on the sandbox. Every uploader on this machine
+records, next to the manifest, which etag each of its writes produced and whether it was the
+watcher or a `push` (and, for a push, whether a terminal was driving it) — so a conflict
+between your own watcher and a `push`, or the agent's upload and yours, is named as such
+instead of reading as a stranger. A write that came from another machine is simply absent from
+that ledger, and is named "someone on another machine": the instance attributes every write to
+a Business Manager user internally, but does not return that over WebDAV, so there is no id to
+show.
+
 Files sent in bulk (a full deploy, a large batch) get no etag, because reading one back would
 cost a listing per folder. For those the check uses the date instead: a write more than two
 minutes after ours counts. The instance ignores `If-Match`, so this is a check just before

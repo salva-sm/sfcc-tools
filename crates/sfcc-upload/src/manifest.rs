@@ -35,6 +35,11 @@ impl Manifest {
             .unwrap_or_default()
     }
 
+    /// Re-reads from disk, picking up what another uploader of this identity wrote since.
+    pub fn reload(&mut self, path: &Path) {
+        *self = Manifest::load(path);
+    }
+
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)

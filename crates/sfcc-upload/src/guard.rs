@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
 
+use crate::ledger;
 use crate::logging;
 use crate::manifest::{Entry, Manifest};
 use crate::push::Ctx;
@@ -28,8 +29,25 @@ pub enum Overwrite {
 pub struct Settled {
     pub upserts: Vec<LocalFile>,
     pub removals: Vec<String>,
-    /// Left as the sandbox has them.
-    pub held: Vec<String>,
+    /// Left as the sandbox has them, each with who wrote the version up there.
+    pub held: Vec<Conflict>,
+}
+
+/// A file the sandbox holds a different version of than this checkout last sent.
+pub struct Conflict {
+    pub path: String,
+    /// The writer on this machine whose version the sandbox now carries, when it was one.
+    pub by: Option<ledger::Writer>,
+}
+
+impl Conflict {
+    /// Who wrote the version now on the sandbox, named when it was written here.
+    pub fn who(&self) -> String {
+        match &self.by {
+            Some(writer) => writer.describe(),
+            None => "someone on another machine (the sandbox does not say who)".to_string(),
+        }
+    }
 }
 
 pub async fn settle(
@@ -61,15 +79,15 @@ pub async fn settle(
         "{} file(s) changed on the sandbox since this checkout last uploaded them:",
         found.len()
     ));
-    for path in &found {
-        logging::warn(format!("  {path}"));
+    for conflict in &found {
+        logging::warn(format!("  {} - {}", conflict.path, conflict.who()));
     }
     let ask = overwrite == Overwrite::Ask && interactive();
     if ask && crate::confirm("Overwrite them with your version? [y/N] ")? {
         return Ok(untouched(upserts, removals));
     }
 
-    let held: BTreeSet<&str> = found.iter().map(String::as_str).collect();
+    let held: BTreeSet<&str> = found.iter().map(|conflict| conflict.path.as_str()).collect();
     let holds = |path: &str| {
         held.iter()
             .any(|file| *file == path || file.starts_with(&format!("{path}/")))
@@ -85,7 +103,7 @@ pub async fn settle(
 }
 
 /// `paths` may be folders about to be deleted. A file gone from the sandbox is not a conflict.
-pub async fn overwritten(ctx: &Ctx, manifest: &Manifest, paths: &[String]) -> Result<Vec<String>> {
+pub async fn overwritten(ctx: &Ctx, manifest: &Manifest, paths: &[String]) -> Result<Vec<Conflict>> {
     let recorded: BTreeMap<&str, &Entry> = paths
         .iter()
         .flat_map(|path| manifest.under(path))
@@ -93,12 +111,19 @@ pub async fn overwritten(ctx: &Ctx, manifest: &Manifest, paths: &[String]) -> Re
         .map(|(path, entry)| (path.as_str(), entry))
         .collect();
     let listings = list_parents(ctx, recorded.keys().copied()).await?;
+    let ledger = ledger::Ledger::load(&ctx.config.identity());
     Ok(recorded
         .into_iter()
-        .filter(|(path, entry)| {
-            remote_of(&listings, path).is_some_and(|remote| written_since(entry, remote))
+        .filter_map(|(path, entry)| {
+            let remote = remote_of(&listings, path)?;
+            if !written_since(entry, remote) {
+                return None;
+            }
+            Some(Conflict {
+                path: path.to_string(),
+                by: ledger.writer_of(&remote.etag),
+            })
         })
-        .map(|(path, _)| path.to_string())
         .collect())
 }
 
@@ -164,7 +189,7 @@ fn modified_seconds(text: &str) -> Option<i64> {
         .map(|moment| moment.timestamp())
 }
 
-fn interactive() -> bool {
+pub fn interactive() -> bool {
     use std::io::IsTerminal;
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
