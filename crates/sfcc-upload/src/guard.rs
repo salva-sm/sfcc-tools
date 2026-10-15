@@ -32,6 +32,25 @@ pub struct Settled {
     pub held: Vec<String>,
 }
 
+/// With one uploader per code version on this machine (lock.rs), a change this uploader did
+/// not make came from Prophet, a teammate or another machine - WebDAV names no author.
+pub fn by_another_writer(count: usize) -> String {
+    format!(
+        "{count} file(s) changed on the sandbox by another writer - Prophet, a teammate, or \
+         another machine"
+    )
+}
+
+pub const OVERWRITE_HINT: &str = "`sfcc-upload push --overwrite` replaces them";
+
+/// Shared by the direct push and the handed-over reply.
+pub fn warn_held(held: &[String]) {
+    logging::warn(format!("{}:", by_another_writer(held.len())));
+    for path in held {
+        logging::warn(format!("  {path}"));
+    }
+}
+
 pub async fn settle(
     ctx: &Ctx,
     manifest: &Manifest,
@@ -57,13 +76,7 @@ pub async fn settle(
         return Ok(untouched(upserts, removals));
     }
 
-    logging::warn(format!(
-        "{} file(s) changed on the sandbox since this checkout last uploaded them:",
-        found.len()
-    ));
-    for path in &found {
-        logging::warn(format!("  {path}"));
-    }
+    warn_held(&found);
     let ask = overwrite == Overwrite::Ask && interactive();
     if ask && crate::confirm("Overwrite them with your version? [y/N] ")? {
         return Ok(untouched(upserts, removals));

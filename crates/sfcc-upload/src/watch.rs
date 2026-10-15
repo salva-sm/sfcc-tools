@@ -384,8 +384,9 @@ fn report(ctx: &Ctx, held: &[String]) {
 /// Not retried: waiting will not make someone else's change ours.
 fn hold(ctx: &Ctx, held: &[String]) {
     let detail = format!(
-        "{} file(s) changed on the sandbox by someone else, not overwritten - `sfcc-upload push --overwrite` replaces them",
-        held.len()
+        "{}, not overwritten - {}",
+        guard::by_another_writer(held.len()),
+        guard::OVERWRITE_HINT
     );
     logging::warn(&detail);
     let files: Vec<PathBuf> = held
