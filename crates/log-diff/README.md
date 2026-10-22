@@ -114,6 +114,7 @@ log-diff code-versions                                   the instance's code ver
 log-diff notify --report new.json                        CI: post new errors and spikes to Teams
 log-diff summary --from owner/repo                       the last days per environment, for Teams
 log-diff ticket <ID> --ledger prd=... --project KEY      a Jira ticket for a signature
+log-diff compact --state ledger.json                     re-key a ledger, merging what now collapses
 log-diff completions <shell>      the tab completion script for zsh or PowerShell
 ```
 
@@ -165,6 +166,12 @@ and any word six long or more that mixes letters and digits — order numbers, p
 Short numbers stay: `HTTP 404` means something. Paths stay, since a cartridge may have a
 digit in its name.
 
+A few payloads a message carries are collapsed on their own, so a failure is one signature
+instead of one per occurrence: a redirect loop's request path (`request path '<path>'`), a
+quoted value after `to`, `for` or a cookie `header` (`to "<value>"`), a brace block of stats
+or truncated JSON (`{...}`), and the port left on an address (`<ip>:<n>`). A quoted property
+name — `property "lastModifiedDate"` — stays; only the value after the keyword goes.
+
 The signature hashes the level, the scrubbed message and the top eight frames **without
 their line numbers**. An unrelated edit higher up a file shifts every line below it, and a
 known failure should not turn new because of that. A different function, file or message is
@@ -181,6 +188,17 @@ switched-off site's records out altogether.
 The ledger keeps one scrubbed example per signature, never raw log lines. Scrubbing is
 pattern matching, not understanding: a message that spells out a customer's name in plain
 words keeps it. Keep the ledger repository private.
+
+### Re-keying an old ledger
+
+When the scrubbing changes - a token that used to vary is masked, say, so a thousand one-off
+signatures become one - the ledger carries a version (`signatures`) that no longer matches. The
+next `run` sees it and relearns from now on, but what it already holds keeps its old keys: the
+stale one-off signatures stay. `log-diff compact --state ledger.json` re-keys an existing
+ledger with the current rules and merges what now shares a key, summing `count` and the
+`sites`, `controllers` and `daily` breakdowns, keeping the earliest example, first-seen, record
+and deploy, and the latest record. It is idempotent; the cursor, deploy log and baseline are
+left alone. Run it once on the ledger repository after a scrubbing change to slim the file.
 
 ### The record itself
 

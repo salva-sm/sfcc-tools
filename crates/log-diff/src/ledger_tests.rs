@@ -521,6 +521,220 @@ fn counts_where_a_failure_happened_under_one_signature() {
     assert_eq!(known.controllers["Product-Show"], 1);
 }
 
+/// A stored signature with one site and one controller - as a ledger an older log-diff wrote
+/// holds it, its example still carrying the token this build has since learned to mask.
+fn stored(
+    example: &str,
+    count: u64,
+    site: &str,
+    controller: &str,
+    first: &str,
+    last: &str,
+) -> Known {
+    Known {
+        label: "error".into(),
+        exception_class: None,
+        location: None,
+        example: example.into(),
+        first_seen: first.into(),
+        last_seen: last.into(),
+        count,
+        first_deploy_sha: None,
+        pending: false,
+        back: false,
+        resolved_at: None,
+        muted: false,
+        spiked_on: None,
+        sites: BTreeMap::from([(site.to_string(), count)]),
+        controllers: BTreeMap::from([(controller.to_string(), count)]),
+        orders: BTreeMap::new(),
+        first_record: None,
+        last_record: None,
+    }
+}
+
+fn redirect_example(path: &str, site: &str, controller: &str) -> String {
+    format!(
+        "ERROR PipelineCallServlet|Sites-{site}-Site|{controller}|PipelineCall com.demandware.core.RedirectFilter Sites-{site}-Site STOREFRONT <session> <request> 1 - Redirect loop for request path '{path}' detected."
+    )
+}
+
+/// The stale redirect-loop singletons - one key per path, before the path was masked - against a
+/// failure that must stay on its own.
+fn seeded_ledger() -> Ledger {
+    let mut ledger = Ledger::default();
+    ledger.known_signatures.insert(
+        "a".into(),
+        stored(
+            &redirect_example("/en-us/a", "demo", "Default-Start"),
+            5,
+            "demo",
+            "Default-Start",
+            "2026-09-10T00:00:00Z",
+            "2026-09-15T00:00:00Z",
+        ),
+    );
+    ledger.known_signatures.insert(
+        "b".into(),
+        stored(
+            &redirect_example("/fr-fr/b", "demo", "Search-Show"),
+            3,
+            "demo",
+            "Search-Show",
+            "2026-09-12T00:00:00Z",
+            "2026-09-20T00:00:00Z",
+        ),
+    );
+    ledger.known_signatures.insert(
+        "c".into(),
+        stored(
+            &redirect_example("/de-de/c", "shop", "Default-Start"),
+            2,
+            "shop",
+            "Default-Start",
+            "2026-09-05T00:00:00Z",
+            "2026-09-18T00:00:00Z",
+        ),
+    );
+    // A different failure must not be swept in with them.
+    ledger.known_signatures.insert(
+        "other".into(),
+        stored(
+            "ERROR PipelineCallServlet|Sites-demo-Site|Cart-Show|PipelineCall custom.cart [] TypeError: boom",
+            7,
+            "demo",
+            "Cart-Show",
+            "2026-09-01T00:00:00Z",
+            "2026-09-22T00:00:00Z",
+        ),
+    );
+    ledger.daily.insert(
+        "2026-09-15".into(),
+        BTreeMap::from([("a".into(), 5), ("b".into(), 1), ("other".into(), 4)]),
+    );
+    ledger.daily.insert(
+        "2026-09-20".into(),
+        BTreeMap::from([("b".into(), 2), ("c".into(), 2)]),
+    );
+    // Signed the first way: an older log-diff wrote it, before the path was masked.
+    ledger.signatures = 1;
+    ledger
+}
+
+#[test]
+fn compact_re_keys_and_merges_what_now_collapses_without_losing_aggregates() {
+    let mut ledger = seeded_ledger();
+    let before_records: u64 = ledger.known_signatures.values().map(|k| k.count).sum();
+    let before_sites: u64 = ledger
+        .known_signatures
+        .values()
+        .flat_map(|k| k.sites.values())
+        .sum();
+    let before_controllers: u64 = ledger
+        .known_signatures
+        .values()
+        .flat_map(|k| k.controllers.values())
+        .sum();
+
+    let result = ledger.compact();
+
+    assert_eq!(result.before, 4);
+    assert_eq!(
+        result.after, 2,
+        "the three redirects become one, the TypeError apart"
+    );
+
+    // Nothing lost: the same records, split across the same site and controller totals.
+    assert_eq!(
+        ledger
+            .known_signatures
+            .values()
+            .map(|k| k.count)
+            .sum::<u64>(),
+        before_records
+    );
+    assert_eq!(
+        ledger
+            .known_signatures
+            .values()
+            .flat_map(|k| k.sites.values())
+            .sum::<u64>(),
+        before_sites
+    );
+    assert_eq!(
+        ledger
+            .known_signatures
+            .values()
+            .flat_map(|k| k.controllers.values())
+            .sum::<u64>(),
+        before_controllers
+    );
+
+    let id = crate::normalize::key_of(
+        "error",
+        &redirect_example("/en-us/a", "demo", "Default-Start"),
+    );
+    let merged = &ledger.known_signatures[&id];
+    assert_eq!(merged.count, 10);
+    assert_eq!(
+        merged.sites,
+        BTreeMap::from([("demo".to_string(), 8), ("shop".to_string(), 2)])
+    );
+    assert_eq!(
+        merged.controllers,
+        BTreeMap::from([
+            ("Default-Start".to_string(), 7),
+            ("Search-Show".to_string(), 3)
+        ])
+    );
+    // The earliest is the one kept: its first_seen, and the latest last_seen across them all.
+    assert_eq!(merged.first_seen, "2026-09-05T00:00:00Z");
+    assert_eq!(merged.last_seen, "2026-09-20T00:00:00Z");
+    // Keyed the current way now.
+    assert_eq!(ledger.signatures, crate::normalize::SIGNATURES);
+}
+
+#[test]
+fn compact_re_points_the_daily_trend_keeping_each_day_total() {
+    let mut ledger = seeded_ledger();
+    let before: BTreeMap<String, u64> = ledger
+        .daily
+        .iter()
+        .map(|(day, counts)| (day.clone(), counts.values().sum()))
+        .collect();
+
+    ledger.compact();
+
+    let after: BTreeMap<String, u64> = ledger
+        .daily
+        .iter()
+        .map(|(day, counts)| (day.clone(), counts.values().sum()))
+        .collect();
+    assert_eq!(
+        after, before,
+        "a day's total is unchanged, only its ids consolidated"
+    );
+
+    let id = crate::normalize::key_of(
+        "error",
+        &redirect_example("/en-us/a", "demo", "Default-Start"),
+    );
+    assert_eq!(ledger.daily["2026-09-15"][&id], 6, "a(5) + b(1)");
+    assert_eq!(ledger.daily["2026-09-20"][&id], 4, "b(2) + c(2)");
+}
+
+#[test]
+fn compact_is_idempotent() {
+    let mut ledger = seeded_ledger();
+    ledger.compact();
+    let once = ledger.clone();
+
+    let again = ledger.compact();
+    assert_eq!(again.before, again.after, "nothing left to merge");
+    assert_eq!(ledger.known_signatures, once.known_signatures);
+    assert_eq!(ledger.daily, once.daily);
+}
+
 #[test]
 fn keeps_the_latest_orders_a_signature_failed() {
     let failed = |order: usize, minute: usize| {

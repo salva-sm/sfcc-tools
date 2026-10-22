@@ -381,3 +381,126 @@ fn naming_the_order_number_keeps_the_id_it_had() {
         without_positions(before)
     );
 }
+
+// The fixtures below are synthetic: this repo is public, so every path, cookie, address and id
+// is invented. Only the shape of the message - the token that varies - is what the test asserts.
+
+const REDIRECT: &str = "[2026-10-01 12:00:00.000 GMT] ERROR PipelineCallServlet|1|Sites-demo-Site|Default-Start|PipelineCall|abc com.demandware.core.RedirectFilter Sites-demo-Site STOREFRONT mpsWkpQgnP RnB1_2a3b-0-00 1 - Redirect loop for request path '/en-us/shoes/sneakers' detected.\n";
+
+#[test]
+fn a_redirect_loop_is_one_signature_whatever_the_path() {
+    let signature = one("error-blade1-20261001.log", REDIRECT);
+    assert!(
+        signature
+            .message
+            .contains("Redirect loop for request path '<path>' detected."),
+        "{}",
+        signature.message
+    );
+    let other = one(
+        "error-blade1-20261001.log",
+        &REDIRECT.replace("/en-us/shoes/sneakers", "/fr-fr/sacs/pochettes-12345"),
+    );
+    assert_eq!(signature.id, other.id);
+}
+
+#[test]
+fn a_batch_of_redirect_loops_aggregates_into_one_finding() {
+    let text = [
+        REDIRECT.to_string(),
+        REDIRECT
+            .replace("/en-us/shoes/sneakers", "/fr-fr/sacs")
+            .replace("Default-Start", "Search-Show"),
+        REDIRECT.replace("/en-us/shoes/sneakers", "/de-de/schuhe"),
+    ]
+    .concat();
+
+    let entries = parse_entries("error-blade1-20261001.log", &text);
+    let found = crate::finding::findings(&entries);
+
+    assert_eq!(found.len(), 1, "every path is the one failure");
+    assert_eq!(found[0].count, 3);
+    assert_eq!(found[0].sites.get("demo"), Some(&3));
+    assert_eq!(found[0].controllers.get("Default-Start"), Some(&2));
+    assert_eq!(found[0].controllers.get("Search-Show"), Some(&1));
+}
+
+const LAST_MODIFIED: &str = "[2026-10-01 12:00:00.000 GMT] ERROR PipelineCallServlet|1|Sites-demo-Site|Order-Confirm|PipelineCall|abc custom.orderUpdate [] Cannot set property \"lastModifiedDate\" of undefined to \"09/19/2026 01:02:37\"\n";
+
+#[test]
+fn a_quoted_value_after_to_varies_but_the_property_name_stays() {
+    let signature = one("customerror-blade1-20261001.log", LAST_MODIFIED);
+    assert!(
+        signature
+            .message
+            .contains("property \"lastModifiedDate\" of undefined to \"<value>\""),
+        "{}",
+        signature.message
+    );
+    let other = one(
+        "customerror-blade1-20261001.log",
+        &LAST_MODIFIED.replace("09/19/2026 01:02:37", "12/31/2026 23:59:59"),
+    );
+    assert_eq!(signature.id, other.id);
+}
+
+const MEMCACHED: &str = "[2026-10-01 12:00:00.000 GMT] WARN SystemJobThread|12 com.demandware.Memcached Sites-demo-Site STOREFRONT mpsWkpQgnP RnB1_2a3b-0-00 5361824311231047680 - Closing, and reopening {QA sa=/10.0.0.1:49201, #Rops=152, #Wops=7, #iq=0, topRop=null}\n";
+
+#[test]
+fn a_memcached_stats_block_collapses_to_one_signature() {
+    let signature = one("warn-blade1-20261001.log", MEMCACHED);
+    assert!(
+        signature.message.contains("Closing, and reopening {...}"),
+        "{}",
+        signature.message
+    );
+    let other = one(
+        "warn-blade1-20261001.log",
+        &MEMCACHED.replace(
+            "/10.0.0.1:49201, #Rops=152, #Wops=7, #iq=0, topRop=null",
+            "/10.0.0.2:51002, #Rops=3, #Wops=90, #iq=4, topRop=x",
+        ),
+    );
+    assert_eq!(signature.id, other.id);
+}
+
+const TRUNCATED: &str = "[2026-10-01 12:00:00.000 GMT] WARN SystemJobThread|8 com.demandware.ImportCustomObject Sites-demo-Site STOREFRONT mpsWkpQgnP RnB1_2a3b-0-00 1 - String value truncated for {\"productID\":\"ABC123\",\"name\":\"Long synthetic name\"}\n";
+
+#[test]
+fn a_truncated_json_payload_collapses_to_one_signature() {
+    let signature = one("warn-blade1-20261001.log", TRUNCATED);
+    assert!(
+        signature
+            .message
+            .contains("String value truncated for {...}"),
+        "{}",
+        signature.message
+    );
+    let other = one(
+        "warn-blade1-20261001.log",
+        &TRUNCATED.replace(
+            "\"productID\":\"ABC123\",\"name\":\"Long synthetic name\"",
+            "\"productID\":\"XYZ999\",\"name\":\"Other\"",
+        ),
+    );
+    assert_eq!(signature.id, other.id);
+}
+
+const COOKIE: &str = "[2026-10-01 12:00:00.000 GMT] WARN PipelineCallServlet|1|Sites-demo-Site|Default-Start|PipelineCall|abc org.apache.http.client.protocol.ResponseProcessCookies Sites-demo-Site STOREFRONT mpsWkpQgnP RnB1_2a3b-0-00 1 - Invalid cookie header \"product_view=grid; path=/\"\n";
+
+#[test]
+fn an_invalid_cookie_header_value_is_not_the_failure() {
+    let signature = one("warn-blade1-20261001.log", COOKIE);
+    assert!(
+        signature
+            .message
+            .contains("Invalid cookie header \"<value>\""),
+        "{}",
+        signature.message
+    );
+    let other = one(
+        "warn-blade1-20261001.log",
+        &COOKIE.replace("product_view=grid; path=/", "sidebar=open; path=/account"),
+    );
+    assert_eq!(signature.id, other.id);
+}

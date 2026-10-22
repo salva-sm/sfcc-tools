@@ -8,7 +8,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 /// Raise it with any change that gives a failure a different id, so old ledgers relearn quietly
 /// instead of reporting everything as new.
-pub const SIGNATURES: u32 = 4;
+pub const SIGNATURES: u32 = 5;
 /// Below this the stack is the framework's, the same for every failure.
 const FRAMES: usize = 8;
 const EXAMPLE_FRAMES: usize = 3;
@@ -85,6 +85,17 @@ regex!(ORDER, r"\b[A-Z]{2,3}\d{7,10}\b");
 regex!(CODE, r#"(?i)\b(voucher|coupon)(\s+(?:code\s+)?)"[^"]*""#);
 regex!(URL, r#"https?://[^\s"'<>()]+"#);
 regex!(IP, r"\b\d{1,3}(?:\.\d{1,3}){3}\b");
+// The port left on an address once it is masked: `<ip>:49201`.
+regex!(IP_PORT, r"(<ip>):\d+");
+// `Redirect loop for request path '/en-us/...' detected.`: the path is the request's, not the
+// failure's - un-masked, every path is its own signature.
+regex!(REDIRECT_PATH, r"(request path )'[^']*'");
+// `to "09/19/2026 01:02:37"`, `for "<basket>"`, `cookie header "<value>"`: the quoted value after
+// one of these varies. A property name keeps its quotes: `property "lastModifiedDate"`.
+regex!(QUOTED_VALUE, r#"\b(to|for|header)\s+"[^"]*""#);
+// `{QA sa=... #Rops=152 ...}`, `{<truncated JSON>}`: a brace block is a data dump. An ISML
+// expression keeps its braces - `${pdict.x}` has no whitespace before `{`.
+regex!(BRACES, r"(\s)\{.*\}");
 regex!(
     SECRET,
     r#"(?i)\b(dwsid|dwsecuretoken\w*|dwanonuid\w*|token|access_token|sessionid|password|passwd|pwd|authorization|cookie|api[_-]?key|secret|card(?:number)?|cvv|iban)(\s*[=:]\s*)"?[^\s"',;&)]+"?"#
@@ -162,6 +173,26 @@ pub fn signature(entry: &Entry) -> Signature {
     }
 }
 
+/// The id a stored `example` hashes to under the current rules, for re-keying a ledger an older
+/// log-diff wrote. The example is the scrubbed first line and up to three frames, as
+/// [`Signature::example`] left them; running them back through [`signature`] applies whatever
+/// masking this build has since added. A placeholder header stands in for the `[moment]` the
+/// example dropped, so the stripping finds the thread the same way a fresh record would.
+pub fn key_of(label: &str, example: &str) -> String {
+    let mut lines = example.lines();
+    let head = lines.next().unwrap_or_default();
+    let entry = Entry {
+        label: label.to_string(),
+        moment: String::new(),
+        lines: std::iter::once(format!("[] {head}"))
+            .chain(lines.map(str::to_string))
+            .collect(),
+        file: String::new(),
+        offset: None,
+    };
+    signature(&entry).id
+}
+
 /// The failure without where it happened: one signature for every site, controller and
 /// thread it shows up under, and for the filter's repetition of it.
 fn essence(message: &str, headed: bool) -> String {
@@ -236,6 +267,12 @@ pub fn scrub(text: &str) -> String {
     // A compiled template's class spells `_` as `_005f`: `app_005fcommon` is the cartridge
     // app_common, which reads as an id otherwise.
     let text = text.replace("_005f", "_").replace("_002d", "-");
+    // The variable payload a message carries - a redirect's path, a quoted value, a stats or JSON
+    // block - is where it happened, not what failed. Claimed before the generic rules fragment it,
+    // so one failure is one signature instead of one per path, value or dump.
+    let text = REDIRECT_PATH.replace_all(&text, "${1}'<path>'");
+    let text = BRACES.replace_all(&text, "${1}{...}");
+    let text = QUOTED_VALUE.replace_all(&text, "${1} \"<value>\"");
     let text = TIMESTAMP.replace_all(&text, "<time>");
     let text = UUID.replace_all(&text, "<uuid>");
     let text = ORDER.replace_all(&text, "<orderNumber>");
@@ -247,6 +284,7 @@ pub fn scrub(text: &str) -> String {
     let text = URL.replace_all(&text, |found: &Captures| scrub_url(&found[0]));
     let text = EMAIL.replace_all(&text, "<email>");
     let text = IP.replace_all(&text, "<ip>");
+    let text = IP_PORT.replace_all(&text, "${1}:<n>");
     let text = LOCALE.replace_all(&text, "<locale>");
     let text = ISML_LINE.replace_all(&text, "$1, <n>)");
     let text = SECRET.replace_all(&text, "$1$2<redacted>");

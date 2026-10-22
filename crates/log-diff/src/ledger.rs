@@ -129,6 +129,13 @@ impl Record {
     }
 }
 
+/// What [`Ledger::compact`] did: how many signatures there were, and how many are left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Compaction {
+    pub before: usize,
+    pub after: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Spike {
     pub id: String,
@@ -204,6 +211,46 @@ fn add_orders(into: &mut BTreeMap<String, String>, from: &BTreeMap<String, Strin
 fn add_counts(into: &mut BTreeMap<String, u64>, from: &BTreeMap<String, u64>) {
     for (name, count) in from {
         *into.entry(name.clone()).or_default() += count;
+    }
+}
+
+/// Folds one signature into another that now shares its key, keeping every aggregate. The latest
+/// keeps `last_seen` and the record read there; the earliest keeps `first_seen`, the example, the
+/// deploy it was first laid at and the first record - the way [`Known::record`] merges them.
+fn merge_known(into: &mut Known, from: Known) {
+    into.count += from.count;
+    add_counts(&mut into.sites, &from.sites);
+    add_counts(&mut into.controllers, &from.controllers);
+    add_orders(&mut into.orders, &from.orders);
+
+    if from.last_seen >= into.last_seen {
+        into.last_seen = from.last_seen;
+        if from.last_record.is_some() {
+            into.last_record = from.last_record;
+        }
+    }
+    if from.first_seen < into.first_seen {
+        into.first_seen = from.first_seen;
+        into.example = from.example;
+        into.exception_class = from.exception_class;
+        into.location = from.location;
+        into.first_deploy_sha = from.first_deploy_sha;
+        if from.first_record.is_some() {
+            into.first_record = from.first_record;
+        }
+    } else if into.first_record.is_none() {
+        into.first_record = from.first_record;
+    }
+
+    // Sticky standing survives a merge: a muted or still-pending one stays so.
+    into.muted |= from.muted;
+    into.pending |= from.pending;
+    into.back |= from.back;
+    if from.resolved_at > into.resolved_at {
+        into.resolved_at = from.resolved_at;
+    }
+    if from.spiked_on > into.spiked_on {
+        into.spiked_on = from.spiked_on;
     }
 }
 
@@ -332,6 +379,47 @@ impl Ledger {
 
     pub fn knows(&self, id: &str) -> bool {
         self.known_signatures.contains_key(id)
+    }
+
+    /// Re-key every signature with the current normalizer and merge the ones that now share a
+    /// key, so a ledger written before a normalization change slims to what it would be today.
+    /// Nothing is lost: counts are summed, the site and controller maps merged, the daily trend
+    /// re-attributed id by id. `cursor`, `deploy_log`, `baseline` and `instance` are left alone.
+    /// Idempotent - a second run re-keys to the same ids and merges nothing.
+    pub fn compact(&mut self) -> Compaction {
+        let before = self.known_signatures.len();
+        let mut merged: BTreeMap<String, Known> = BTreeMap::new();
+        let mut remap: BTreeMap<String, String> = BTreeMap::new();
+        for (old_id, known) in std::mem::take(&mut self.known_signatures) {
+            let new_id = crate::normalize::key_of(&known.label, &known.example);
+            match merged.get_mut(&new_id) {
+                Some(into) => merge_known(into, known),
+                None => {
+                    merged.insert(new_id.clone(), known);
+                }
+            }
+            remap.insert(old_id, new_id);
+        }
+        self.known_signatures = merged;
+
+        // The daily trend is keyed by signature id too: re-point each day's counts at the merged
+        // id, summing where two old ids now meet, so per-signature history survives, not just totals.
+        let mut daily: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
+        for (day, counts) in std::mem::take(&mut self.daily) {
+            let into = daily.entry(day).or_default();
+            for (id, count) in counts {
+                let id = remap.get(&id).cloned().unwrap_or(id);
+                *into.entry(id).or_default() += count;
+            }
+        }
+        self.daily = daily;
+
+        // Keyed the current way now, so the next `run` does not take it for a ledger to relearn.
+        self.signatures = crate::normalize::SIGNATURES;
+        Compaction {
+            before,
+            after: self.known_signatures.len(),
+        }
     }
 
     /// Returns whether it was new to this ledger.
