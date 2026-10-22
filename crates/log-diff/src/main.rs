@@ -165,6 +165,16 @@ Inside a project, it stops the         one for the sandbox in dw.json. Anywhere 
         ledger reads."
     )]
     Show(ShowArgs),
+    /// Re-key a ledger with the current normalizer, merging what now shares a key
+    #[command(
+        long_about = "Re-slim an existing ledger in place: recompute every signature's key with \
+        this build's normalizer and merge the ones that now collapse to the same key, summing \
+        counts and merging the per-site, per-controller and daily breakdowns. For a ledger \
+        written before a normalization change, so the stale one-off signatures it left behind \
+        fold into one.\n\nThe cursor, deploy log and baseline are left untouched. Idempotent: \
+        running it again on an already-compacted ledger changes nothing."
+    )]
+    Compact(CompactArgs),
     /// Print the shell completion script: bash, zsh, fish, powershell or elvish
     #[command(
         long_about = "Print the shell completion script for SHELL on stdout.\n\n\
@@ -460,6 +470,13 @@ struct ShowArgs {
 }
 
 #[derive(Args)]
+struct CompactArgs {
+    /// The ledger to re-key and slim in place
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    state: PathBuf,
+}
+
+#[derive(Args)]
 struct UnmuteArgs {
     /// Signature ids, or the start of them - muted or baseline ones
     #[arg(value_name = "ID", required_unless_present = "all")]
@@ -659,6 +676,24 @@ async fn run(cli: Cli) -> Result<i32> {
         Command::Ack(args) => {
             let state = args.state.unwrap_or_else(default_state);
             local::acknowledge(&state, &args.ids, args.all, args.mute)?;
+            Ok(0)
+        }
+        Command::Compact(args) => {
+            if !args.state.is_file() {
+                bail!("no ledger at {}", args.state.display());
+            }
+            let mut ledger = ledger::Ledger::load(&args.state)?;
+            let records: u64 = ledger.known_signatures.values().map(|k| k.count).sum();
+            let result = ledger.compact();
+            ledger.save(&args.state)?;
+            let merged = result.before - result.after;
+            status(
+                Tone::Ok,
+                &format!(
+                    "{} → {} signatures ({merged} merged), {records} records kept",
+                    result.before, result.after
+                ),
+            );
             Ok(0)
         }
     }
