@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::gitref;
+
 const MAX_DEPTH: usize = 8;
 const SKIPPED: [&str; 7] = [
     "node_modules",
@@ -70,6 +72,13 @@ impl Metadata {
         metadata
     }
 
+    /// Adds the metadata files of a git ref: a mirror kept on a branch of its own (`metadata_ref`).
+    pub fn absorb_ref(&mut self, roots: &[PathBuf], reference: &str) {
+        for (_, text) in gitref::files(roots, reference, is_metadata_file) {
+            self.absorb_text(&text);
+        }
+    }
+
     /// False when no metadata was found at all, which has to silence every
     /// diagnostic: an unknown attribute and an unknown instance look the same.
     pub fn is_loaded(&self) -> bool {
@@ -115,10 +124,13 @@ impl Metadata {
     }
 
     fn absorb(&mut self, file: &Path) {
-        let Ok(text) = fs::read_to_string(file) else {
-            return;
-        };
-        let Ok(document) = roxmltree::Document::parse(&text) else {
+        if let Ok(text) = fs::read_to_string(file) {
+            self.absorb_text(&text);
+        }
+    }
+
+    fn absorb_text(&mut self, text: &str) {
+        let Ok(document) = roxmltree::Document::parse(text) else {
             return;
         };
         self.sources += 1;
@@ -261,6 +273,22 @@ mod tests {
         assert!(metadata
             .attribute(SITE_PREFERENCES, "newsletterEnabled")
             .is_some());
+        assert!(metadata.is_loaded());
+    }
+
+    #[test]
+    fn reads_the_metadata_of_a_ref_that_is_not_checked_out() {
+        let root = gitref::repository_with_mirror(
+            "isml-lsp-metadata-ref",
+            &[(
+                "metadata/baseline/meta/system-objecttype-extensions.xml",
+                SAMPLE,
+            )],
+        );
+        let mut metadata = Metadata::scan(std::slice::from_ref(&root));
+        assert!(!metadata.is_loaded());
+        metadata.absorb_ref(&[root], "mirror");
+        assert!(metadata.attribute("Product", "season").is_some());
         assert!(metadata.is_loaded());
     }
 
