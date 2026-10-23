@@ -6,6 +6,7 @@ pub mod complete;
 pub mod custom;
 pub mod diagnose;
 pub mod errors;
+pub mod gitref;
 pub mod hover;
 pub mod isml;
 pub mod js;

@@ -25,8 +25,8 @@ use crate::complete::{self, Completer};
 use crate::metadata::Metadata;
 use crate::workspace::Workspace;
 use crate::{
-    custom, diagnose, errors, hover, live, members, reference, references, resolve, signatures,
-    sync, types, validate,
+    custom, diagnose, errors, gitref, hover, live, members, reference, references, resolve,
+    signatures, sync, types, validate,
 };
 
 pub fn serve() -> Result<(), Box<dyn Error + Sync + Send>> {
@@ -89,9 +89,13 @@ impl Server {
     fn new(params: InitializeParams) -> Self {
         let roots = workspace_roots(&params);
         let settings = params.initialization_options.unwrap_or_default();
+        let mut metadata = Metadata::scan(&roots);
+        if let Some(reference) = gitref::from_settings(&settings) {
+            metadata.absorb_ref(&roots, &reference);
+        }
         Server {
             workspace: Workspace::scan(&roots, &settings),
-            metadata: Metadata::scan(&roots),
+            metadata,
             documents: HashMap::new(),
         }
     }

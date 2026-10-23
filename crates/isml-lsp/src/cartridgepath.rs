@@ -1,12 +1,16 @@
 //! Cartridge path order, which is not in the source: from editor settings, site archives or `dw.json`.
 //! Settings win: `dw.json` is personal and usually ignored, and site archives are rarely checked out.
+//! Site archives on the `metadata_ref` branch come last: the workspace's own copy is the one being edited.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::gitref;
+
 const MAX_DEPTH: usize = 8;
+const SITE_ARCHIVE: &str = "site.xml";
 const SKIPPED: [&str; 6] = ["node_modules", ".git", "static", "build", "dist", "target"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,11 +27,16 @@ impl CartridgePath {
     }
 }
 
-/// Settings first, then one per site archive and `dw.json`.
+/// Settings first, then one per site archive and `dw.json`, then the site archives of `metadata_ref`.
 pub fn load(roots: &[PathBuf], settings: &Value) -> Vec<CartridgePath> {
     let mut found = from_settings(settings);
     for root in roots {
         visit(root, 0, &mut found);
+    }
+    if let Some(reference) = gitref::from_settings(settings) {
+        for (path, text) in gitref::files(roots, &reference, |name| name == SITE_ARCHIVE) {
+            found.extend(from_site_text(&text, gitref::parent_name(&path)));
+        }
     }
     // A stable sort keeps the settings ahead of a site of the same name, and
     // dedup keeps the first — so naming a site in the settings corrects it.
@@ -86,7 +95,7 @@ fn visit(dir: &Path, depth: usize, into: &mut Vec<CartridgePath>) {
             continue;
         }
         match name {
-            "site.xml" => into.extend(from_site_archive(&path)),
+            SITE_ARCHIVE => into.extend(from_site_archive(&path)),
             "dw.json" => into.extend(from_dw_json(&path)),
             _ => {}
         }
@@ -96,12 +105,14 @@ fn visit(dir: &Path, depth: usize, into: &mut Vec<CartridgePath>) {
 /// `<custom-cartridges>a:b:c</custom-cartridges>`, and the `site-id` naming it.
 fn from_site_archive(file: &Path) -> Option<CartridgePath> {
     let text = fs::read_to_string(file).ok()?;
-    let document = roxmltree::Document::parse(&text).ok()?;
+    from_site_text(&text, directory_name(file).as_deref())
+}
+
+/// `folder` names the site when the archive does not: an archive's folder is its site id.
+fn from_site_text(text: &str, folder: Option<&str>) -> Option<CartridgePath> {
+    let document = roxmltree::Document::parse(text).ok()?;
     let root = document.root_element();
-    let label = root
-        .attribute("site-id")
-        .map(str::to_string)
-        .or_else(|| directory_name(file))?;
+    let label = root.attribute("site-id").or(folder).map(str::to_string)?;
     let node = root
         .descendants()
         .find(|node| node.tag_name().name() == "custom-cartridges")?;
@@ -223,6 +234,27 @@ mod tests {
             found[0].order,
             ["int_search", "app_brand", "app_storefront_base"]
         );
+    }
+
+    #[test]
+    fn reads_the_site_archives_of_the_metadata_ref_last() {
+        let root = gitref::repository_with_mirror(
+            "isml-lsp-ref-path",
+            &[("metadata/baseline/sites/storefront/site.xml", SITE)],
+        );
+        let settings = serde_json::json!({ "metadata_ref": "mirror" });
+        let found = load(std::slice::from_ref(&root), &settings);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].label, "storefront");
+        assert_eq!(
+            found[0].order,
+            ["int_search", "app_brand", "app_storefront_base"]
+        );
+
+        fs::write(root.join("site.xml"), SITE.replace("int_search:", "")).unwrap();
+        let found = load(&[root], &settings);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].order, ["app_brand", "app_storefront_base"]);
     }
 
     #[test]

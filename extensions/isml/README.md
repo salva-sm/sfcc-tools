@@ -265,6 +265,29 @@ is ever published**: an unknown
 attribute and an unknown instance look identical, and painting a whole file red would be
 the wrong answer to "I have not checked the metadata in".
 
+### A mirror on a branch of its own
+
+A repository may keep its metadata mirror on a separate branch - nightly bot commits have no
+place in the main history - so the checkout has no `metadata/` folder to read. Name that
+branch's ref in the settings and the server reads its site archives and metadata files with
+`git`, without checking it out, as it was at the last `git fetch`:
+
+```json
+{
+    "lsp": {
+        "isml-lsp": {
+            "initialization_options": {
+                "metadata_ref": "origin/data/metadata"
+            }
+        }
+    }
+}
+```
+
+It adds to what the folder holds, never replaces it: a site archive in the folder wins over
+the ref's for the same site. A ref that does not exist, or no `git` on the `PATH`, reads as
+nothing. Read at startup, like the folder: restart the server after a fetch.
+
 ### What it will not guess
 
 SFCC script is untyped, so the object type is inferred from the variable name —
@@ -396,6 +419,7 @@ Whichever of these is available, all of them used:
 | `cartridge_path` in the settings | one path per storefront, labelled as you name it |
 | `<custom-cartridges>` in a site archive (`.../sites/<site>/site.xml`) | one ordered path per storefront, labelled with the site id |
 | the `cartridge` array of `dw.json` | one path, labelled `dw.json` |
+| a site archive on the `metadata_ref` branch | the same, read with `git` without checking the branch out; the folder's own archives win over it |
 
 Only the `cartridge` key of `dw.json` is read; every other field in it is a credential, and
 an unknown field is dropped rather than held.
