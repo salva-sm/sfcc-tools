@@ -81,10 +81,12 @@ impl Findings {
         {
             return;
         }
-        // A leftover with no timestamp of its own was logged just before this read.
+        // A leftover with no timestamp of its own - or one that parsed to the epoch - was logged
+        // just before this read, so it counts for now, not for 1970.
         let moment = entry
             .moment_utc()
             .map(|moment| moment.to_rfc3339_opts(SecondsFormat::Secs, true))
+            .filter(|moment| moment.as_str() >= crate::ledger::SANE_DAY_FLOOR)
             .unwrap_or_else(|| now.clone());
         let day = moment[..10].to_string();
         let record = Record::of(entry, &signature);

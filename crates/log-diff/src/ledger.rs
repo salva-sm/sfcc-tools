@@ -38,6 +38,10 @@ pub struct Ledger {
     /// against.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub daily: BTreeMap<String, BTreeMap<String, u64>>,
+    /// Team only: month (`YYYY-MM`, UTC) -> signature -> records, rolled up from the daily
+    /// buckets as they age past the daily window, so the long-term trend outlives them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub monthly: BTreeMap<String, BTreeMap<String, u64>>,
     /// Team only: when the first read, which learns instead of reporting, ended. What was
     /// first seen before it was already there, not new.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,6 +49,11 @@ pub struct Ledger {
 }
 
 pub const DAYS_KEPT: usize = 90;
+/// Months of rolled-up trend kept past the daily window.
+const MONTHS_KEPT: usize = 24;
+/// A day before this is not a calendar date but a record that parsed to the epoch; it must not
+/// anchor retention or roll into a bogus month.
+pub(crate) const SANE_DAY_FLOOR: &str = "2000-01-01";
 const SPIKE_WINDOW: i64 = 7;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -254,6 +263,23 @@ fn merge_known(into: &mut Known, from: Known) {
     }
 }
 
+/// Re-point a trend map (day or month -> signature -> records) at the merged ids a compaction
+/// produced, summing where two old ids now share one.
+fn remap_trend(
+    trend: BTreeMap<String, BTreeMap<String, u64>>,
+    remap: &BTreeMap<String, String>,
+) -> BTreeMap<String, BTreeMap<String, u64>> {
+    let mut out: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
+    for (bucket, counts) in trend {
+        let into = out.entry(bucket).or_default();
+        for (id, count) in counts {
+            let id = remap.get(&id).cloned().unwrap_or(id);
+            *into.entry(id).or_default() += count;
+        }
+    }
+    out
+}
+
 pub fn serious(label: &str, example: &str) -> bool {
     let head = example.lines().next().unwrap_or_default();
     // A failed `${}` renders empty and the page goes on; the cause is logged apart, in customerror.
@@ -312,6 +338,7 @@ impl Default for Ledger {
             known_signatures: BTreeMap::new(),
             deploy_log: Vec::new(),
             daily: BTreeMap::new(),
+            monthly: BTreeMap::new(),
             baseline: None,
         }
     }
@@ -402,17 +429,10 @@ impl Ledger {
         }
         self.known_signatures = merged;
 
-        // The daily trend is keyed by signature id too: re-point each day's counts at the merged
-        // id, summing where two old ids now meet, so per-signature history survives, not just totals.
-        let mut daily: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
-        for (day, counts) in std::mem::take(&mut self.daily) {
-            let into = daily.entry(day).or_default();
-            for (id, count) in counts {
-                let id = remap.get(&id).cloned().unwrap_or(id);
-                *into.entry(id).or_default() += count;
-            }
-        }
-        self.daily = daily;
+        // The daily and monthly trends are keyed by signature id too, so per-signature history
+        // survives a merge, not just the totals.
+        self.daily = remap_trend(std::mem::take(&mut self.daily), &remap);
+        self.monthly = remap_trend(std::mem::take(&mut self.monthly), &remap);
 
         // Keyed the current way now, so the next `run` does not take it for a ledger to relearn.
         self.signatures = crate::normalize::SIGNATURES;
@@ -478,16 +498,33 @@ impl Ledger {
                 .entry(finding.signature.id.clone())
                 .or_default() += count;
         }
+        self.daily.retain(|day, _| day.as_str() >= SANE_DAY_FLOOR);
         let excess = self.daily.len().saturating_sub(DAYS_KEPT);
         let old: Vec<String> = self.daily.keys().take(excess).cloned().collect();
         for day in old {
-            self.daily.remove(&day);
+            let Some(counts) = self.daily.remove(&day) else {
+                continue;
+            };
+            let month = self.monthly.entry(day[..7].to_string()).or_default();
+            for (id, count) in counts {
+                *month.entry(id).or_default() += count;
+            }
+        }
+        let excess = self.monthly.len().saturating_sub(MONTHS_KEPT);
+        let old: Vec<String> = self.monthly.keys().take(excess).cloned().collect();
+        for month in old {
+            self.monthly.remove(&month);
         }
     }
 
     /// Team only: what was not logged on any day it still counts is gone; back, it is new again.
     pub fn forget_gone(&mut self) -> usize {
-        let Some(oldest) = self.daily.keys().next().cloned() else {
+        let Some(oldest) = self
+            .daily
+            .keys()
+            .find(|day| day.as_str() >= SANE_DAY_FLOOR)
+            .cloned()
+        else {
             return 0;
         };
         let before = self.known_signatures.len();
