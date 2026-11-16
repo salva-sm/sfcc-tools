@@ -8,7 +8,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 /// Raise it with any change that gives a failure a different id, so old ledgers relearn quietly
 /// instead of reporting everything as new.
-pub const SIGNATURES: u32 = 6;
+pub const SIGNATURES: u32 = 7;
 /// Below this the stack is the framework's, the same for every failure.
 const FRAMES: usize = 8;
 const EXAMPLE_FRAMES: usize = 3;
@@ -93,6 +93,9 @@ regex!(REDIRECT_PATH, r"(request path )'[^']*'");
 // `Deleting ... file [/remote/.../2026_10_29-ac6Fu...map]`: the path is which file, not the
 // failure - un-masked, every file a cleanup job deletes is its own signature.
 regex!(FILE_PATH, r"\[/[^\]]*\]");
+// `... had no tax total ... Line items: Danya satchel taxClass=NONE | ...`: the basket's contents
+// are what it held, not the failure - un-masked, every basket is its own signature.
+regex!(LINE_ITEMS, r"(Line items:).*");
 // `to "09/19/2026 01:02:37"`, `for "<basket>"`, `cookie header "<value>"`: the quoted value after
 // one of these varies. A property name keeps its quotes: `property "lastModifiedDate"`.
 regex!(QUOTED_VALUE, r#"\b(to|for|header)\s+"[^"]*""#);
@@ -275,6 +278,7 @@ pub fn scrub(text: &str) -> String {
     // so one failure is one signature instead of one per path, value or dump.
     let text = REDIRECT_PATH.replace_all(&text, "${1}'<path>'");
     let text = FILE_PATH.replace_all(&text, "[<path>]");
+    let text = LINE_ITEMS.replace_all(&text, "$1 <items>");
     let text = BRACES.replace_all(&text, "${1}{...}");
     let text = QUOTED_VALUE.replace_all(&text, "${1} \"<value>\"");
     let text = TIMESTAMP.replace_all(&text, "<time>");
