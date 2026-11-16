@@ -420,6 +420,56 @@ fn what_was_not_logged_on_any_day_kept_is_forgotten() {
 }
 
 #[test]
+fn a_record_that_parsed_to_the_epoch_does_not_disable_forgetting() {
+    let mut team = Ledger::default();
+    let gone = at("2026-06-01 10:00:00.000");
+    let still = found(&FAILURE.replace("boom", "still here"));
+    team.observe(&gone, None, false);
+    team.observe(&still, None, false);
+    // The 1970 bucket, left by a record with no usable timestamp, must not become the floor
+    // that keeps every older signature alive.
+    team.record_daily(&counted(
+        &still,
+        &[("1970-01-01", 1), ("2026-09-01", 1), ("2026-09-22", 3)],
+    ));
+
+    assert!(
+        !team.daily.contains_key("1970-01-01"),
+        "the epoch bucket is dropped"
+    );
+    assert_eq!(team.forget_gone(), 1);
+    assert!(!team.knows(&gone.signature.id));
+    assert!(team.knows(&still.signature.id));
+}
+
+#[test]
+fn aged_out_days_roll_up_into_the_monthly_trend() {
+    let mut team = Ledger::default();
+    let base = found(FAILURE);
+    team.record_daily(&counted(&base, &[("2026-08-15", 4)]));
+    let later: Vec<String> = (0..DAYS_KEPT)
+        .map(|back| {
+            (chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap()
+                + chrono::Duration::days(back as i64))
+            .format("%Y-%m-%d")
+            .to_string()
+        })
+        .collect();
+    let refs: Vec<(&str, u64)> = later.iter().map(|day| (day.as_str(), 1)).collect();
+    team.record_daily(&counted(&base, &refs));
+
+    assert_eq!(team.daily.len(), DAYS_KEPT, "daily stays capped");
+    assert!(
+        !team.daily.contains_key("2026-08-15"),
+        "August aged out of daily"
+    );
+    assert_eq!(
+        team.monthly["2026-08"][&base.signature.id], 4,
+        "its records survive as a month's total"
+    );
+}
+
+#[test]
 fn a_ledger_signed_another_way_learns_again_once() {
     let mut ledger = Ledger::default();
     assert!(!ledger.resigned(), "an empty ledger has nothing to mistake");
