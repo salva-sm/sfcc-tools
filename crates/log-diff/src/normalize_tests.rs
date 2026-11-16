@@ -404,6 +404,34 @@ fn a_redirect_loop_is_one_signature_whatever_the_path() {
     assert_eq!(signature.id, other.id);
 }
 
+const GDPR_DELETE: &str = concat!(
+    "[2026-11-16 03:00:00.000 GMT] WARN SystemJobThread|sfcc-create-customer-deletion-logs|MergeGDPRLogFiles ",
+    "com.demandware.component.transaction.customer.CustomerGDPRServiceImpl Sites-Site JOB aBcDeFgHiJ kLmNoP 7 - ",
+    "Deleting GDPR log, request, or response file ",
+    "[/remote/bdzv/bdzv_prd/sharedata/transfer/cquotient/2026_10_29-ac6FuTBtiKfasb08tgvJNRk1OF-Sites-guess-Site.map] ",
+    "which is older than 14 days\n",
+);
+
+#[test]
+fn a_deleted_file_is_one_signature_whatever_its_name() {
+    let signature = one("warn-blade1-20261116.log", GDPR_DELETE);
+    assert!(
+        signature
+            .message
+            .contains("file [<path>] which is older than"),
+        "{}",
+        signature.message
+    );
+    let other = one(
+        "warn-blade1-20261116.log",
+        &GDPR_DELETE.replace(
+            "2026_10_29-ac6FuTBtiKfasb08tgvJNRk1OF-Sites-guess-Site.map",
+            "2026_11_01-ZZ9plB8f0Qw1xT2yU3vW4nMk5L-Sites-guess_na-Site.map",
+        ),
+    );
+    assert_eq!(signature.id, other.id);
+}
+
 #[test]
 fn a_batch_of_redirect_loops_aggregates_into_one_finding() {
     let text = [
