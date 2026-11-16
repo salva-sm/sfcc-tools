@@ -432,6 +432,30 @@ fn a_deleted_file_is_one_signature_whatever_its_name() {
     assert_eq!(signature.id, other.id);
 }
 
+const TAX_REPAIR: &str = concat!(
+    "[2026-11-16 10:00:00.000 GMT] ERROR PipelineCallServlet|1|Sites-guess-Site|Cart-Show|PipelineCall|abc ",
+    "custom.basketTaxRepair [] Basket bcAbCdEf12 had no tax total. Repaired: false, product tax classes ",
+    "synced: false. Line items: Danya satchel taxClass=NONE taxRate=null | Steel mesh watch taxClass=RGL taxRate=0\n",
+);
+
+#[test]
+fn a_basket_tax_repair_is_one_signature_whatever_the_cart_held() {
+    let signature = one("customerror-blade1-20261116.log", TAX_REPAIR);
+    assert!(
+        signature.message.contains("Line items: <items>"),
+        "{}",
+        signature.message
+    );
+    let other = one(
+        "customerror-blade1-20261116.log",
+        &TAX_REPAIR.replace(
+            "Danya satchel taxClass=NONE taxRate=null | Steel mesh watch taxClass=RGL taxRate=0",
+            "Lindsey Satchel-Tasche taxClass=RGL taxRate=0 | Allegra Schluesselanhaenger taxClass=RGL taxRate=0",
+        ),
+    );
+    assert_eq!(signature.id, other.id);
+}
+
 #[test]
 fn a_batch_of_redirect_loops_aggregates_into_one_finding() {
     let text = [
