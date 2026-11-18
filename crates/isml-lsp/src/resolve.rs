@@ -86,10 +86,10 @@ fn what_runs(overrides: Vec<Override>, workspace: &Workspace) -> Vec<Hit> {
             .map(|candidate| candidate.hit)
             .collect();
     }
-    if let Some(chosen) = &workspace.storefront {
-        if let Some((_, candidate)) = winners.iter().find(|(label, _)| label == chosen) {
-            return vec![candidate.hit.clone()];
-        }
+    if let Some(chosen) = &workspace.storefront
+        && let Some((_, candidate)) = winners.iter().find(|(label, _)| label == chosen)
+    {
+        return vec![candidate.hit.clone()];
     }
     let mut hits: Vec<Hit> = Vec::new();
     for (_, candidate) in winners {

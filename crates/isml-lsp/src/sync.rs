@@ -69,10 +69,11 @@ pub fn report(roots: Vec<PathBuf>, options: Options, sender: Sender<Message>, st
             if now != shown && announce(&sender, shown.0, now.0, now.1.clone()).is_err() {
                 return;
             }
-            if let Some((level, text)) = toast(status.as_ref(), &mut failing) {
-                if options.notify && show(&sender, level, text).is_err() {
-                    return;
-                }
+            if let Some((level, text)) = toast(status.as_ref(), &mut failing)
+                && options.notify
+                && show(&sender, level, text).is_err()
+            {
+                return;
             }
             shown = now;
             if !keep_polling(&stop, POLL) {

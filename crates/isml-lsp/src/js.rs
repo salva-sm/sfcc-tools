@@ -265,10 +265,10 @@ impl<'a> Script<'a> {
             | "arrow_function"
             | "method_definition" => {
                 scope = node;
-                if node.kind() != "method_definition" {
-                    if let Some(name) = node.child_by_field_name("name") {
-                        self.declare(scope, name);
-                    }
+                if node.kind() != "method_definition"
+                    && let Some(name) = node.child_by_field_name("name")
+                {
+                    self.declare(scope, name);
                 }
                 self.declare_parameters(node);
             }
@@ -656,11 +656,11 @@ impl<'a> Script<'a> {
                     let callee = object
                         .child_by_field_name("function")
                         .map(|function| self.text(function));
-                    if matches!(callee, Some("Object.create" | "Object.assign")) {
-                        if let Some(arguments) = object.child_by_field_name("arguments") {
-                            let mut cursor = arguments.walk();
-                            objects.extend(arguments.named_children(&mut cursor));
-                        }
+                    if matches!(callee, Some("Object.create" | "Object.assign"))
+                        && let Some(arguments) = object.child_by_field_name("arguments")
+                    {
+                        let mut cursor = arguments.walk();
+                        objects.extend(arguments.named_children(&mut cursor));
                     }
                 }
                 _ => {}
