@@ -338,9 +338,23 @@ pub fn write<T: Serialize>(path: &Path, value: &T) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(body) = serde_json::to_string(value) {
-        let _ = std::fs::write(path, body);
+    let Ok(body) = serde_json::to_string(value) else {
+        return;
+    };
+    // Rename over the target so a concurrent reader sees one whole file, never a half-written one.
+    let temp = temp_path(path);
+    if std::fs::write(&temp, body).is_ok() && std::fs::rename(&temp, path).is_err() {
+        let _ = std::fs::remove_file(&temp);
     }
+}
+
+fn temp_path(path: &Path) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NONCE: AtomicU64 = AtomicU64::new(0);
+    let nonce = NONCE.fetch_add(1, Ordering::Relaxed);
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}.{nonce}.tmp", std::process::id()));
+    path.with_file_name(name)
 }
 
 pub fn read<T: DeserializeOwned>(path: &Path) -> Option<T> {

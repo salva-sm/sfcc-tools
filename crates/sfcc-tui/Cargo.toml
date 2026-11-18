@@ -1,6 +1,6 @@
 [package]
 name = "sfcc-tui"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 license.workspace = true
 repository.workspace = true
@@ -8,6 +8,6 @@ authors = ["salva-sm"]
 description = "One terminal screen for the SFCC tools: watchers, pending errors and debug sessions"
 
 [dependencies]
-anyhow = "1.0.104"
+anyhow.workspace = true
 ratatui = "0.30.2"
 sfcc-core = { path = "../sfcc-core", features = ["daemon"] }

@@ -5,6 +5,8 @@ pub mod completions;
 pub mod config;
 #[cfg(feature = "daemon")]
 pub mod daemon;
+#[cfg(any(feature = "webdav", feature = "ocapi", feature = "ods"))]
+pub mod http;
 #[cfg(feature = "webdav")]
 pub mod logs;
 #[cfg(any(feature = "webdav", feature = "ocapi", feature = "ods"))]
