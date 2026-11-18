@@ -81,18 +81,18 @@ fn step_types(file: &Path, text: &str) -> Vec<Diagnostic> {
     let mut found = Vec::new();
     let mut seen: Vec<String> = Vec::new();
     for (number, line) in text.lines().enumerate() {
-        if let Some(value) = json_string(line, "module") {
-            if !resolves(cartridges, &value.text) {
-                found.push(warning(
-                    number as u32,
-                    value.start,
-                    value.text.chars().count(),
-                    format!(
-                        "No file at `{}`; this step fails when the job runs.",
-                        value.text
-                    ),
-                ));
-            }
+        if let Some(value) = json_string(line, "module")
+            && !resolves(cartridges, &value.text)
+        {
+            found.push(warning(
+                number as u32,
+                value.start,
+                value.text.chars().count(),
+                format!(
+                    "No file at `{}`; this step fails when the job runs.",
+                    value.text
+                ),
+            ));
         }
         if let Some(value) = json_string(line, "@type-id") {
             if seen.contains(&value.text) {

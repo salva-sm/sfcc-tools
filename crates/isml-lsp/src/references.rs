@@ -57,10 +57,10 @@ pub fn find(query: &Query, workspace: &Workspace, open: &HashMap<PathBuf, &str>)
             let Some(text) = read(&target.path, open) else {
                 continue;
             };
-            if let Some(parsed) = Parsed::new(&target.path, &text) {
-                if let Export::Defines(definition) = parsed.script().export(&name) {
-                    found.extend(located(&target.path, &text, &definition.at));
-                }
+            if let Some(parsed) = Parsed::new(&target.path, &text)
+                && let Export::Defines(definition) = parsed.script().export(&name)
+            {
+                found.extend(located(&target.path, &text, &definition.at));
             }
         }
     }
@@ -195,10 +195,10 @@ fn parents(file: &Path, workspace: &Workspace) -> Vec<PathBuf> {
             .filter_map(|copy| path.rank(&copy.cartridge).map(|rank| (rank, copy)))
             .filter(|(rank, _)| *rank > own)
             .min_by_key(|(rank, _)| *rank);
-        if let Some((_, copy)) = next {
-            if !files.contains(&copy.hit.path) {
-                files.push(copy.hit.path.clone());
-            }
+        if let Some((_, copy)) = next
+            && !files.contains(&copy.hit.path)
+        {
+            files.push(copy.hit.path.clone());
         }
     }
     files

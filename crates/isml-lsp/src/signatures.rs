@@ -65,10 +65,10 @@ pub fn help(
 fn call_at<'a>(script: &Script<'a>, at: usize) -> Option<Call<'a>> {
     let mut node = script.node_at(at)?;
     loop {
-        if node.kind() == "ERROR" {
-            if let Some(call) = unclosed_call(node, at) {
-                return Some(call);
-            }
+        if node.kind() == "ERROR"
+            && let Some(call) = unclosed_call(node, at)
+        {
+            return Some(call);
         }
         if node.kind() == "arguments" && node.start_byte() < at {
             // `f(a)|` is past the call; `f(a|` with the `)` not typed yet is inside it.
@@ -375,9 +375,11 @@ var y = 2;"
             &HashMap::new(),
         )
         .unwrap();
-        assert!(help.signatures[0]
-            .label
-            .contains("assignPriceBookToSite(priceBook"));
+        assert!(
+            help.signatures[0]
+                .label
+                .contains("assignPriceBookToSite(priceBook")
+        );
         assert_eq!(help.active_parameter, Some(1));
     }
 

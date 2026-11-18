@@ -390,14 +390,16 @@ mod tests {
             api.class("dw.order.Basket").unwrap().extends,
             "dw.order.LineItemCtnr"
         );
-        assert!(api
-            .member("dw.order.Basket", "getDefaultShipment")
-            .is_some());
-        assert!(api
-            .class("dw.order.Basket")
-            .unwrap()
-            .member("getDefaultShipment")
-            .is_none());
+        assert!(
+            api.member("dw.order.Basket", "getDefaultShipment")
+                .is_some()
+        );
+        assert!(
+            api.class("dw.order.Basket")
+                .unwrap()
+                .member("getDefaultShipment")
+                .is_none()
+        );
         let names: Vec<&str> = api
             .members("dw.order.Basket")
             .into_iter()

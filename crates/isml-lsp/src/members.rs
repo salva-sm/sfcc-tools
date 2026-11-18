@@ -97,13 +97,12 @@ pub fn offered(
     };
 
     let mut chains = chains(&origin, file, workspace);
-    if let Some(chosen) = &workspace.storefront {
-        if chains
+    if let Some(chosen) = &workspace.storefront
+        && chains
             .iter()
             .any(|(label, _)| label.as_ref() == Some(chosen))
-        {
-            chains.retain(|(label, _)| label.as_ref() == Some(chosen));
-        }
+    {
+        chains.retain(|(label, _)| label.as_ref() == Some(chosen));
     }
     let copies = Copies::load(&chains, open);
     let scripts = copies.scripts();
@@ -179,11 +178,11 @@ fn resolved(
         let Some(mut definition) = defined_along(chain, name, workspace, scripts) else {
             continue;
         };
-        if let (Some(chosen), Some(label)) = (&workspace.storefront, storefront) {
-            if chosen == label {
-                definition.storefronts = vec![label.clone()];
-                return vec![definition];
-            }
+        if let (Some(chosen), Some(label)) = (&workspace.storefront, storefront)
+            && chosen == label
+        {
+            definition.storefronts = vec![label.clone()];
+            return vec![definition];
         }
         match found
             .iter_mut()
@@ -653,7 +652,11 @@ mod tests {
             "isml-lsp-members-docs",
             &[
                 ("app_storefront_base", HELPER, helper),
-                ("app_brand", CART, "var h = require('*/cartridge/scripts/helpers/cartHelpers');\nh.other(); h.total(); h.count();\n"),
+                (
+                    "app_brand",
+                    CART,
+                    "var h = require('*/cartridge/scripts/helpers/cartHelpers');\nh.other(); h.total(); h.count();\n",
+                ),
             ],
         );
         let workspace = workspace(&root, None);
