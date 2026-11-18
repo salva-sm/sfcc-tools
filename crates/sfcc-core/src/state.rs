@@ -115,9 +115,22 @@ pub mod upload {
     pub enum State {
         Synced,
         Uploading,
-        /// The changes are still queued, or were held.
+        /// The changes could not reach the sandbox and are still queued.
         Failed,
+        /// The upload went up but left files another writer changed since this checkout sent them.
+        Held,
         Stopped,
+    }
+
+    /// A file left as the sandbox has it because another writer changed it since this checkout
+    /// last sent it. WebDAV names no author, so the fact we can show is when the sandbox copy
+    /// was last written.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct Conflict {
+        pub path: String,
+        /// When the sandbox copy was last written (epoch seconds), from WebDAV; None if unknown.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub sandbox_at: Option<i64>,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -133,6 +146,10 @@ pub mod upload {
         pub files: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub detail: Option<String>,
+        /// Every file held unresolved, not just the last batch's: a later synced batch no longer
+        /// hides a conflict left open.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub held: Vec<Conflict>,
         /// Why the sandbox did not answer the watcher's last probe.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub down: Option<String>,
@@ -390,12 +407,14 @@ mod tests {
             code_version: "version1".into(),
             files: 7,
             detail: None,
+            held: Vec::new(),
             down: None,
             at: 1_700_000_000,
         };
         let body = serde_json::to_string(&status).unwrap();
         assert!(body.contains(r#""state":"uploading""#));
         assert!(!body.contains("detail"));
+        assert!(!body.contains("held"));
         assert!(!body.contains("down"));
         assert_eq!(
             serde_json::from_str::<upload::Status>(&body).unwrap(),

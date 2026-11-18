@@ -308,9 +308,12 @@ rewritten on every transition:
  "hostname":"sbx-001.example.com","code_version":"version1","files":7,"at":1727000000}
 ```
 
-`state` is `uploading`, `synced` or `failed`, with `detail` carrying the reason for a
-failure. The file is keyed by the cartridges directory so a reader that knows only the
-folder it has open can find the right watcher, and it is removed when the watcher stops.
+`state` is `uploading`, `synced`, `failed` or `held`, with `detail` carrying the reason for a
+failure or the count of held files. `held` lists every file left as the sandbox has it - across
+batches, not just the last one, so a later synced batch does not hide a conflict left open -
+each with when the sandbox copy was last written. The file is keyed by the cartridges directory
+so a reader that knows only the folder it has open can find the right watcher, and it is removed
+when the watcher stops.
 
 It exists so an editor can show whether the sandbox has the code on disk. Writing it never
 fails an upload — a status nobody can write is a status nobody reads, not a reason to stop.
@@ -376,19 +379,26 @@ named after the branch; anywhere else it says what to run: `push --code-version 
 `push --take-over` to make this checkout the code version's. That code version is not
 activated: the storefront keeps running the one it ran.
 
-**Someone else's change.** Before replacing or deleting a file, sfcc-upload checks that the
+**Another writer's change.** Before replacing or deleting a file, sfcc-upload checks that the
 sandbox still holds the version this checkout sent. WebDAV's `getetag` changes on every write,
 so after an upload the new etag goes in the manifest. If the etag up there is a different one,
-someone else has written the file since: a colleague on the same code version, Prophet,
-another checkout. `push` lists those files and asks before overwriting them; with no terminal
-to ask at, or with `n`, it leaves them as they are and sends the rest. The watcher never asks.
-It leaves them too, and reports `failed` with how many it held, without retrying. `push
---overwrite` replaces them. `push --full` does not check: starting over replaces everything.
+another writer may have touched the file since: Prophet, a teammate, another machine. `push`
+lists those files and asks before overwriting them; with no terminal to ask at, or with `n`, it
+leaves them as they are and sends the rest. The watcher never asks. It leaves them too, reports
+a distinct `held` state - not a `failed` - and does not retry, keeping each held file in its
+status until the file goes up or is resolved. `push --overwrite` replaces them all. To act on
+one, `sfcc-upload resolve <path>` overwrites just it with this checkout's version, and `resolve
+--keep <path>` stops holding it and leaves the sandbox copy; both hand the work to the running
+watcher, and sfcc-tui's conflicts panel calls them per file. `push --full` does not check:
+starting over replaces everything.
 
 Files sent in bulk (a full deploy, a large batch) get no etag, because reading one back would
 cost a listing per folder. For those the check uses the date instead: a write more than two
-minutes after ours counts. The instance ignores `If-Match`, so this is a check just before
-the write, not a lock. A write that lands in between still gets through.
+minutes after ours counts. A changed etag or date only makes a file a suspect, though: before
+holding it, sfcc-upload reads it back and holds it only if its bytes no longer match what this
+checkout last sent. So a clock skew after a big deploy, or an identical re-save, does not read
+as a conflict - only a real divergence does. The instance ignores `If-Match`, so this is a
+check just before the write, not a lock. A write that lands in between still gets through.
 
 **Watching.** Events are debounced 300 ms and coalesced, so a save, a branch switch or a
 webpack rebuild becomes one batch. `start` detaches the process, and keeps a log, pid and

@@ -103,6 +103,10 @@ fn toast(status: Option<&Status>, failing: &mut bool) -> Option<(MessageType, St
             *failing = true;
             Some((MessageType::ERROR, format!("SFCC {}", describe(status))))
         }
+        (State::Held, false) => {
+            *failing = true;
+            Some((MessageType::WARNING, format!("SFCC {}", describe(status))))
+        }
         (State::Synced, true) => {
             *failing = false;
             Some((
@@ -214,12 +218,19 @@ fn describe(status: &Status) -> String {
             Some(detail) => format!("upload failed — {detail}"),
             None => "upload failed".to_string(),
         },
+        State::Held => match &status.detail {
+            Some(detail) => format!("upload held — {detail}"),
+            None => "upload held".to_string(),
+        },
         State::Synced | State::Stopped => String::new(),
     }
 }
 
 fn worth_showing(state: Option<State>) -> bool {
-    matches!(state, Some(State::Uploading) | Some(State::Failed))
+    matches!(
+        state,
+        Some(State::Uploading) | Some(State::Failed) | Some(State::Held)
+    )
 }
 
 fn announce(
@@ -294,6 +305,7 @@ mod tests {
             code_version: "version1".into(),
             files: 7,
             detail: None,
+            held: Vec::new(),
             down: None,
             at,
         }

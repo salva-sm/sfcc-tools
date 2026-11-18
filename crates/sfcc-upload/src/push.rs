@@ -7,6 +7,7 @@ use anyhow::{Context, Result, bail};
 use futures::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use sfcc_core::config::Config;
+use sfcc_core::state::upload::Conflict;
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -57,7 +58,9 @@ pub struct Stats {
     pub deleted: usize,
     pub bytes: u64,
     pub elapsed: Duration,
-    pub held: Vec<String>,
+    pub held: Vec<Conflict>,
+    /// What reached the sandbox this push: a watcher clears these from what it was holding.
+    pub sent: Vec<String>,
 }
 
 pub async fn push(ctx: &Ctx, options: PushOptions) -> Result<Stats> {
@@ -110,6 +113,7 @@ pub async fn push_with(ctx: &Ctx, manifest: &mut Manifest, options: PushOptions)
             bytes,
             elapsed: started.elapsed(),
             held: Vec::new(),
+            sent: Vec::new(),
         });
     }
 
@@ -148,7 +152,7 @@ pub async fn push_with(ctx: &Ctx, manifest: &mut Manifest, options: PushOptions)
         Err(error) => (Vec::new(), Some(error)),
     };
     let uploaded = recorded.len();
-    let sent: Vec<String> = recorded
+    let mut sent: Vec<String> = recorded
         .iter()
         .map(|(relative, _)| relative.clone())
         .collect();
@@ -168,6 +172,7 @@ pub async fn push_with(ctx: &Ctx, manifest: &mut Manifest, options: PushOptions)
         for path in removed.iter().filter(|path| !result.failed.contains(path)) {
             manifest.forget(path);
         }
+        sent.extend(result.gone);
     }
 
     manifest.save(&ctx.manifest_path)?;
@@ -182,6 +187,7 @@ pub async fn push_with(ctx: &Ctx, manifest: &mut Manifest, options: PushOptions)
         bytes,
         elapsed: started.elapsed(),
         held,
+        sent,
     };
     logging::ok(format!(
         "{} uploaded, {} deleted, {} in {:.1}s",

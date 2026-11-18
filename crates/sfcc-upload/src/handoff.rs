@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sfcc_core::config::Config;
 use sfcc_core::daemon;
+use sfcc_core::state::upload::Conflict;
 use sfcc_core::state::{self, upload};
 
 use crate::lock::Owner;
@@ -21,6 +22,12 @@ pub struct Request {
     pub id: String,
     pub full: bool,
     pub overwrite: bool,
+    /// Held paths to act on directly; empty means an ordinary push.
+    #[serde(default)]
+    pub resolve: Vec<String>,
+    /// With `resolve`: drop them from what is held without uploading, keeping the sandbox copy.
+    #[serde(default)]
+    pub keep: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -29,7 +36,7 @@ pub enum Reply {
     Done {
         uploaded: usize,
         deleted: usize,
-        held: Vec<String>,
+        held: Vec<Conflict>,
     },
     Down {
         reason: String,
@@ -55,21 +62,48 @@ fn put<T: Serialize>(path: PathBuf, value: &T) -> Result<()> {
     std::fs::rename(&partial, &path).with_context(|| format!("cannot write {}", path.display()))
 }
 
-pub fn submit(config: &Config, full: bool, overwrite: bool) -> Result<Request> {
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis())
-        .unwrap_or(0);
-    let request = Request {
-        id: format!("{stamp}-{}", std::process::id()),
-        full,
-        overwrite,
-    };
+fn submit(config: &Config, request: Request) -> Result<Request> {
     put(
         dir(config).join(format!("{}{REQUEST}", request.id)),
         &request,
     )?;
     Ok(request)
+}
+
+fn new_id() -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0);
+    format!("{stamp}-{}", std::process::id())
+}
+
+pub fn submit_push(config: &Config, full: bool, overwrite: bool) -> Result<Request> {
+    submit(
+        config,
+        Request {
+            id: new_id(),
+            full,
+            overwrite,
+            resolve: Vec::new(),
+            keep: false,
+        },
+    )
+}
+
+/// Hand specific held files to the watcher: overwrite them with this checkout's version, or - with
+/// `keep` - stop holding them and leave the sandbox copy.
+pub fn submit_resolve(config: &Config, resolve: Vec<String>, keep: bool) -> Result<Request> {
+    submit(
+        config,
+        Request {
+            id: new_id(),
+            full: false,
+            overwrite: !keep,
+            resolve,
+            keep,
+        },
+    )
 }
 
 pub fn take(config: &Config) -> Vec<Request> {
@@ -133,14 +167,17 @@ mod tests {
         let mut config = server.config();
         config.code_version = format!("handoff{}", std::process::id());
 
-        let request = submit(&config, false, true).unwrap();
+        let request = submit_push(&config, false, true).unwrap();
         assert_eq!(take(&config), vec![request.clone()]);
         assert!(take(&config).is_empty());
 
         let done = Reply::Done {
             uploaded: 2,
             deleted: 0,
-            held: vec!["app/cartridge/a.js".into()],
+            held: vec![Conflict {
+                path: "app/cartridge/a.js".into(),
+                sandbox_at: None,
+            }],
         };
         answer(&config, &request, &done);
         let watcher = Owner {
@@ -157,7 +194,7 @@ mod tests {
         let server = MockDav::start().await;
         let mut config = server.config();
         config.code_version = format!("gone{}", std::process::id());
-        let request = submit(&config, false, false).unwrap();
+        let request = submit_push(&config, false, false).unwrap();
         let watcher = Owner {
             pid: u32::MAX,
             kind: crate::lock::Kind::Watcher,

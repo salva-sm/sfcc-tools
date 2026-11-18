@@ -67,6 +67,7 @@ impl Watcher {
             (true, upload::State::Synced) => ("synced", Color::Green),
             (true, upload::State::Uploading) => ("uploading", Color::Yellow),
             (true, upload::State::Failed) => ("failed", Color::Red),
+            (true, upload::State::Held) => ("held", Color::Magenta),
             (true, upload::State::Stopped) => ("stopped", Color::DarkGray),
         };
         match down {
@@ -176,6 +177,7 @@ enum View {
     SandboxLog,
     SandboxStatus,
     LogDiff,
+    Conflicts,
 }
 
 impl View {
@@ -185,6 +187,7 @@ impl View {
             View::SandboxLog => "sandbox log",
             View::SandboxStatus => "sandbox status",
             View::LogDiff => "log-diff",
+            View::Conflicts => "conflicts",
         }
     }
 }
@@ -224,6 +227,8 @@ struct App {
     reports: Arc<Mutex<Vec<String>>>,
     /// An action shown as needing its key once more before it runs.
     armed: Option<Action>,
+    /// Which held file the conflicts panel points at, for overwrite or keep.
+    conflict_cursor: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -289,6 +294,8 @@ impl App {
         if let Some(said) = self.reports.lock().ok().and_then(|mut it| it.pop()) {
             self.notice = Some(said);
         }
+        let held = self.current().map_or(0, |it| it.status.held.len());
+        self.conflict_cursor = self.conflict_cursor.min(held.saturating_sub(1));
     }
 
     /// Runs `sfcc-upload sandbox status` for each sandbox whose recorded state is old enough,
@@ -389,6 +396,20 @@ impl App {
                 "sandbox status",
             ),
             Action::LogDiff => text(selected && self.view != View::LogDiff, "log-diff"),
+            Action::Conflicts => {
+                watcher
+                    .filter(|_| selected)
+                    .map(|it| match it.status.held.len() {
+                        0 => "conflicts".to_string(),
+                        held => format!("conflicts ({held})"),
+                    })
+            }
+            Action::Overwrite => self
+                .selected_conflict()
+                .map(|conflict| format!("overwrite {}", basename(&conflict.path))),
+            Action::Keep => self
+                .selected_conflict()
+                .map(|_| "keep sandbox copy".to_string()),
             Action::WatchErrors => watcher.map(|it| match it.errors_watched() {
                 true => "stop watching errors".to_string(),
                 false => "watch errors".to_string(),
@@ -423,6 +444,8 @@ impl App {
     fn needs_confirmation(&self, action: Action) -> bool {
         match action {
             Action::Push => self.current().is_some_and(|it| it.sandbox_down().is_some()),
+            // It replaces another writer's change on the sandbox: ask before clobbering it.
+            Action::Overwrite => true,
             Action::RestartSandbox => true,
             Action::PowerSandbox => self
                 .current()
@@ -476,6 +499,17 @@ impl App {
             Action::SandboxLog => self.show(View::SandboxLog),
             Action::SandboxStatus => self.show(View::SandboxStatus),
             Action::LogDiff => self.show(View::LogDiff),
+            Action::Conflicts => self.show(View::Conflicts),
+            Action::Overwrite => {
+                if let Some(path) = self.selected_conflict().map(|it| it.path.clone()) {
+                    self.quietly(&["sfcc-upload", "resolve", &path]);
+                }
+            }
+            Action::Keep => {
+                if let Some(path) = self.selected_conflict().map(|it| it.path.clone()) {
+                    self.quietly(&["sfcc-upload", "resolve", "--keep", &path]);
+                }
+            }
             Action::WatchErrors => match self.current().is_some_and(Watcher::errors_watched) {
                 true => self.quietly(&["log-diff", "stop"]),
                 false => self.quietly(&["log-diff", "start"]),
@@ -534,15 +568,32 @@ impl App {
                     self.scroll = 0;
                 }
             }
+            // In the conflicts panel the arrows pick a held file rather than scroll.
+            Focus::Panel if self.view == View::Conflicts => {
+                let held = self.current().map_or(0, |it| it.status.held.len());
+                if held > 0 {
+                    let at = self.conflict_cursor as isize + step;
+                    self.conflict_cursor = at.clamp(0, held as isize - 1) as usize;
+                }
+            }
             Focus::Panel | Focus::Watchers => {
                 self.scroll = self.scroll.saturating_add_signed(-step);
             }
         }
     }
 
+    /// The held file the conflicts panel points at, when that panel is shown.
+    fn selected_conflict(&self) -> Option<&upload::Conflict> {
+        if self.view != View::Conflicts {
+            return None;
+        }
+        self.current()?.status.held.get(self.conflict_cursor)
+    }
+
     fn show(&mut self, view: View) {
         self.view = view;
         self.scroll = 0;
+        self.conflict_cursor = 0;
         self.focus = Focus::Panel;
         let Some(watcher) = self.current() else {
             return;
@@ -628,7 +679,49 @@ impl App {
                     .map(|watcher| plain(errors::daemon(&watcher.identity).tail(ACTIVITY_LINES)))
                     .unwrap_or_default(),
             ),
+            View::Conflicts => {
+                let held = self.current().map(|it| it.status.held.len()).unwrap_or(0);
+                let title = match held {
+                    0 => format!(" Conflicts · {version} "),
+                    _ => format!(" Conflicts · {held} held · {version} "),
+                };
+                (title, self.conflict_lines())
+            }
         }
+    }
+
+    /// One held file to a line: its path, and when the sandbox copy that holds it was written.
+    fn conflict_lines(&self) -> Vec<String> {
+        let Some(watcher) = self.current() else {
+            return Vec::new();
+        };
+        let held = &watcher.status.held;
+        if held.is_empty() {
+            return vec![
+                "no held files - everything this checkout sent is on the sandbox".to_string(),
+            ];
+        }
+        let column = held
+            .iter()
+            .map(|it| it.path.len())
+            .max()
+            .unwrap_or(0)
+            .min(60);
+        held.iter()
+            .enumerate()
+            .map(|(at, conflict)| {
+                let when = match conflict.sandbox_at {
+                    Some(seconds) => format!("sandbox changed {}", ago(seconds)),
+                    None => "sandbox changed, time unknown".to_string(),
+                };
+                let cursor = if at == self.conflict_cursor {
+                    "▸ "
+                } else {
+                    "  "
+                };
+                format!("{cursor}{:<column$}  {when}", conflict.path)
+            })
+            .collect()
     }
 }
 
@@ -659,6 +752,7 @@ fn home(action: Action) -> Option<View> {
         Action::Push | Action::StartWatcher | Action::StopWatcher => Some(View::Uploads),
         Action::WatchErrors | Action::Errors => Some(View::LogDiff),
         Action::PowerSandbox | Action::RestartSandbox => Some(View::SandboxStatus),
+        Action::Overwrite | Action::Keep => Some(View::Conflicts),
         _ => None,
     }
 }
@@ -1087,6 +1181,10 @@ fn checkout_name(cartridges: &str) -> String {
         .to_string()
 }
 
+fn basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
 fn ago(at: i64) -> String {
     match now_seconds() - at {
         seconds if seconds < 60 => format!("{seconds}s ago"),
@@ -1148,6 +1246,7 @@ mod tests {
                 code_version: "develop".into(),
                 files: 0,
                 detail: None,
+                held: Vec::new(),
                 down: None,
                 at: 0,
             },
@@ -1260,6 +1359,88 @@ mod tests {
         assert_eq!(listed(&app), vec![Action::WatchErrors, Action::Errors]);
         app.view = View::SandboxLog;
         assert!(listed(&app).is_empty());
+    }
+
+    #[test]
+    fn the_conflicts_panel_lists_each_held_file_and_when_the_sandbox_changed_it() {
+        let mut watcher = watcher_on(Some("started"), None);
+        watcher.status.state = upload::State::Held;
+        watcher.status.held = vec![
+            upload::Conflict {
+                path: "app_x/cartridge/order.js".into(),
+                sandbox_at: Some(now_seconds() - 240),
+            },
+            upload::Conflict {
+                path: "app_x/cartridge/home.isml".into(),
+                sandbox_at: None,
+            },
+        ];
+        let mut app = App {
+            watchers: vec![watcher],
+            focus: Focus::Panel,
+            ..App::default()
+        };
+        app.selected.select(Some(0));
+        app.view = View::Conflicts;
+
+        let (title, lines) = app.panel();
+        assert!(title.contains("2 held"), "{title}");
+        assert!(
+            lines[0].starts_with("▸") && lines[0].contains("order.js"),
+            "{}",
+            lines[0]
+        );
+        assert!(lines[0].contains("sandbox changed 4m ago"), "{}", lines[0]);
+        assert!(
+            lines[1].starts_with("  ")
+                && lines[1].contains("home.isml")
+                && lines[1].contains("time unknown"),
+            "{}",
+            lines[1]
+        );
+        // The key carries the count, so an open conflict shows without opening the panel.
+        assert_eq!(
+            app.label(Action::Conflicts).as_deref(),
+            Some("conflicts (2)")
+        );
+
+        // Overwrite and keep act on the file the cursor points at; the arrows move it.
+        assert_eq!(
+            app.label(Action::Overwrite).as_deref(),
+            Some("overwrite order.js")
+        );
+        assert_eq!(
+            app.label(Action::Keep).as_deref(),
+            Some("keep sandbox copy")
+        );
+        app.move_by(1);
+        assert_eq!(app.conflict_cursor, 1);
+        assert_eq!(
+            app.label(Action::Overwrite).as_deref(),
+            Some("overwrite home.isml")
+        );
+    }
+
+    #[test]
+    fn overwrite_and_keep_show_only_in_the_conflicts_panel() {
+        let mut watcher = watcher_on(Some("started"), None);
+        watcher.status.held = vec![upload::Conflict {
+            path: "app_x/cartridge/a.js".into(),
+            sandbox_at: None,
+        }];
+        let mut app = App {
+            watchers: vec![watcher],
+            ..App::default()
+        };
+        app.selected.select(Some(0));
+        for view in [View::Uploads, View::SandboxLog, View::LogDiff] {
+            app.view = view;
+            assert_eq!(app.label(Action::Overwrite), None);
+            assert_eq!(app.label(Action::Keep), None);
+        }
+        app.view = View::Conflicts;
+        assert!(app.label(Action::Overwrite).is_some());
+        assert!(app.label(Action::Keep).is_some());
     }
 
     #[test]

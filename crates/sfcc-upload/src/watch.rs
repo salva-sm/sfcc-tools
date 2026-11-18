@@ -17,6 +17,7 @@ use crate::webdav::Availability;
 use anyhow::{Context, Result, bail};
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{NoCache, new_debouncer_opt};
+use sfcc_core::state::upload::Conflict;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -48,6 +49,32 @@ struct Backlog {
     activate: bool,
     /// So a push handed over is answered at once, not after a probe times out.
     down: Option<String>,
+}
+
+/// Every path held unresolved, kept across batches: a later synced batch clears only what it
+/// actually sent, so a conflict stays shown until its file goes up or is overwritten.
+#[derive(Default)]
+struct Held {
+    open: std::collections::BTreeMap<String, Conflict>,
+}
+
+impl Held {
+    fn settle(&mut self, sent: &[String], found: &[Conflict]) {
+        for path in sent {
+            self.open.remove(path);
+        }
+        for conflict in found {
+            self.open.insert(conflict.path.clone(), conflict.clone());
+        }
+    }
+
+    fn conflicts(&self) -> Vec<Conflict> {
+        self.open.values().cloned().collect()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.open.is_empty()
+    }
 }
 
 /// On a task of its own, so a watcher waiting or uploading is not taken for gone.
@@ -147,6 +174,7 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
 
     let mut pending: BTreeSet<PathBuf> = BTreeSet::new();
     let mut retry: Option<Retry> = None;
+    let mut held = Held::default();
     let mut backlog = Backlog {
         push: options.initial_push.then_some(PushOptions {
             full: options.full,
@@ -179,6 +207,7 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
                 &mut manifest,
                 &mut pending,
                 &mut backlog,
+                &mut held,
                 browser,
                 &mut retry,
             )
@@ -197,11 +226,11 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
                 return Ok(());
             }
             _ = sleep_until(due), if due.is_some() => {
-                retry_queued(&ctx, &mut manifest, &mut pending, &mut backlog, browser, &mut retry).await;
+                retry_queued(&ctx, &mut manifest, &mut pending, &mut backlog, &mut held, browser, &mut retry).await;
             }
             _ = requests.tick() => {
                 for request in handoff::take(&ctx.config) {
-                    let reply = serve(&ctx, &mut manifest, &mut pending, &mut backlog, &mut retry, &request).await;
+                    let reply = serve(&ctx, &mut manifest, &mut pending, &mut backlog, &mut held, &mut retry, &request).await;
                     handoff::answer(&ctx.config, &request, &reply);
                 }
             }
@@ -214,8 +243,8 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
                 pending.extend(paths);
                 drain_into(&mut receiver, &mut pending).await;
                 match retry {
-                    None => attempt(&ctx, &mut manifest, &mut pending, browser, &mut retry).await,
-                    Some(_) => retry_queued(&ctx, &mut manifest, &mut pending, &mut backlog, browser, &mut retry).await,
+                    None => attempt(&ctx, &mut manifest, &mut pending, &mut held, browser, &mut retry).await,
+                    Some(_) => retry_queued(&ctx, &mut manifest, &mut pending, &mut backlog, &mut held, browser, &mut retry).await,
                 }
             }
         }
@@ -227,9 +256,13 @@ async fn serve(
     manifest: &mut Manifest,
     pending: &mut BTreeSet<PathBuf>,
     backlog: &mut Backlog,
+    held: &mut Held,
     retry: &mut Option<Retry>,
     request: &Request,
 ) -> Reply {
+    if !request.resolve.is_empty() {
+        return resolve_held(ctx, manifest, held, &request.resolve, request.keep).await;
+    }
     let options = PushOptions {
         full: request.full,
         dry_run: false,
@@ -266,7 +299,7 @@ async fn serve(
             reason: not_ready.reason,
         };
     }
-    match catch_up(ctx, manifest, pending, backlog, retry, Some(options)).await {
+    match catch_up(ctx, manifest, pending, backlog, held, retry, Some(options)).await {
         Ok(stats) => Reply::Done {
             uploaded: stats.uploaded,
             deleted: stats.deleted,
@@ -276,12 +309,81 @@ async fn serve(
     }
 }
 
+/// Acts on the held files the TUI picked: overwrites them with this checkout's version, or - with
+/// `keep` - stops holding them and leaves the sandbox copy. Either way they leave the held set.
+async fn resolve_held(
+    ctx: &Ctx,
+    manifest: &mut Manifest,
+    held: &mut Held,
+    paths: &[String],
+    keep: bool,
+) -> Reply {
+    if keep {
+        logging::info(format!(
+            "{} held file(s) kept as the sandbox has them",
+            paths.len()
+        ));
+        report(ctx, held, paths, &[]);
+        return Reply::Done {
+            uploaded: 0,
+            deleted: 0,
+            held: held.conflicts(),
+        };
+    }
+    if let Err(not_ready) = probe(ctx).await {
+        return Reply::Down {
+            reason: not_ready.reason,
+        };
+    }
+    match overwrite_paths(ctx, manifest, paths).await {
+        Ok(sent) => {
+            logging::ok(format!(
+                "{} held file(s) overwritten with your version",
+                sent.len()
+            ));
+            report(ctx, held, &sent, &[]);
+            Reply::Done {
+                uploaded: sent.len(),
+                deleted: 0,
+                held: held.conflicts(),
+            }
+        }
+        Err(error) => Reply::Failed {
+            error: format!("{error:#}"),
+        },
+    }
+}
+
+/// Sends the given paths whatever the sandbox holds - a plain PUT replaces it. A path gone from
+/// the checkout is deleted on the sandbox instead.
+async fn overwrite_paths(
+    ctx: &Ctx,
+    manifest: &mut Manifest,
+    paths: &[String],
+) -> Result<Vec<String>> {
+    let mut upserts = Vec::new();
+    let mut removals = Vec::new();
+    for path in paths {
+        match describe(
+            &ctx.config.cartridges_dir.join(path),
+            &ctx.config.cartridges_dir,
+        ) {
+            Some(file) => upserts.push(file),
+            None => removals.push(path.clone()),
+        }
+    }
+    let sent = transfer(ctx, manifest, Work { upserts, removals }).await?;
+    manifest.save(&ctx.manifest_path)?;
+    Ok(sent)
+}
+
 /// A push scans the whole checkout, so it takes the queued saves along.
 async fn catch_up(
     ctx: &Ctx,
     manifest: &mut Manifest,
     pending: &mut BTreeSet<PathBuf>,
     backlog: &mut Backlog,
+    held: &mut Held,
     retry: &mut Option<Retry>,
     asked: Option<PushOptions>,
 ) -> std::result::Result<Stats, String> {
@@ -302,7 +404,7 @@ async fn catch_up(
             if retry.take().is_some() {
                 logging::ok("sandbox is back - the queued changes are uploaded");
             }
-            report(ctx, &stats.held);
+            report(ctx, held, &stats.sent, &stats.held);
             if std::mem::take(&mut backlog.activate) {
                 active::ensure(&ctx.config).await;
             }
@@ -346,6 +448,7 @@ async fn attempt(
     ctx: &Ctx,
     manifest: &mut Manifest,
     pending: &mut BTreeSet<PathBuf>,
+    held: &mut Held,
     browser: Option<&Browser>,
     retry: &mut Option<Retry>,
 ) {
@@ -357,7 +460,7 @@ async fn attempt(
             if retry.take().is_some() {
                 logging::ok("sandbox is back - the queued changes are uploaded");
             }
-            report(ctx, &synced.held);
+            report(ctx, held, &synced.sent, &synced.held);
             refresh_browser(browser, &synced.sent).await;
         }
         Err(error) => {
@@ -371,30 +474,30 @@ async fn attempt(
     }
 }
 
-fn report(ctx: &Ctx, held: &[String]) {
+/// Clears from the open held set what this batch sent, folds in what it held, then shows the
+/// whole open set - not just this batch's - so a conflict stays visible until it is resolved.
+fn report(ctx: &Ctx, held: &mut Held, sent: &[String], found: &[Conflict]) {
+    held.settle(sent, found);
     match held.is_empty() {
         true => {
             problems::synced();
             sync_status::publish(&ctx.config, sync_status::State::Synced);
         }
-        false => hold(ctx, held),
+        false => hold(ctx, &held.conflicts()),
     }
 }
 
-/// Not retried: waiting will not make someone else's change ours.
-fn hold(ctx: &Ctx, held: &[String]) {
+/// Not a failure and not retried: the rest of the batch went up, and waiting will not make
+/// another writer's change ours. Closes the problem-matcher cycle as synced so no error lingers.
+fn hold(ctx: &Ctx, open: &[Conflict]) {
     let detail = format!(
-        "{}, not overwritten - {}",
-        guard::by_another_writer(held.len()),
+        "{}, left as they are - {}",
+        guard::by_another_writer(open.len()),
         guard::OVERWRITE_HINT
     );
     logging::warn(&detail);
-    let files: Vec<PathBuf> = held
-        .iter()
-        .map(|relative| ctx.config.cartridges_dir.join(relative))
-        .collect();
-    problems::failed(&files, &ctx.config.dw_json, &detail);
-    sync_status::publish_failure(&ctx.config, detail);
+    problems::synced();
+    sync_status::publish_held(&ctx.config, open.to_vec(), detail);
 }
 
 async fn retry_queued(
@@ -402,6 +505,7 @@ async fn retry_queued(
     manifest: &mut Manifest,
     pending: &mut BTreeSet<PathBuf>,
     backlog: &mut Backlog,
+    held: &mut Held,
     browser: Option<&Browser>,
     retry: &mut Option<Retry>,
 ) {
@@ -413,10 +517,10 @@ async fn retry_queued(
     }
     backlog.down = None;
     if backlog.push.is_some() {
-        let _ = catch_up(ctx, manifest, pending, backlog, retry, None).await;
+        let _ = catch_up(ctx, manifest, pending, backlog, held, retry, None).await;
         return;
     }
-    attempt(ctx, manifest, pending, browser, retry).await;
+    attempt(ctx, manifest, pending, held, browser, retry).await;
     if retry.is_none() && std::mem::take(&mut backlog.activate) {
         active::ensure(&ctx.config).await;
     }
@@ -501,7 +605,7 @@ struct Work {
 
 struct Synced {
     sent: Vec<String>,
-    held: Vec<String>,
+    held: Vec<Conflict>,
 }
 
 async fn synchronize(
