@@ -17,6 +17,12 @@ pub enum Action {
     /// What the Sandbox API says about the sandbox, and the keys that act on it.
     SandboxStatus,
     LogDiff,
+    /// Files the watcher left as the sandbox has them.
+    Conflicts,
+    /// Send this checkout's version of the selected held file, over whatever the sandbox has.
+    Overwrite,
+    /// Stop holding the selected file, keeping the sandbox copy.
+    Keep,
     WatchErrors,
     Push,
     StartWatcher,
@@ -29,7 +35,7 @@ pub enum Action {
 }
 
 /// In the help line's order. Paging and the second arrow act without a place of their own.
-pub const SHOWN: [Action; 15] = [
+pub const SHOWN: [Action; 18] = [
     Action::Focus,
     Action::Move(1),
     Action::Follow,
@@ -37,6 +43,9 @@ pub const SHOWN: [Action; 15] = [
     Action::SandboxLog,
     Action::SandboxStatus,
     Action::LogDiff,
+    Action::Conflicts,
+    Action::Overwrite,
+    Action::Keep,
     Action::WatchErrors,
     Action::Push,
     Action::StartWatcher,
@@ -62,6 +71,9 @@ impl Action {
             KeyCode::Char('l') => Action::SandboxLog,
             KeyCode::Char('o') => Action::SandboxStatus,
             KeyCode::Char('d') => Action::LogDiff,
+            KeyCode::Char('c') => Action::Conflicts,
+            KeyCode::Char('O') => Action::Overwrite,
+            KeyCode::Char('K') => Action::Keep,
             KeyCode::Char('w') => Action::WatchErrors,
             KeyCode::Char('p') => Action::Push,
             KeyCode::Char('s') => Action::StartWatcher,
@@ -85,6 +97,9 @@ impl Action {
             Action::SandboxLog => "l",
             Action::SandboxStatus => "o",
             Action::LogDiff => "d",
+            Action::Conflicts => "c",
+            Action::Overwrite => "O",
+            Action::Keep => "K",
             Action::WatchErrors => "w",
             Action::Push => "p",
             Action::StartWatcher => "s",
@@ -111,6 +126,9 @@ mod tests {
             KeyCode::Char('l'),
             KeyCode::Char('o'),
             KeyCode::Char('d'),
+            KeyCode::Char('c'),
+            KeyCode::Char('O'),
+            KeyCode::Char('K'),
             KeyCode::Char('w'),
             KeyCode::Char('p'),
             KeyCode::Char('s'),
@@ -141,11 +159,14 @@ mod tests {
     }
 
     #[test]
-    fn control_c_quits_and_a_plain_c_does_nothing() {
+    fn control_c_quits_and_a_plain_c_opens_conflicts() {
         assert_eq!(
             Action::of(KeyCode::Char('c'), KeyModifiers::CONTROL),
             Some(Action::Quit)
         );
-        assert_eq!(Action::of(KeyCode::Char('c'), KeyModifiers::NONE), None);
+        assert_eq!(
+            Action::of(KeyCode::Char('c'), KeyModifiers::NONE),
+            Some(Action::Conflicts)
+        );
     }
 }

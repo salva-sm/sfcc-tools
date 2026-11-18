@@ -49,10 +49,19 @@ async fn a_save_while_the_sandbox_is_down_is_queued_said_and_sent_when_it_is_bac
     let ctx = &checkout.ctx;
     let mut manifest = Manifest::load(&ctx.manifest_path);
     let mut retry = None;
+    let mut held = Held::default();
 
     server.set_down(true);
     let mut pending = BTreeSet::from([checkout.save("app_x/cartridge/a.js", "one")]);
-    attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+    attempt(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut held,
+        None,
+        &mut retry,
+    )
+    .await;
 
     assert_eq!(pending.len(), 1, "kept for the retry");
     assert_eq!(retry.map(|retry| retry.delay), Some(RETRY_FIRST));
@@ -67,6 +76,7 @@ async fn a_save_while_the_sandbox_is_down_is_queued_said_and_sent_when_it_is_bac
         &mut manifest,
         &mut pending,
         &mut Backlog::default(),
+        &mut held,
         None,
         &mut retry,
     )
@@ -86,6 +96,7 @@ async fn a_save_while_the_sandbox_is_down_is_queued_said_and_sent_when_it_is_bac
         &mut manifest,
         &mut pending,
         &mut Backlog::default(),
+        &mut held,
         None,
         &mut retry,
     )
@@ -126,6 +137,14 @@ fn on_server(server: &MockDav, path: &str) -> Option<String> {
         .map(|bytes| String::from_utf8(bytes).unwrap())
 }
 
+fn held_paths(status: &Status) -> Vec<&str> {
+    status
+        .held
+        .iter()
+        .map(|conflict| conflict.path.as_str())
+        .collect()
+}
+
 #[tokio::test]
 async fn a_file_someone_else_wrote_since_is_neither_overwritten_nor_deleted() {
     let server = MockDav::start().await;
@@ -133,16 +152,33 @@ async fn a_file_someone_else_wrote_since_is_neither_overwritten_nor_deleted() {
     let ctx = &checkout.ctx;
     let mut manifest = Manifest::load(&ctx.manifest_path);
     let mut retry = None;
+    let mut held = Held::default();
 
     let mut pending = BTreeSet::from([
         checkout.save("app_x/cartridge/a.js", "mine"),
         checkout.save("app_x/cartridge/b.js", "mine"),
     ]);
-    attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+    attempt(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut held,
+        None,
+        &mut retry,
+    )
+    .await;
     assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine"));
 
     pending.insert(checkout.save("app_x/cartridge/a.js", "mine, second"));
-    attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+    attempt(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut held,
+        None,
+        &mut retry,
+    )
+    .await;
     assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine, second"));
     assert_eq!(checkout.status().state, State::Synced);
 
@@ -152,7 +188,15 @@ async fn a_file_someone_else_wrote_since_is_neither_overwritten_nor_deleted() {
     let b = ctx.config.cartridges_dir.join("app_x/cartridge/b.js");
     std::fs::remove_file(&b).unwrap();
     pending.insert(b);
-    attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+    attempt(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut held,
+        None,
+        &mut retry,
+    )
+    .await;
 
     assert_eq!(on_server(&server, A_JS).as_deref(), Some("theirs"));
     assert_eq!(on_server(&server, B_JS).as_deref(), Some("theirs"));
@@ -187,22 +231,201 @@ async fn a_file_someone_else_wrote_since_is_neither_overwritten_nor_deleted() {
 }
 
 #[tokio::test]
+async fn a_held_file_stays_held_through_a_later_synced_batch() {
+    let server = MockDav::start().await;
+    let checkout = Checkout::new("stays-held", &server);
+    let ctx = &checkout.ctx;
+    let mut manifest = Manifest::load(&ctx.manifest_path);
+    let mut retry = None;
+    let mut held = Held::default();
+
+    let mut pending = BTreeSet::from([checkout.save("app_x/cartridge/a.js", "mine")]);
+    attempt(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut held,
+        None,
+        &mut retry,
+    )
+    .await;
+
+    server.put(A_JS, "theirs");
+    pending.insert(checkout.save("app_x/cartridge/a.js", "mine, second"));
+    attempt(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut held,
+        None,
+        &mut retry,
+    )
+    .await;
+    let status = checkout.status();
+    assert_eq!(status.state, State::Held);
+    assert_eq!(held_paths(&status), vec!["app_x/cartridge/a.js"]);
+
+    // An unrelated file goes up clean: the batch is synced, but a.js is still unresolved.
+    pending.insert(checkout.save("app_x/cartridge/b.js", "unrelated"));
+    attempt(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut held,
+        None,
+        &mut retry,
+    )
+    .await;
+    assert_eq!(on_server(&server, B_JS).as_deref(), Some("unrelated"));
+    let status = checkout.status();
+    assert_eq!(
+        status.state,
+        State::Held,
+        "the clean batch did not hide a.js"
+    );
+    assert_eq!(held_paths(&status), vec!["app_x/cartridge/a.js"]);
+
+    // Overwriting a.js sends it, and only then does it leave the held set.
+    let overwrite = Request {
+        id: "resolve".to_string(),
+        full: false,
+        overwrite: true,
+        resolve: Vec::new(),
+        keep: false,
+    };
+    let mut backlog = Backlog::default();
+    serve(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut backlog,
+        &mut held,
+        &mut retry,
+        &overwrite,
+    )
+    .await;
+    assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine, second"));
+    assert_eq!(checkout.status().state, State::Synced);
+}
+
+#[tokio::test]
+async fn resolving_a_held_file_overwrites_just_it_or_keeps_the_sandbox_copy() {
+    let server = MockDav::start().await;
+    let checkout = Checkout::new("resolve", &server);
+    let ctx = &checkout.ctx;
+    let mut manifest = Manifest::load(&ctx.manifest_path);
+    let mut retry = None;
+    let mut held = Held::default();
+    let mut backlog = Backlog::default();
+
+    let mut pending = BTreeSet::from([
+        checkout.save("app_x/cartridge/a.js", "mine"),
+        checkout.save("app_x/cartridge/b.js", "mine"),
+    ]);
+    attempt(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut held,
+        None,
+        &mut retry,
+    )
+    .await;
+
+    // Another writer changes both; we edit both - both are held.
+    server.put(A_JS, "theirs");
+    server.put(B_JS, "theirs");
+    pending.insert(checkout.save("app_x/cartridge/a.js", "mine, second"));
+    pending.insert(checkout.save("app_x/cartridge/b.js", "mine, second"));
+    attempt(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut held,
+        None,
+        &mut retry,
+    )
+    .await;
+    assert_eq!(held_paths(&checkout.status()).len(), 2);
+
+    // Overwrite just a.js: it goes up with our version, b.js stays held.
+    let overwrite_a = Request {
+        id: "o".into(),
+        full: false,
+        overwrite: true,
+        resolve: vec!["app_x/cartridge/a.js".into()],
+        keep: false,
+    };
+    serve(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut backlog,
+        &mut held,
+        &mut retry,
+        &overwrite_a,
+    )
+    .await;
+    assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine, second"));
+    assert_eq!(on_server(&server, B_JS).as_deref(), Some("theirs"));
+    assert_eq!(held_paths(&checkout.status()), vec!["app_x/cartridge/b.js"]);
+
+    // Keep b.js: the sandbox copy stays, and it leaves the held set - synced again.
+    let keep_b = Request {
+        id: "k".into(),
+        full: false,
+        overwrite: false,
+        resolve: vec!["app_x/cartridge/b.js".into()],
+        keep: true,
+    };
+    serve(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut backlog,
+        &mut held,
+        &mut retry,
+        &keep_b,
+    )
+    .await;
+    assert_eq!(on_server(&server, B_JS).as_deref(), Some("theirs"));
+    assert_eq!(checkout.status().state, State::Synced);
+}
+
+#[tokio::test]
 async fn a_sandbox_write_that_matches_what_we_sent_is_not_a_conflict() {
     let server = MockDav::start().await;
     let checkout = Checkout::new("same-bytes", &server);
     let ctx = &checkout.ctx;
     let mut manifest = Manifest::load(&ctx.manifest_path);
     let mut retry = None;
+    let mut held = Held::default();
 
     let mut pending = BTreeSet::from([checkout.save("app_x/cartridge/a.js", "mine")]);
-    attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+    attempt(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut held,
+        None,
+        &mut retry,
+    )
+    .await;
     assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine"));
 
     // Another writer re-saves the very same bytes: the etag bumps, but nothing diverged.
     server.put(A_JS, "mine");
 
     pending.insert(checkout.save("app_x/cartridge/a.js", "mine, second"));
-    attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+    attempt(
+        ctx,
+        &mut manifest,
+        &mut pending,
+        &mut held,
+        None,
+        &mut retry,
+    )
+    .await;
 
     assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine, second"));
     assert_eq!(checkout.status().state, State::Synced, "not held");
@@ -213,6 +436,8 @@ fn handed(full: bool) -> Request {
         id: "test".to_string(),
         full,
         overwrite: false,
+        resolve: Vec::new(),
+        keep: false,
     }
 }
 
@@ -223,6 +448,7 @@ async fn a_push_handed_over_while_the_sandbox_is_down_is_owed_and_done_when_it_i
     let ctx = &checkout.ctx;
     let mut manifest = Manifest::load(&ctx.manifest_path);
     let (mut pending, mut backlog, mut retry) = (BTreeSet::new(), Backlog::default(), None);
+    let mut held = Held::default();
     checkout.save("app_x/cartridge/a.js", "one");
 
     server.set_down(true);
@@ -231,6 +457,7 @@ async fn a_push_handed_over_while_the_sandbox_is_down_is_owed_and_done_when_it_i
         &mut manifest,
         &mut pending,
         &mut backlog,
+        &mut held,
         &mut retry,
         &handed(false),
     )
@@ -247,6 +474,7 @@ async fn a_push_handed_over_while_the_sandbox_is_down_is_owed_and_done_when_it_i
         &mut manifest,
         &mut pending,
         &mut backlog,
+        &mut held,
         &mut retry,
         &handed(false),
     )
@@ -261,6 +489,7 @@ async fn a_push_handed_over_while_the_sandbox_is_down_is_owed_and_done_when_it_i
         &mut manifest,
         &mut pending,
         &mut backlog,
+        &mut held,
         None,
         &mut retry,
     )
@@ -276,6 +505,7 @@ async fn a_push_handed_over_while_the_sandbox_is_down_is_owed_and_done_when_it_i
         &mut manifest,
         &mut pending,
         &mut backlog,
+        &mut held,
         &mut retry,
         &handed(false),
     )

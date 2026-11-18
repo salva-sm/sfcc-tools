@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
+use sfcc_core::state::upload::Conflict;
 
 use crate::logging;
 use crate::manifest::{Entry, Manifest};
@@ -31,7 +32,7 @@ pub struct Settled {
     pub upserts: Vec<LocalFile>,
     pub removals: Vec<String>,
     /// Left as the sandbox has them.
-    pub held: Vec<String>,
+    pub held: Vec<Conflict>,
 }
 
 /// With one uploader per code version on this machine (lock.rs), a change this uploader did
@@ -46,10 +47,10 @@ pub fn by_another_writer(count: usize) -> String {
 pub const OVERWRITE_HINT: &str = "`sfcc-upload push --overwrite` replaces them";
 
 /// Shared by the direct push and the handed-over reply.
-pub fn warn_held(held: &[String]) {
+pub fn warn_held(held: &[Conflict]) {
     logging::warn(format!("{}:", by_another_writer(held.len())));
-    for path in held {
-        logging::warn(format!("  {path}"));
+    for conflict in held {
+        logging::warn(format!("  {}", conflict.path));
     }
 }
 
@@ -84,7 +85,10 @@ pub async fn settle(
         return Ok(untouched(upserts, removals));
     }
 
-    let held: BTreeSet<&str> = found.iter().map(String::as_str).collect();
+    let held: BTreeSet<&str> = found
+        .iter()
+        .map(|conflict| conflict.path.as_str())
+        .collect();
     let holds = |path: &str| {
         held.iter()
             .any(|file| *file == path || file.starts_with(&format!("{path}/")))
@@ -99,8 +103,21 @@ pub async fn settle(
     })
 }
 
+/// What an etag or date flagged before its content is read back.
+struct Suspect {
+    path: String,
+    /// What this checkout last sent, to tell its own write from another's.
+    hash: u64,
+    /// The sandbox copy's last-modified, carried so a confirmed conflict can show it.
+    modified: String,
+}
+
 /// `paths` may be folders about to be deleted. A file gone from the sandbox is not a conflict.
-pub async fn overwritten(ctx: &Ctx, manifest: &Manifest, paths: &[String]) -> Result<Vec<String>> {
+pub async fn overwritten(
+    ctx: &Ctx,
+    manifest: &Manifest,
+    paths: &[String],
+) -> Result<Vec<Conflict>> {
     let recorded: BTreeMap<&str, &Entry> = paths
         .iter()
         .flat_map(|path| manifest.under(path))
@@ -108,10 +125,15 @@ pub async fn overwritten(ctx: &Ctx, manifest: &Manifest, paths: &[String]) -> Re
         .map(|(path, entry)| (path.as_str(), entry))
         .collect();
     let listings = list_parents(ctx, recorded.keys().copied()).await?;
-    let suspect: Vec<(&str, &Entry)> = recorded
+    let suspect: Vec<Suspect> = recorded
         .into_iter()
-        .filter(|(path, entry)| {
-            remote_of(&listings, path).is_some_and(|remote| written_since(entry, remote))
+        .filter_map(|(path, entry)| {
+            let remote = remote_of(&listings, path)?;
+            written_since(entry, remote).then(|| Suspect {
+                path: path.to_string(),
+                hash: entry.hash,
+                modified: remote.modified.clone(),
+            })
         })
         .collect();
     confirmed_conflicts(ctx, suspect).await
@@ -120,19 +142,22 @@ pub async fn overwritten(ctx: &Ctx, manifest: &Manifest, paths: &[String]) -> Re
 /// A suspect whose bytes still hash to what this checkout last sent is nobody else's write,
 /// whatever its etag or date said: confirming by content makes a clock skew or an identical
 /// re-save transparent. Only suspects are read, in parallel, so a clean batch costs no reads.
-async fn confirmed_conflicts(ctx: &Ctx, suspect: Vec<(&str, &Entry)>) -> Result<Vec<String>> {
-    let checked: Vec<(String, bool)> =
-        stream::iter(suspect)
-            .map(|(path, entry)| async move {
-                (path.to_string(), still_ours(ctx, path, entry.hash).await)
-            })
-            .buffer_unordered(ctx.jobs)
-            .collect()
-            .await;
+async fn confirmed_conflicts(ctx: &Ctx, suspect: Vec<Suspect>) -> Result<Vec<Conflict>> {
+    let checked: Vec<(Suspect, bool)> = stream::iter(suspect)
+        .map(|suspect| async move {
+            let ours = still_ours(ctx, &suspect.path, suspect.hash).await;
+            (suspect, ours)
+        })
+        .buffer_unordered(ctx.jobs)
+        .collect()
+        .await;
     Ok(checked
         .into_iter()
         .filter(|(_, ours)| !ours)
-        .map(|(path, _)| path)
+        .map(|(suspect, _)| Conflict {
+            path: suspect.path,
+            sandbox_at: modified_seconds(&suspect.modified),
+        })
         .collect())
 }
 

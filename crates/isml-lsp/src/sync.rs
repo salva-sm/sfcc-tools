@@ -305,6 +305,7 @@ mod tests {
             code_version: "version1".into(),
             files: 7,
             detail: None,
+            held: Vec::new(),
             down: None,
             at,
         }

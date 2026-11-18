@@ -98,6 +98,15 @@ enum Command {
         sent as batched archives expanded on the sandbox. Files deleted locally are deleted \
         remotely. The sandbox is probed first and waited for if it is asleep.")]
     Push(PushArgs),
+    /// Resolve files the watcher is holding: overwrite them, or keep the sandbox copy
+    #[command(
+        long_about = "Resolve files the running watcher is holding because another writer \
+        changed them on the sandbox.\n\nBy default it overwrites each given path with this \
+        checkout's version; `--keep` instead stops holding them and leaves the sandbox copy. \
+        The paths are as the watcher lists them, relative to the cartridges folder. Meant for \
+        sfcc-tui's conflicts panel, but usable on its own while a watcher runs."
+    )]
+    Resolve(ResolveArgs),
     /// Upload on every save, staying in the foreground
     #[command(
         long_about = "Upload on every save, staying in the foreground until Ctrl-C.\n\n\
@@ -286,6 +295,16 @@ struct PushArgs {
 }
 
 #[derive(Args)]
+struct ResolveArgs {
+    /// Held file paths, as the watcher lists them (relative to the cartridges folder)
+    #[arg(value_name = "PATH", required = true)]
+    paths: Vec<String>,
+    /// Stop holding them without uploading: keep the sandbox copy
+    #[arg(long)]
+    keep: bool,
+}
+
+#[derive(Args)]
 struct ActivateArgs {
     /// Code version to activate (default: the one being synced)
     #[arg(value_name = "NAME")]
@@ -409,6 +428,7 @@ async fn run(cli: Cli) -> Result<()> {
     let writes = matches!(
         cli.command,
         Command::Push(_)
+            | Command::Resolve(_)
             | Command::Watch(_)
             | Command::Start(_)
             | Command::Clean(_)
@@ -421,6 +441,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     match cli.command {
         Command::Push(args) => push_command(config, jobs, &args).await,
+        Command::Resolve(args) => resolve_command(config, &args).await,
         Command::Watch(args) => {
             // A detached watcher runs `watch` too, under the pid it is recorded with.
             if let Some(pid) = daemon::running_pid(&config).filter(|pid| *pid != std::process::id())
@@ -564,7 +585,7 @@ async fn push_command(mut config: Config, jobs: usize, args: &PushArgs) -> Resul
 async fn hand_over(config: &Config, watcher: &lock::Owner, args: &PushArgs) -> Result<()> {
     let mut overwrite = args.overwrite;
     loop {
-        let request = handoff::submit(config, args.full, overwrite)?;
+        let request = handoff::submit_push(config, args.full, overwrite)?;
         if args.no_wait {
             logging::info(format!(
                 "handed to {}, which uploads it",
@@ -606,6 +627,46 @@ async fn hand_over(config: &Config, watcher: &lock::Owner, args: &PushArgs) -> R
                 ));
                 return Ok(());
             }
+        }
+    }
+}
+
+async fn resolve_command(config: Config, args: &ResolveArgs) -> Result<()> {
+    match lock::take(&config, lock::Kind::Push).await? {
+        Err(watcher)
+            if checkout::same_folder(Path::new(&watcher.cartridges), &config.cartridges_dir) =>
+        {
+            hand_resolve(&config, &watcher, args).await
+        }
+        Err(watcher) => bail!(
+            "{} holds the lock for another checkout - run this from the one its watcher uploads",
+            watcher.describe()
+        ),
+        Ok(_held) => bail!(
+            "no watcher is running here - held files live in a running watcher; \
+             `sfcc-upload push --overwrite` replaces conflicts directly"
+        ),
+    }
+}
+
+async fn hand_resolve(config: &Config, watcher: &lock::Owner, args: &ResolveArgs) -> Result<()> {
+    let request = handoff::submit_resolve(config, args.paths.clone(), args.keep)?;
+    logging::info(format!("handed to {} - waiting for it", watcher.describe()));
+    match handoff::reply(config, &request, watcher).await? {
+        handoff::Reply::Down { reason } => bail!(reason),
+        handoff::Reply::Failed { error } => bail!(error),
+        handoff::Reply::Done { uploaded, held, .. } => {
+            match args.keep {
+                true => logging::ok(format!(
+                    "{} file(s) kept as the sandbox has them",
+                    args.paths.len()
+                )),
+                false => logging::ok(format!("{uploaded} file(s) overwritten with your version")),
+            }
+            if !held.is_empty() {
+                logging::info(format!("{} file(s) still held", held.len()));
+            }
+            Ok(())
         }
     }
 }

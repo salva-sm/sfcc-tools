@@ -309,9 +309,11 @@ rewritten on every transition:
 ```
 
 `state` is `uploading`, `synced`, `failed` or `held`, with `detail` carrying the reason for a
-failure or the count of held files. The file is keyed by the cartridges directory so a reader
-that knows only the folder it has open can find the right watcher, and it is removed when the
-watcher stops.
+failure or the count of held files. `held` lists every file left as the sandbox has it - across
+batches, not just the last one, so a later synced batch does not hide a conflict left open -
+each with when the sandbox copy was last written. The file is keyed by the cartridges directory
+so a reader that knows only the folder it has open can find the right watcher, and it is removed
+when the watcher stops.
 
 It exists so an editor can show whether the sandbox has the code on disk. Writing it never
 fails an upload — a status nobody can write is a status nobody reads, not a reason to stop.
@@ -383,8 +385,12 @@ so after an upload the new etag goes in the manifest. If the etag up there is a 
 another writer may have touched the file since: Prophet, a teammate, another machine. `push`
 lists those files and asks before overwriting them; with no terminal to ask at, or with `n`, it
 leaves them as they are and sends the rest. The watcher never asks. It leaves them too, reports
-a distinct `held` state - not a `failed` - with how many it held, and does not retry. `push
---overwrite` replaces them. `push --full` does not check: starting over replaces everything.
+a distinct `held` state - not a `failed` - and does not retry, keeping each held file in its
+status until the file goes up or is resolved. `push --overwrite` replaces them all. To act on
+one, `sfcc-upload resolve <path>` overwrites just it with this checkout's version, and `resolve
+--keep <path>` stops holding it and leaves the sandbox copy; both hand the work to the running
+watcher, and sfcc-tui's conflicts panel calls them per file. `push --full` does not check:
+starting over replaces everything.
 
 Files sent in bulk (a full deploy, a large batch) get no etag, because reading one back would
 cost a listing per folder. For those the check uses the date instead: a write more than two

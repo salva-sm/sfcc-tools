@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use sfcc_core::config::Config;
-pub use sfcc_core::state::upload::{State, Status};
+pub use sfcc_core::state::upload::{Conflict, State, Status};
 use sfcc_core::state::{self, now_seconds, upload};
 
 pub fn status_path(config: &Config) -> PathBuf {
@@ -19,6 +19,7 @@ fn new(config: &Config, state: State) -> Status {
         code_version: config.code_version.clone(),
         files: 0,
         detail: None,
+        held: Vec::new(),
         down: None,
         at: now_seconds(),
     }
@@ -44,10 +45,11 @@ pub fn publish_failure(config: &Config, detail: String) {
     state::write(&status_path(config), &status);
 }
 
-pub fn publish_held(config: &Config, files: usize, detail: String) {
+pub fn publish_held(config: &Config, held: Vec<Conflict>, detail: String) {
     let status = Status {
-        files,
+        files: held.len(),
         detail: Some(detail),
+        held,
         ..new(config, State::Held)
     };
     state::write(&status_path(config), &status);
