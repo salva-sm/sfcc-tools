@@ -653,7 +653,11 @@ mod tests {
             "isml-lsp-members-docs",
             &[
                 ("app_storefront_base", HELPER, helper),
-                ("app_brand", CART, "var h = require('*/cartridge/scripts/helpers/cartHelpers');\nh.other(); h.total(); h.count();\n"),
+                (
+                    "app_brand",
+                    CART,
+                    "var h = require('*/cartridge/scripts/helpers/cartHelpers');\nh.other(); h.total(); h.count();\n",
+                ),
             ],
         );
         let workspace = workspace(&root, None);

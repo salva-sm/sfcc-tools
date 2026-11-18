@@ -1331,7 +1331,9 @@ mod tests {
         let uses = parsed.script().uses("total", |_| true);
         assert_eq!(
             texts(text, &uses),
-            ["1:total", "2:total", "3:total", "4:total", "5:total", "6:sum", "7:total", "8:t"]
+            [
+                "1:total", "2:total", "3:total", "4:total", "5:total", "6:sum", "7:total", "8:t"
+            ]
         );
     }
 
@@ -1428,11 +1430,15 @@ mod tests {
             (vec!["d".to_string()], true)
         );
         assert_eq!(
-            names("var base = module.superModule;\nmodule.exports = Object.assign({}, base, { e: 1 });"),
+            names(
+                "var base = module.superModule;\nmodule.exports = Object.assign({}, base, { e: 1 });"
+            ),
             (vec!["e".to_string()], true)
         );
         assert_eq!(
-            names("var helpers = {};\nhelpers.f = function () {};\nexports.g = 1;\nmodule.exports = helpers;"),
+            names(
+                "var helpers = {};\nhelpers.f = function () {};\nexports.g = 1;\nmodule.exports = helpers;"
+            ),
             (vec!["f".to_string()], false)
         );
     }

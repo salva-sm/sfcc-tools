@@ -270,9 +270,11 @@ mod tests {
     #[test]
     fn keeps_site_preferences_as_their_own_type() {
         let metadata = sample("preferences");
-        assert!(metadata
-            .attribute(SITE_PREFERENCES, "newsletterEnabled")
-            .is_some());
+        assert!(
+            metadata
+                .attribute(SITE_PREFERENCES, "newsletterEnabled")
+                .is_some()
+        );
         assert!(metadata.is_loaded());
     }
 

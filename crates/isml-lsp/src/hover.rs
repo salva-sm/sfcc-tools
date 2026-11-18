@@ -298,7 +298,9 @@ mod tests {
             ],
         }];
         let text = markdown(&route(), &chains, Path::new("nowhere")).unwrap();
-        assert!(text.contains("`plugin_overrides` replaces this route, so `app_brand` never runs."));
+        assert!(
+            text.contains("`plugin_overrides` replaces this route, so `app_brand` never runs.")
+        );
     }
 
     #[test]

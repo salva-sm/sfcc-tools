@@ -375,9 +375,11 @@ var y = 2;"
             &HashMap::new(),
         )
         .unwrap();
-        assert!(help.signatures[0]
-            .label
-            .contains("assignPriceBookToSite(priceBook"));
+        assert!(
+            help.signatures[0]
+                .label
+                .contains("assignPriceBookToSite(priceBook")
+        );
         assert_eq!(help.active_parameter, Some(1));
     }
 
