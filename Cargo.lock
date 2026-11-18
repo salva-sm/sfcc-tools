@@ -1489,7 +1489,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "isml-lsp"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "crossbeam-channel",
  "lsp-server",
@@ -2625,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "sfcc-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2654,7 +2654,7 @@ dependencies = [
 
 [[package]]
 name = "sfcc-tui"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "ratatui",
@@ -2663,7 +2663,7 @@ dependencies = [
 
 [[package]]
 name = "sfcc-upload"
-version = "0.12.1"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "chrono",

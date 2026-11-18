@@ -381,20 +381,17 @@ fn report(ctx: &Ctx, held: &[String]) {
     }
 }
 
-/// Not retried: waiting will not make someone else's change ours.
+/// Not a failure and not retried: the rest of the batch went up, and waiting will not make
+/// another writer's change ours. Closes the problem-matcher cycle as synced so no error lingers.
 fn hold(ctx: &Ctx, held: &[String]) {
     let detail = format!(
-        "{}, not overwritten - {}",
+        "{}, left as they are - {}",
         guard::by_another_writer(held.len()),
         guard::OVERWRITE_HINT
     );
     logging::warn(&detail);
-    let files: Vec<PathBuf> = held
-        .iter()
-        .map(|relative| ctx.config.cartridges_dir.join(relative))
-        .collect();
-    problems::failed(&files, &ctx.config.dw_json, &detail);
-    sync_status::publish_failure(&ctx.config, detail);
+    problems::synced();
+    sync_status::publish_held(&ctx.config, held.len(), detail);
 }
 
 async fn retry_queued(

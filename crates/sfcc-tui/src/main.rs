@@ -67,6 +67,7 @@ impl Watcher {
             (true, upload::State::Synced) => ("synced", Color::Green),
             (true, upload::State::Uploading) => ("uploading", Color::Yellow),
             (true, upload::State::Failed) => ("failed", Color::Red),
+            (true, upload::State::Held) => ("held", Color::Magenta),
             (true, upload::State::Stopped) => ("stopped", Color::DarkGray),
         };
         match down {

@@ -44,6 +44,15 @@ pub fn publish_failure(config: &Config, detail: String) {
     state::write(&status_path(config), &status);
 }
 
+pub fn publish_held(config: &Config, files: usize, detail: String) {
+    let status = Status {
+        files,
+        detail: Some(detail),
+        ..new(config, State::Held)
+    };
+    state::write(&status_path(config), &status);
+}
+
 pub fn publish_down(config: &Config, detail: String, reason: String) {
     let status = Status {
         detail: Some(detail),

@@ -158,7 +158,7 @@ async fn a_file_someone_else_wrote_since_is_neither_overwritten_nor_deleted() {
     assert_eq!(on_server(&server, B_JS).as_deref(), Some("theirs"));
     assert!(pending.is_empty() && retry.is_none(), "held, not retried");
     let status = checkout.status();
-    assert_eq!(status.state, State::Failed);
+    assert_eq!(status.state, State::Held);
     assert!(
         status
             .detail
@@ -184,6 +184,28 @@ async fn a_file_someone_else_wrote_since_is_neither_overwritten_nor_deleted() {
     assert_eq!((stats.uploaded, stats.deleted, stats.held.len()), (1, 1, 0));
     assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine, third"));
     assert_eq!(on_server(&server, B_JS), None);
+}
+
+#[tokio::test]
+async fn a_sandbox_write_that_matches_what_we_sent_is_not_a_conflict() {
+    let server = MockDav::start().await;
+    let checkout = Checkout::new("same-bytes", &server);
+    let ctx = &checkout.ctx;
+    let mut manifest = Manifest::load(&ctx.manifest_path);
+    let mut retry = None;
+
+    let mut pending = BTreeSet::from([checkout.save("app_x/cartridge/a.js", "mine")]);
+    attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+    assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine"));
+
+    // Another writer re-saves the very same bytes: the etag bumps, but nothing diverged.
+    server.put(A_JS, "mine");
+
+    pending.insert(checkout.save("app_x/cartridge/a.js", "mine, second"));
+    attempt(ctx, &mut manifest, &mut pending, None, &mut retry).await;
+
+    assert_eq!(on_server(&server, A_JS).as_deref(), Some("mine, second"));
+    assert_eq!(checkout.status().state, State::Synced, "not held");
 }
 
 fn handed(full: bool) -> Request {

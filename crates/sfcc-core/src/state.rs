@@ -115,8 +115,10 @@ pub mod upload {
     pub enum State {
         Synced,
         Uploading,
-        /// The changes are still queued, or were held.
+        /// The changes could not reach the sandbox and are still queued.
         Failed,
+        /// The upload went up but left files another writer changed since this checkout sent them.
+        Held,
         Stopped,
     }
 

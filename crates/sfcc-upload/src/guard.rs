@@ -1,6 +1,8 @@
-//! Whether someone else wrote a file since this checkout last sent it. `getetag` changes on
-//! every write; files sent in bulk get no etag read back and are judged by date. The instance
-//! ignores `If-Match`, so this is a check before the write, not a lock.
+//! Whether another writer touched a file since this checkout last sent it. `getetag` changes on
+//! every write; files sent in bulk get no etag read back and are judged by date. Either check
+//! only flags a suspect: a file is held as another writer's only once its bytes no longer hash to
+//! what this checkout last sent, which keeps a clock skew or an identical re-save from reading
+//! as a conflict. The instance ignores `If-Match`, so this is a check before the write, not a lock.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -106,13 +108,41 @@ pub async fn overwritten(ctx: &Ctx, manifest: &Manifest, paths: &[String]) -> Re
         .map(|(path, entry)| (path.as_str(), entry))
         .collect();
     let listings = list_parents(ctx, recorded.keys().copied()).await?;
-    Ok(recorded
+    let suspect: Vec<(&str, &Entry)> = recorded
         .into_iter()
         .filter(|(path, entry)| {
             remote_of(&listings, path).is_some_and(|remote| written_since(entry, remote))
         })
-        .map(|(path, _)| path.to_string())
+        .collect();
+    confirmed_conflicts(ctx, suspect).await
+}
+
+/// A suspect whose bytes still hash to what this checkout last sent is nobody else's write,
+/// whatever its etag or date said: confirming by content makes a clock skew or an identical
+/// re-save transparent. Only suspects are read, in parallel, so a clean batch costs no reads.
+async fn confirmed_conflicts(ctx: &Ctx, suspect: Vec<(&str, &Entry)>) -> Result<Vec<String>> {
+    let checked: Vec<(String, bool)> =
+        stream::iter(suspect)
+            .map(|(path, entry)| async move {
+                (path.to_string(), still_ours(ctx, path, entry.hash).await)
+            })
+            .buffer_unordered(ctx.jobs)
+            .collect()
+            .await;
+    Ok(checked
+        .into_iter()
+        .filter(|(_, ours)| !ours)
+        .map(|(path, _)| path)
         .collect())
+}
+
+/// A read that fails counts as not ours: better to hold a file than to overwrite another
+/// writer's work unseen.
+async fn still_ours(ctx: &Ctx, path: &str, sent_hash: u64) -> bool {
+    match ctx.dav.read_bytes(&ctx.dav.file_url(path)).await {
+        Ok(bytes) => xxhash_rust::xxh3::xxh3_64(&bytes) == sent_hash,
+        Err(_) => false,
+    }
 }
 
 pub fn written_since(entry: &Entry, remote: &DavEntry) -> bool {
