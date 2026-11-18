@@ -26,11 +26,7 @@ impl Ocapi {
              custom-sfcc-ci block) in dw.json",
         )?;
 
-        let client = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .danger_accept_invalid_certs(config.accept_invalid_certs)
-            .build()
-            .context("cannot build the OCAPI client")?;
+        let client = crate::http::client(Duration::from_secs(60), config.accept_invalid_certs)?;
 
         Ok(Ocapi {
             client,

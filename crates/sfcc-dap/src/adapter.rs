@@ -16,6 +16,8 @@ use crate::sdapi::{Breakpoint, Session, Variable};
 use crate::variables;
 
 const POLL: Duration = Duration::from_millis(600);
+/// One failed poll is a sandbox blip, not a dead session: give up only after this many running.
+const MAX_POLL_FAILURES: u32 = 5;
 /// Frame ids are one number: thread * stride + frame index.
 const FRAME_STRIDE: i64 = 1000;
 
@@ -149,9 +151,11 @@ impl Adapter {
         let stop = Arc::clone(&self.stop);
         std::thread::spawn(move || {
             let mut announced: Option<u32> = None;
+            let mut failures: u32 = 0;
             while !stop.load(Ordering::Relaxed) {
                 match session.halted() {
                     Ok(Some(thread)) if announced != Some(thread.id) => {
+                        failures = 0;
                         announced = Some(thread.id);
                         writer.event(
                             "thread",
@@ -166,11 +170,17 @@ impl Adapter {
                             }),
                         );
                     }
-                    Ok(None) => announced = None,
-                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        failures = 0;
+                        announced = None;
+                    }
+                    Ok(Some(_)) => failures = 0,
                     Err(error) => {
-                        writer.log(format!("the instance stopped answering: {error:#}"));
-                        return;
+                        failures += 1;
+                        if failures >= MAX_POLL_FAILURES {
+                            writer.log(format!("the instance stopped answering: {error:#}"));
+                            return;
+                        }
                     }
                 }
                 std::thread::sleep(POLL);

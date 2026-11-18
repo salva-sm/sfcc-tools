@@ -12,6 +12,22 @@ exclude = ["extensions/b2c-debug", "extensions/isml"]
 license = "MIT"
 repository = "https://github.com/salva-sm/sfcc-tools"
 
+# One version per shared dependency, so a bump lands in every crate at once. A crate adds the
+# features it needs on top of these; the tokio feature sets differ too much to share, so only
+# its version lives here.
+[workspace.dependencies]
+anyhow = "1.0.104"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+clap = "4.6.6"
+clap_complete = "4.6.11"
+reqwest = { version = "0.13.4", default-features = false, features = ["native-tls"] }
+tokio = "1.53.1"
+flate2 = "1.1.10"
+futures = "0.3.34"
+xxhash-rust = { version = "0.8.18", features = ["xxh3"] }
+
 # A profile in a member crate is ignored; the workspace root is the only place
 # cargo reads one from.
 [profile.release]
