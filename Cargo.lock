@@ -2625,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "sfcc-core"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2642,7 +2642,7 @@ dependencies = [
 
 [[package]]
 name = "sfcc-dap"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2653,8 +2653,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sfcc-stock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "sfcc-core",
+ "tokio",
+]
+
+[[package]]
 name = "sfcc-tui"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "ratatui",

@@ -270,14 +270,25 @@ impl App {
             .filter(|(_, status)| now_seconds() - status.at <= errors::STALE_SECONDS)
             .map(|(identity, status)| (status, watching(&identity)))
             .collect();
-        self.sessions = sessions::all()
-            .into_iter()
-            .map(|session| {
-                let address = SocketAddr::from((Ipv4Addr::LOCALHOST, session.port));
-                let alive = TcpStream::connect_timeout(&address, PROBE).is_ok();
-                (session, alive)
-            })
-            .collect();
+        // All ports at once: this is the render thread, so the stall is one PROBE, not one per port.
+        let sessions = sessions::all();
+        let alive: Vec<bool> = std::thread::scope(|scope| {
+            let probes: Vec<_> = sessions
+                .iter()
+                .map(|session| {
+                    let port = session.port;
+                    scope.spawn(move || {
+                        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+                        TcpStream::connect_timeout(&address, PROBE).is_ok()
+                    })
+                })
+                .collect();
+            probes
+                .into_iter()
+                .map(|probe| probe.join().unwrap_or(false))
+                .collect()
+        });
+        self.sessions = sessions.into_iter().zip(alive).collect();
         let last = self.watchers.len().saturating_sub(1);
         match self.selected.selected() {
             Some(at) if at <= last => {}

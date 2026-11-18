@@ -67,10 +67,7 @@ impl Ods {
             "the sandbox's state needs an API client - put \"client-id\" and \"client-secret\" \
              in dw.json, for a client with the Sandbox API User role on the realm",
         )?;
-        let client = Client::builder()
-            .timeout(TIMEOUT)
-            .build()
-            .context("cannot build the Sandbox API client")?;
+        let client = crate::http::client(TIMEOUT, false)?;
         Ok(Ods {
             client,
             id: api_client.id,

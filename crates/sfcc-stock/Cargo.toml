@@ -1,0 +1,15 @@
+[package]
+name = "sfcc-stock"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+authors = ["salva-sm"]
+description = "Find products with stock on a Salesforce B2C Commerce instance, one of each kind"
+publish = false
+
+[dependencies]
+sfcc-core = { path = "../sfcc-core", features = ["ocapi", "webdav"] }
+anyhow.workspace = true
+reqwest.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -41,13 +41,7 @@ pub struct Dav {
 
 impl Dav {
     pub fn new(config: &Config) -> Result<Dav> {
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(300))
-            .pool_max_idle_per_host(16)
-            .danger_accept_invalid_certs(config.accept_invalid_certs)
-            .build()
-            .context("cannot build the HTTP client")?;
+        let client = crate::http::client(Duration::from_secs(300), config.accept_invalid_certs)?;
 
         Ok(Dav {
             client,
