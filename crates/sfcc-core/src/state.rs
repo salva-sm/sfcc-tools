@@ -453,6 +453,29 @@ mod tests {
     }
 
     #[test]
+    fn a_write_overwrites_cleanly_and_leaves_no_temp_behind() {
+        let dir = std::env::temp_dir().join(format!("sfcc-core-write-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("status.json");
+        write(&path, &"first");
+        write(&path, &"second");
+        assert_eq!(read::<String>(&path), Some("second".to_string()));
+        let files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1, "a leftover temp file was not renamed away");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn each_temp_name_is_distinct_and_names_the_writing_process() {
+        let path = Path::new("/tmp/status.json");
+        let first = temp_path(path);
+        let second = temp_path(path);
+        assert_ne!(first, second);
+        let pid = std::process::id().to_string();
+        assert!(first.to_string_lossy().contains(&pid));
+    }
+
+    #[test]
     fn a_path_is_within_a_folder_however_it_is_spelled() {
         let file = Path::new(r"C:\Dev\shop\cartridges\app\cartridge\a.js");
         assert!(is_within(file, Path::new(r"C:\Dev\shop\cartridges\")));

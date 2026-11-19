@@ -18,6 +18,24 @@ use crate::variables;
 const POLL: Duration = Duration::from_millis(600);
 /// One failed poll is a sandbox blip, not a dead session: give up only after this many running.
 const MAX_POLL_FAILURES: u32 = 5;
+
+/// Consecutive poll failures; any answer resets the run, so a blip never counts toward the next.
+#[derive(Default)]
+struct PollHealth {
+    consecutive: u32,
+}
+
+impl PollHealth {
+    fn answered(&mut self) {
+        self.consecutive = 0;
+    }
+
+    /// Records a failure, returning whether the session has now gone silent for good.
+    fn failed(&mut self) -> bool {
+        self.consecutive += 1;
+        self.consecutive >= MAX_POLL_FAILURES
+    }
+}
 /// Frame ids are one number: thread * stride + frame index.
 const FRAME_STRIDE: i64 = 1000;
 
@@ -151,11 +169,11 @@ impl Adapter {
         let stop = Arc::clone(&self.stop);
         std::thread::spawn(move || {
             let mut announced: Option<u32> = None;
-            let mut failures: u32 = 0;
+            let mut health = PollHealth::default();
             while !stop.load(Ordering::Relaxed) {
                 match session.halted() {
                     Ok(Some(thread)) if announced != Some(thread.id) => {
-                        failures = 0;
+                        health.answered();
                         announced = Some(thread.id);
                         writer.event(
                             "thread",
@@ -171,13 +189,12 @@ impl Adapter {
                         );
                     }
                     Ok(None) => {
-                        failures = 0;
+                        health.answered();
                         announced = None;
                     }
-                    Ok(Some(_)) => failures = 0,
+                    Ok(Some(_)) => health.answered(),
                     Err(error) => {
-                        failures += 1;
-                        if failures >= MAX_POLL_FAILURES {
+                        if health.failed() {
                             writer.log(format!("the instance stopped answering: {error:#}"));
                             return;
                         }
@@ -532,5 +549,26 @@ mod tests {
     fn packs_a_thread_and_a_frame_into_one_id() {
         assert_eq!(split_frame(7 * FRAME_STRIDE + 3), (7, 3));
         assert_eq!(split_frame(0), (0, 0));
+    }
+
+    #[test]
+    fn a_session_is_dead_only_after_a_run_of_failures() {
+        let mut health = PollHealth::default();
+        for _ in 0..MAX_POLL_FAILURES - 1 {
+            assert!(!health.failed());
+        }
+        assert!(health.failed());
+    }
+
+    #[test]
+    fn an_answer_in_between_keeps_the_session_alive() {
+        let mut health = PollHealth::default();
+        for _ in 0..MAX_POLL_FAILURES - 1 {
+            assert!(!health.failed());
+        }
+        health.answered();
+        for _ in 0..MAX_POLL_FAILURES - 1 {
+            assert!(!health.failed());
+        }
     }
 }
