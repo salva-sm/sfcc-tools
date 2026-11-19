@@ -126,7 +126,7 @@ impl Config {
         let cartridge_filter = parsed
             .cartridge
             .filter(|names| !names.is_empty())
-            .map(|names| names.iter().map(|name| leaf_name(name)).collect());
+            .map(|names| names.iter().map(|name| cartridge_leaf(name)).collect());
 
         Ok(Config {
             dw_json,
@@ -368,11 +368,14 @@ fn normalize(path: &Path) -> PathBuf {
 #[path = "config_tests.rs"]
 mod tests;
 
-fn leaf_name(entry: &str) -> String {
+/// The cartridge name at the end of an entry: dw.json and Prophet both allow a path there,
+/// written with either separator, where only the last segment names the cartridge.
+pub fn cartridge_leaf(entry: &str) -> String {
     entry
-        .replace('\\', "/")
-        .rsplit('/')
-        .find(|segment| !segment.is_empty())
-        .unwrap_or(entry)
+        .trim()
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
         .to_string()
 }
