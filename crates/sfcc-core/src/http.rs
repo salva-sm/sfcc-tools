@@ -19,3 +19,14 @@ pub fn client(timeout: Duration, accept_invalid_certs: bool) -> Result<Client> {
         .build()
         .context("cannot build the HTTP client")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_a_client_whether_or_not_the_cert_is_trusted() {
+        assert!(client(Duration::from_secs(60), false).is_ok());
+        assert!(client(Duration::from_secs(300), true).is_ok());
+    }
+}
