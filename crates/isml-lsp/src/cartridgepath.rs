@@ -65,7 +65,7 @@ fn named(label: &str, value: &Value) -> Option<CartridgePath> {
         Value::Array(names) => names
             .iter()
             .filter_map(Value::as_str)
-            .map(leaf_name)
+            .map(sfcc_core::config::cartridge_leaf)
             .filter(|name| !name.is_empty())
             .collect(),
         _ => Vec::new(),
@@ -133,7 +133,7 @@ fn from_dw_json(file: &Path) -> Option<CartridgePath> {
     let order: Vec<String> = relevant
         .cartridge?
         .iter()
-        .map(|name| leaf_name(name))
+        .map(|name| sfcc_core::config::cartridge_leaf(name))
         .filter(|name| !name.is_empty())
         .collect();
     (!order.is_empty()).then_some(CartridgePath {
@@ -149,17 +149,6 @@ fn split_path(value: &str) -> Vec<String> {
         .filter(|name| !name.is_empty())
         .map(str::to_string)
         .collect()
-}
-
-/// Prophet allows a path in the `cartridge` array; only the name matters.
-fn leaf_name(value: &str) -> String {
-    value
-        .trim()
-        .trim_end_matches(['/', '\\'])
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default()
-        .to_string()
 }
 
 fn directory_name(file: &Path) -> Option<String> {
