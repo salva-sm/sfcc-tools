@@ -64,6 +64,33 @@ pub fn publish_down(config: &Config, detail: String, reason: String) {
     state::write(&status_path(config), &status);
 }
 
+/// Whoever stops a watcher leaves the row as stopped, so the TUI can see it and
+/// start it again instead of being left with nothing to act on.
+pub fn stopped(config: &Config) {
+    publish(config, State::Stopped);
+}
+
+/// The same by identity, for `stop --all`: the existing row keeps its sandbox
+/// and checkout and only turns stopped.
+pub fn stopped_identity(identity: &str) {
+    if let Some(status) = state::read::<Status>(&upload::path(identity)) {
+        state::write(
+            &upload::path(identity),
+            &Status {
+                state: State::Stopped,
+                files: 0,
+                detail: None,
+                held: Vec::new(),
+                down: None,
+                at: now_seconds(),
+                ..status
+            },
+        );
+    }
+}
+
+/// Wipe the row outright. Only the tests need this now; stopping leaves it.
+#[cfg(test)]
 pub fn clear(config: &Config) {
     let _ = std::fs::remove_file(status_path(config));
 }

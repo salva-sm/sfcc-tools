@@ -1,5 +1,6 @@
 //! The `dw.json` reader, the state layout, the WebDAV and OCAPI clients and the log reader every tool here shares.
 
+pub mod activity;
 #[cfg(feature = "completions")]
 pub mod completions;
 pub mod config;

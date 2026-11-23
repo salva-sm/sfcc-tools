@@ -222,7 +222,7 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
             _ = tokio::signal::ctrl_c() => {
                 logging::info("stopping the watcher");
                 manifest.save(&ctx.manifest_path)?;
-                sync_status::clear(&ctx.config);
+                sync_status::stopped(&ctx.config);
                 return Ok(());
             }
             _ = sleep_until(due), if due.is_some() => {
@@ -237,7 +237,7 @@ pub async fn watch(ctx: Ctx, options: WatchOptions) -> Result<()> {
             batch = receiver.recv() => {
                 let Some(paths) = batch else {
                     manifest.save(&ctx.manifest_path)?;
-                    sync_status::clear(&ctx.config);
+                    sync_status::stopped(&ctx.config);
                     return Ok(());
                 };
                 pending.extend(paths);
