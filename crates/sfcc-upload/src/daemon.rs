@@ -64,8 +64,7 @@ fn watch_command(mut command: Command, config: &Config, args: &SpawnArgs) -> Com
 pub fn stop(config: &Config) -> Result<Option<u32>> {
     let stopped = daemon::stop(&of(config))?;
     if stopped.is_some() {
-        // Killed, it cannot clear its own status: an editor would show it uploading until it went stale.
-        crate::sync_status::clear(config);
+        crate::sync_status::stopped(config);
     }
     Ok(stopped)
 }
@@ -101,7 +100,7 @@ fn describe_identity(identity: &str) -> Option<String> {
 
 pub fn stop_running(watcher: &Running) -> Result<()> {
     daemon::stop(&upload::daemon(&watcher.identity))?;
-    let _ = std::fs::remove_file(upload::path(&watcher.identity));
+    crate::sync_status::stopped_identity(&watcher.identity);
     Ok(())
 }
 
