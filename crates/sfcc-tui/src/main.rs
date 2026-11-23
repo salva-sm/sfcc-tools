@@ -19,6 +19,7 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, TableState};
+use sfcc_core::activity::{self, Role};
 use sfcc_core::daemon;
 use sfcc_core::ods::{self, Operation};
 use sfcc_core::state::{self, errors, now_seconds, sandbox, sessions, upload};
@@ -1163,17 +1164,27 @@ fn wrapped(keys: Vec<Span<'static>>, width: u16) -> Vec<Line<'static>> {
     lines
 }
 
+/// Colours an upload line from the same roles the uploader paints by, so the
+/// panel and a plain terminal read a line the same way.
 fn activity_line(line: &str) -> Line<'static> {
-    let colour = if line.contains(" x ") || line.contains("error") {
-        Color::Red
-    } else if line.contains(" ! ") {
-        Color::Yellow
-    } else if line.contains(" OK ") || line.contains(" -> ") {
-        Color::Green
-    } else {
-        Color::Gray
-    };
-    Line::from(line.to_string()).style(Style::new().fg(colour))
+    let spans: Vec<Span<'static>> = activity::segments(line)
+        .into_iter()
+        .map(|segment| Span::styled(segment.text, role_style(segment.role)))
+        .collect();
+    Line::from(spans)
+}
+
+fn role_style(role: Role) -> Style {
+    match role {
+        // White carries the eye to what changed; the rest sits back in grey.
+        Role::Cartridge | Role::File => Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
+        Role::Timestamp | Role::Folder => Style::new().fg(Color::DarkGray),
+        Role::Uploaded | Role::Ok => Style::new().fg(Color::Green),
+        Role::Deleted | Role::Warn => Style::new().fg(Color::Yellow),
+        Role::Error => Style::new().fg(Color::Red),
+        Role::Tag => Style::new().fg(Color::Cyan),
+        Role::Plain => Style::new().fg(Color::Gray),
+    }
 }
 
 /// `abcd-003.my.commercecloud...` as `abcd-003`.

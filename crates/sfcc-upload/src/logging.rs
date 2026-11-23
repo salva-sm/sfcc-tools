@@ -2,11 +2,13 @@
 //! file) writes plain text without any caller knowing.
 
 use chrono::Local;
+use sfcc_core::activity::{self, Role};
 use std::io::IsTerminal;
 use std::sync::OnceLock;
 
 pub const RESET: &str = "\x1b[0m";
 pub const DIM: &str = "\x1b[2m";
+pub const BOLD: &str = "\x1b[1m";
 pub const RED: &str = "\x1b[31m";
 pub const GREEN: &str = "\x1b[32m";
 pub const YELLOW: &str = "\x1b[33m";
@@ -31,13 +33,7 @@ pub enum Change {
 }
 
 impl Change {
-    fn marker(self) -> &'static str {
-        match self {
-            Change::Uploaded => "->",
-            Change::Deleted => "x",
-        }
-    }
-
+    /// Tints the file names in the grouped block.
     fn tone(self) -> &'static str {
         match self {
             Change::Uploaded => GREEN,
@@ -45,10 +41,11 @@ impl Change {
         }
     }
 
-    fn verb(self) -> &'static str {
+    /// The badge word, from the shared vocabulary the TUI reads back.
+    fn word(self) -> &'static str {
         match self {
-            Change::Uploaded => "uploaded",
-            Change::Deleted => "deleted",
+            Change::Uploaded => activity::UPLOADED,
+            Change::Deleted => activity::DELETED,
         }
     }
 
@@ -107,34 +104,24 @@ pub fn stamp() -> String {
 }
 
 pub fn info(message: impl AsRef<str>) {
-    line("", "", message.as_ref());
+    crate::out!("{}", stamped(&untagged(message.as_ref())));
 }
 
 pub fn ok(message: impl AsRef<str>) {
-    line("OK", GREEN, message.as_ref());
+    crate::out!("{}", stamped(&badge(activity::OK, message.as_ref())));
 }
 
 pub fn warn(message: impl AsRef<str>) {
-    line("!", YELLOW, message.as_ref());
+    crate::out!("{}", stamped(&badge(activity::WARN, message.as_ref())));
 }
 
 /// A warning on stderr, for what is about the tool rather than the command's output.
 pub fn notice(message: impl AsRef<str>) {
-    crate::errout!(
-        "{} {} {}",
-        prefix(),
-        paint(YELLOW, &format!("{:<3}", "!")),
-        message.as_ref()
-    );
+    crate::errout!("{}", stamped(&badge(activity::WARN, message.as_ref())));
 }
 
 pub fn error(message: impl AsRef<str>) {
-    crate::errout!(
-        "{} {} {}",
-        prefix(),
-        paint(RED, &format!("{:<3}", "ERR")),
-        message.as_ref()
-    );
+    crate::errout!("{}", stamped(&badge(activity::FAILED, message.as_ref())));
 }
 
 pub fn changes(change: Change, paths: &[String]) {
@@ -154,16 +141,43 @@ fn print(change: Change, paths: &[String], headline: bool) {
     }
 }
 
-fn line(marker: &str, tone: &str, message: &str) {
-    crate::out!(
-        "{} {} {message}",
-        prefix(),
-        paint(tone, &format!("{marker:<3}"))
-    );
+/// Stamp a line and colour it through the shared parser, so a terminal and the
+/// TUI reading the same plain text land on the same colours.
+fn stamped(body: &str) -> String {
+    colorize(&format!("[{}] {body}", stamp()))
 }
 
-fn prefix() -> String {
-    paint(DIM, &format!("[{}]", stamp()))
+fn colorize(line: &str) -> String {
+    activity::segments(line)
+        .iter()
+        .map(|segment| paint(tone(segment.role), &segment.text))
+        .collect()
+}
+
+fn tone(role: Role) -> &'static str {
+    match role {
+        Role::Timestamp | Role::Folder => DIM,
+        Role::Uploaded | Role::Ok => GREEN,
+        Role::Deleted | Role::Warn => YELLOW,
+        Role::Error => RED,
+        Role::Tag => CYAN,
+        Role::Cartridge | Role::File => BOLD,
+        Role::Plain => "",
+    }
+}
+
+/// A `[word]` badge padded to the widest one, so every tag shares one column.
+fn badge(word: &str, message: &str) -> String {
+    format!(
+        "{:<width$} {message}",
+        format!("[{word}]"),
+        width = activity::BADGE_WIDTH
+    )
+}
+
+/// A line with no tag, its text starting at the same column as the tagged ones'.
+fn untagged(message: &str) -> String {
+    format!("{:<width$} {message}", "", width = activity::BADGE_WIDTH)
 }
 
 fn render(change: Change, paths: &[String], headline: bool) -> Vec<String> {
@@ -171,35 +185,25 @@ fn render(change: Change, paths: &[String], headline: bool) -> Vec<String> {
         return Vec::new();
     }
 
-    let tone = change.tone();
-    let marker = paint(tone, &format!("{:<3}", change.marker()));
-
     if headline && let [only] = paths {
-        let (folder, name) = split_last(only);
-        let painted = match only.contains('/') {
-            false => paint(tone, name),
-            true => format!("{}{}", paint(DIM, &format!("{folder}/")), paint(tone, name)),
-        };
-        return vec![format!(
-            "{} {marker} {painted} {}",
-            prefix(),
-            paint(DIM, change.verb())
-        )];
+        return vec![stamped(&badge(change.word(), only))];
     }
 
     let bundles = bundle(paths);
     let mut lines: Vec<String> = Vec::new();
     if headline {
-        lines.push(format!(
-            "{} {marker} {} {} {} in {} cartridge(s)",
-            prefix(),
-            paths.len(),
-            change.noun(),
-            change.verb(),
-            bundles.len()
-        ));
+        lines.push(stamped(&badge(
+            change.word(),
+            &format!(
+                "{} {} in {} cartridge(s)",
+                paths.len(),
+                change.noun(),
+                bundles.len()
+            ),
+        )));
     }
 
+    let tone = change.tone();
     let mut left = MAX_FOLDERS;
     let mut hidden = 0;
 

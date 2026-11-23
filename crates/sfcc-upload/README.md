@@ -111,7 +111,7 @@ the folder they live in, so a save that touches a whole component reads as a sha
 of a wall.
 
 ```
-[10:23:41] ->  7 file(s) uploaded in 2 cartridge(s)
+[10:23:41] [uploaded] 7 file(s) in 2 cartridge(s)
            app_brand
              cartridge/client/default/js/checkout  billing.js  summary.js
              cartridge/templates/default/checkout  billing.isml
@@ -119,8 +119,9 @@ of a wall.
              cartridge/scripts/rewards             vouchers.js  tiers.js
 ```
 
-A single file skips the block and stays on the line: `-> app_brand/…/cart.js
-uploaded`. Long lists collapse into a count rather than scrolling the terminal away.
+A single file skips the block and stays on the line: `[uploaded] app_brand/…/cart.js`,
+with the cartridge and the file name in bold and the folders between them dimmed. Long
+lists collapse into a count rather than scrolling the terminal away.
 
 Colour is decided once, for every command: green for what went up, yellow for what was
 deleted and for warnings, red for errors, dim for the timestamps and the folders. It is on

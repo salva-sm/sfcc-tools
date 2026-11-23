@@ -19,7 +19,8 @@ fn a_single_file_stays_on_the_header_line() {
         true,
     );
     assert_eq!(lines.len(), 1);
-    assert!(lines[0].ends_with("app_brand/cartridge/js/checkout.js uploaded"));
+    assert!(lines[0].contains("[uploaded]"));
+    assert!(lines[0].ends_with("app_brand/cartridge/js/checkout.js"));
 }
 
 #[test]
@@ -35,7 +36,8 @@ fn files_group_under_their_cartridge_and_folder() {
         true,
     );
 
-    assert!(lines[0].contains("4 file(s) uploaded in 2 cartridge(s)"));
+    assert!(lines[0].contains("[uploaded]"));
+    assert!(lines[0].contains("4 file(s) in 2 cartridge(s)"));
     assert_eq!(lines[1].trim(), "app_brand");
     assert_eq!(lines[2].trim(), "cartridge/js         cart.js  checkout.js");
     assert_eq!(lines[3].trim(), "cartridge/templates  billing.isml");
@@ -75,7 +77,8 @@ fn deleting_a_whole_cartridge_prints_its_name() {
     );
 
     assert_eq!(lines.len(), 3);
-    assert!(lines[0].contains("2 path(s) deleted in 2 cartridge(s)"));
+    assert!(lines[0].contains("[deleted]"));
+    assert!(lines[0].contains("2 path(s) in 2 cartridge(s)"));
     assert_eq!(lines[1].trim(), "app_brand");
     assert_eq!(lines[2].trim(), "int_rewards");
 }
