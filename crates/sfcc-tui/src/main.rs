@@ -22,6 +22,7 @@ use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, TableState};
 use sfcc_core::activity::{self, Role};
 use sfcc_core::daemon;
 use sfcc_core::ods::{self, Operation};
+use sfcc_core::pipeline;
 use sfcc_core::state::{self, errors, now_seconds, sandbox, sessions, upload};
 
 const REFRESH: Duration = Duration::from_secs(1);
@@ -29,6 +30,15 @@ const ACTIVITY_LINES: usize = 200;
 const PROBE: Duration = Duration::from_millis(50);
 const STREAM_LINES: usize = 2000;
 const NOTICE_SECONDS: i64 = 8;
+/// Columns the left/right arrows move the panel by.
+const HSTEP: isize = 8;
+/// Where a sandbox-log record's body starts, past `sfcc-upload`'s `[stamp] label`
+/// column (its `tail.rs` PREFIX_WIDTH); continuation lines are blank up to here.
+const LOG_BODY_AT: usize = 24;
+/// The cleaned log's two fixed columns, `[LEVEL]` then `[controller]`, so the
+/// message always starts at the same place.
+const LEVEL_WIDTH: usize = 7;
+const CONTROLLER_WIDTH: usize = 20;
 
 struct Watcher {
     identity: String,
@@ -218,9 +228,19 @@ struct App {
     focus: Focus,
     /// Lines up from the bottom; 0 follows the end.
     scroll: usize,
+    /// Columns right of the left edge; 0 shows the start of each line.
+    hscroll: usize,
     /// Whether the panel holds more lines than it shows, as of the last frame.
     scrollable: bool,
+    /// Whether any shown line runs wider than the panel, as of the last frame.
+    wide: bool,
     sandbox_log: Option<Stream>,
+    /// Show the sandbox log raw, rather than cut back to the record that matters.
+    raw: bool,
+    /// The sandbox-log line the cursor rests on, shown with its controller in full.
+    log_cursor: Option<usize>,
+    /// Show the cursor's line as its whole raw record, not just cleaned.
+    log_reveal: bool,
     /// Whether to ask ODS at all: not for `--print`, which draws once and leaves.
     live: bool,
     /// Sandbox labels with an `sfcc-upload sandbox` run under way.
@@ -402,18 +422,30 @@ impl App {
             .is_some_and(|label| !self.is_busy(label));
         let text = |on: bool, what: &str| on.then(|| what.to_string());
         match action {
-            // Choosing a panel leaves the focus in it, so with several watchers it must stay
-            // possible to go back and choose another one.
+            // Tab is the one way between the menu and the panel, so it shows whenever
+            // there is a panel to step into or out of.
             Action::Focus => text(
-                self.scrollable || (self.focus == Focus::Panel && self.watchers.len() > 1),
-                "focus",
+                selected,
+                match self.focus {
+                    Focus::Watchers => "open panel",
+                    Focus::Panel => "back",
+                },
             ),
-            Action::Move(_) => match self.arrows_choose() {
-                true => Some("move".to_string()),
-                false => text(self.scrollable, "scroll"),
+            Action::Move(_) => match self.focus {
+                Focus::Watchers => text(self.arrows_choose(), "watcher"),
+                Focus::Panel if self.view == View::Conflicts => {
+                    text(watcher.is_some_and(|it| !it.status.held.is_empty()), "move")
+                }
+                Focus::Panel if self.view == View::SandboxLog && !self.raw => {
+                    text(selected, "select")
+                }
+                Focus::Panel => text(self.scrollable, "scroll"),
             },
             Action::Page(_) => text(self.scrollable, "page"),
-            Action::View(_) => text(selected, "panel"),
+            Action::View(_) => match self.focus {
+                Focus::Watchers => text(selected, "panel"),
+                Focus::Panel => text(self.wide, "scroll ↔"),
+            },
             Action::Follow => text(self.scroll > 0, "follow"),
             Action::Uploads => text(selected && self.view != View::Uploads, "uploads"),
             Action::SandboxLog => text(selected && self.view != View::SandboxLog, "sandbox log"),
@@ -453,6 +485,11 @@ impl App {
                 .filter(|it| it.running())
                 .map(|_| "stop".to_string()),
             Action::Errors => text(selected, "errors"),
+            Action::RawLog => text(selected, if self.raw { "clean" } else { "raw" }),
+            Action::Reveal => text(
+                self.focus == Focus::Panel && !self.raw && selected,
+                if self.log_reveal { "hide raw" } else { "raw line" },
+            ),
             Action::PowerSandbox => watcher
                 .filter(|_| sandbox_idle)
                 .and_then(Watcher::power)
@@ -520,8 +557,15 @@ impl App {
                 self.focus = Focus::Panel;
                 self.move_by(direction * page);
             }
-            Action::View(step) => self.cycle_view(step),
-            Action::Follow => self.scroll = 0,
+            // In a panel the arrows scroll it sideways; from the menu they walk the panels.
+            Action::View(step) => match self.focus {
+                Focus::Panel => self.hscroll = self.hscroll.saturating_add_signed(step * HSTEP),
+                Focus::Watchers => self.cycle_view(step),
+            },
+            Action::Follow => {
+                self.scroll = 0;
+                self.rest_cursor();
+            }
             Action::Uploads => self.show(View::Uploads),
             Action::SandboxLog => self.show(View::SandboxLog),
             Action::SandboxStatus => self.show(View::SandboxStatus),
@@ -550,6 +594,16 @@ impl App {
             }
             Action::StopWatcher => self.quietly(&["sfcc-upload", "stop"]),
             Action::Errors => return Some(&["log-diff", "list", "--pending"]),
+            Action::RawLog => {
+                self.raw = !self.raw;
+                self.hscroll = 0;
+                self.rest_cursor();
+            }
+            Action::Reveal => {
+                let last = self.sandbox_log.as_ref().map_or(0, |log| log.lines().len());
+                self.log_cursor = Some(self.log_cursor.unwrap_or(last.saturating_sub(1)));
+                self.log_reveal = !self.log_reveal;
+            }
             Action::PowerSandbox => {
                 if let Some(operation) = self.current().and_then(Watcher::power) {
                     self.operate(operation);
@@ -577,7 +631,7 @@ impl App {
         self.watchers.get(self.selected.selected()?)
     }
 
-    /// Whether the arrows choose a watcher: with one there is nothing to choose, and they scroll.
+    /// Whether the arrows choose a watcher: with one there is nothing to choose.
     fn arrows_choose(&self) -> bool {
         self.focus == Focus::Watchers && self.watchers.len() > 1
     }
@@ -593,6 +647,8 @@ impl App {
                     self.sandbox_log = None;
                     self.view = View::Uploads;
                     self.scroll = 0;
+                    self.hscroll = 0;
+                    self.rest_cursor();
                 }
             }
             // In the conflicts panel the arrows pick a held file rather than scroll.
@@ -603,10 +659,24 @@ impl App {
                     self.conflict_cursor = at.clamp(0, held as isize - 1) as usize;
                 }
             }
-            Focus::Panel | Focus::Watchers => {
-                self.scroll = self.scroll.saturating_add_signed(-step);
+            // In the cleaned sandbox log the arrows walk a cursor over the records.
+            Focus::Panel if self.view == View::SandboxLog && !self.raw => {
+                let len = self.sandbox_log.as_ref().map_or(0, |log| log.lines().len());
+                if len > 0 {
+                    let at = self.log_cursor.unwrap_or(len - 1) as isize + step;
+                    self.log_cursor = Some(at.clamp(0, len as isize - 1) as usize);
+                }
             }
+            // Scrolling belongs to the panel; at the menu with one watcher nothing moves.
+            Focus::Panel => self.scroll = self.scroll.saturating_add_signed(-step),
+            Focus::Watchers => {}
         }
+    }
+
+    /// Stop hovering a sandbox-log line and following its raw record.
+    fn rest_cursor(&mut self) {
+        self.log_cursor = None;
+        self.log_reveal = false;
     }
 
     /// Walk the panels in a fixed ring, so ←/→ reach every view the letters do.
@@ -636,8 +706,9 @@ impl App {
     fn show(&mut self, view: View) {
         self.view = view;
         self.scroll = 0;
+        self.hscroll = 0;
         self.conflict_cursor = 0;
-        self.focus = Focus::Panel;
+        self.rest_cursor();
         let Some(watcher) = self.current() else {
             return;
         };
@@ -700,13 +771,15 @@ impl App {
             .unwrap_or_default();
         match self.view {
             View::Uploads => (format!(" Uploads · {version} "), self.activity.clone()),
-            View::SandboxLog => (
-                format!(" Sandbox log · {version} "),
-                self.sandbox_log
-                    .as_ref()
-                    .map(Stream::lines)
-                    .unwrap_or_default(),
-            ),
+            View::SandboxLog => {
+                // The raw lines; `draw` cleans them unless raw, so the cursor can
+                // reveal one line's controller or whole record on its own.
+                let mode = if self.raw { "raw" } else { "clean" };
+                (
+                    format!(" Sandbox log · {mode} · {version} "),
+                    self.sandbox_log.as_ref().map(Stream::lines).unwrap_or_default(),
+                )
+            }
             View::SandboxStatus => (
                 format!(
                     " Sandbox · {} ",
@@ -795,6 +868,7 @@ fn home(action: Action) -> Option<View> {
     match action {
         Action::Push | Action::StartWatcher | Action::StopWatcher => Some(View::Uploads),
         Action::WatchErrors | Action::Errors => Some(View::LogDiff),
+        Action::RawLog | Action::Reveal => Some(View::SandboxLog),
         Action::PowerSandbox | Action::RestartSandbox => Some(View::SandboxStatus),
         Action::Overwrite | Action::Keep => Some(View::Conflicts),
         _ => None,
@@ -971,21 +1045,68 @@ fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(error_table(app), errors_area);
     frame.render_widget(session_table(app), sessions_area);
 
-    let (title, lines) = app.panel();
-    let height = panel.height.saturating_sub(2) as usize;
+    let (title, source) = app.panel();
+    let height = panel.height.saturating_sub(2).max(1) as usize;
+    let inner = panel.width.saturating_sub(2) as usize;
+    let clean = app.view == View::SandboxLog && !app.raw;
+
+    // The hovered line shows its controller in full, or its whole raw record.
+    let cursor = clean
+        .then_some(app.log_cursor)
+        .flatten()
+        .filter(|_| !source.is_empty())
+        .map(|at| at.min(source.len() - 1));
+    if clean {
+        app.log_cursor = cursor; // keep the stored cursor within the live buffer
+    }
+    let lines: Vec<String> = match clean {
+        false => source,
+        true => source
+            .iter()
+            .enumerate()
+            .map(|(at, raw)| match cursor == Some(at) {
+                true if app.log_reveal => raw.clone(),
+                true => clean_log_line(raw, Fit::Full),
+                false => clean_log_line(raw, Fit::Column),
+            })
+            .collect(),
+    };
+
+    let widest = lines.iter().map(|line| line.chars().count()).max().unwrap_or(0);
     app.scrollable = lines.len() > height;
+    app.wide = widest > inner;
     app.scroll = app.scroll.min(lines.len().saturating_sub(height));
+    app.hscroll = app.hscroll.min(widest.saturating_sub(inner));
+    // Keep the hovered line on screen, moving the view the least.
+    if let Some(at) = cursor {
+        let bottom = lines.len() - app.scroll;
+        if at + 1 > bottom {
+            app.scroll = lines.len() - at - 1;
+        } else if at + height < bottom {
+            app.scroll = lines.len() - height - at;
+        }
+    }
     let end = lines.len() - app.scroll;
-    let shown: Vec<Line> = lines[end.saturating_sub(height)..end]
+    let start = end.saturating_sub(height);
+    let shown: Vec<Line> = lines[start..end]
         .iter()
-        .map(|line| activity_line(line))
+        .enumerate()
+        .map(|(row, line)| {
+            let painted = if clean { clean_line(line) } else { activity_line(line) };
+            match cursor == Some(start + row) {
+                true => highlight(painted),
+                false => painted,
+            }
+        })
         .collect();
     let title = match app.scroll {
         0 => title,
         up => format!("{title}· {up} lines up, End to follow "),
     };
     frame.render_widget(
-        Paragraph::new(shown).block(block(Focus::Panel, title)),
+        Paragraph::new(shown)
+            .scroll((0, app.hscroll as u16))
+            .block(block(Focus::Panel, title)),
         panel,
     );
 
@@ -1284,6 +1405,127 @@ fn plain(lines: Vec<String>) -> Vec<String> {
     lines.iter().map(|line| strip_ansi(line)).collect()
 }
 
+/// Whether the controller is cut to its column or shown whole (for the hovered line).
+#[derive(Clone, Copy)]
+enum Fit {
+    Column,
+    Full,
+}
+
+/// A storefront record as `[stamp] [LEVEL] [controller] message`, its level and
+/// controller in fixed columns so the message always starts at the same place; a
+/// line that is not a record stays whole.
+fn clean_log_line(line: &str, fit: Fit) -> String {
+    if !line.starts_with('[') || !line.is_char_boundary(LOG_BODY_AT) {
+        return line.to_string();
+    }
+    let (prefix, body) = line.split_at(LOG_BODY_AT);
+    let (Some(record), Some((stamp, _))) = (pipeline::clean(body), prefix.split_once(']')) else {
+        return line.to_string();
+    };
+    format!(
+        "{stamp}] {:<LEVEL_WIDTH$} {} {}",
+        bracket(record.level.as_deref()),
+        controller(record.controller.as_deref(), fit),
+        record.message,
+    )
+}
+
+fn bracket(value: Option<&str>) -> String {
+    format!("[{}]", value.unwrap_or("-"))
+}
+
+/// The `[controller]` cell, padded to its column and, for `Fit::Column`, cut to it.
+fn controller(name: Option<&str>, fit: Fit) -> String {
+    let name = name.unwrap_or("-");
+    if matches!(fit, Fit::Column) && name.chars().count() + 2 > CONTROLLER_WIDTH {
+        let kept: String = name.chars().take(CONTROLLER_WIDTH - 3).collect();
+        return format!("[{kept}…]");
+    }
+    format!("{:<CONTROLLER_WIDTH$}", bracket(Some(name)))
+}
+
+/// A cleaned sandbox line painted by its parts: the level by severity, the
+/// controller in white. A line not in that shape falls back to the plain colours.
+fn clean_line(line: &str) -> Line<'static> {
+    styled_clean(line).unwrap_or_else(|| activity_line(line))
+}
+
+fn styled_clean(line: &str) -> Option<Line<'static>> {
+    let close = line.find(']')?;
+    let stamp = &line[..=close];
+    if !is_stamp(stamp) {
+        return None;
+    }
+    let (before_level, level_cell, rest) = bracket_at(&line[close + 1..])?;
+    let (before_name, name_cell, message) = bracket_at(rest)?;
+    let level = &level_cell[1..level_cell.len() - 1];
+    if level != "-" && !is_level(level) {
+        return None;
+    }
+    Some(Line::from(vec![
+        Span::styled(stamp.to_string(), Style::new().fg(Color::DarkGray)),
+        Span::raw(before_level.to_string()),
+        Span::styled(level_cell.to_string(), Style::new().fg(level_colour(level))),
+        Span::raw(before_name.to_string()),
+        Span::styled(
+            name_cell.to_string(),
+            Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(message.to_string(), Style::new().fg(Color::Gray)),
+    ]))
+}
+
+/// A leading `[word]` after optional spaces: the spaces, the bracketed word, and
+/// what follows. `None` when the next thing is not a bracket.
+fn bracket_at(text: &str) -> Option<(&str, &str, &str)> {
+    let open = text.find('[')?;
+    if !text[..open].bytes().all(|byte| byte == b' ') {
+        return None;
+    }
+    let close = open + text[open..].find(']')?;
+    Some((&text[..open], &text[open..=close], &text[close + 1..]))
+}
+
+fn is_stamp(text: &str) -> bool {
+    text.len() == 10
+        && text.starts_with('[')
+        && text.ends_with(']')
+        && text[1..9]
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| match index {
+                2 | 5 => byte == b':',
+                _ => byte.is_ascii_digit(),
+            })
+}
+
+fn is_level(word: &str) -> bool {
+    level_colour(word) != Color::Gray
+}
+
+/// The level's colour, coherent with the other tools: red, yellow, light blue, grey.
+fn level_colour(level: &str) -> Color {
+    match level {
+        "ERROR" | "FATAL" | "SEVERE" => Color::Red,
+        "WARN" | "WARNING" => Color::Yellow,
+        "INFO" => Color::LightBlue,
+        "DEBUG" | "TRACE" => Color::DarkGray,
+        _ => Color::Gray,
+    }
+}
+
+/// The same line under a reversed background, to mark the cursor.
+fn highlight(line: Line<'static>) -> Line<'static> {
+    let reversed = Style::new().add_modifier(Modifier::REVERSED);
+    Line::from(
+        line.spans
+            .into_iter()
+            .map(|span| Span::styled(span.content, span.style.patch(reversed)))
+            .collect::<Vec<_>>(),
+    )
+}
+
 fn strip_ansi(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.chars();
@@ -1380,7 +1622,8 @@ mod tests {
         assert_eq!(app.label(Action::Move(1)), None);
         assert_eq!(app.label(Action::Page(1)), None);
         assert_eq!(app.label(Action::Follow), None);
-        assert_eq!(app.label(Action::Focus), None);
+        // Tab always steps back out of a panel.
+        assert_eq!(app.label(Action::Focus).as_deref(), Some("back"));
 
         app.scrollable = true;
         assert_eq!(app.label(Action::Move(1)).as_deref(), Some("scroll"));
@@ -1388,7 +1631,7 @@ mod tests {
     }
 
     #[test]
-    fn with_one_watcher_the_arrows_scroll_the_panel_and_tab_still_works() {
+    fn one_watcher_scrolls_only_after_tab_into_the_panel() {
         let mut app = App {
             watchers: vec![watcher_on(Some("started"), None)],
             scrollable: true,
@@ -1396,13 +1639,18 @@ mod tests {
         };
         app.selected.select(Some(0));
         assert_eq!(app.focus, Focus::Watchers);
+        // At the menu with one watcher the arrows have nothing to move.
+        assert_eq!(app.label(Action::Move(-1)), None);
+        assert_eq!(app.label(Action::Focus).as_deref(), Some("open panel"));
+        app.move_by(-3);
+        assert_eq!(app.scroll, 0);
+        // Tab into the panel, and now the arrows scroll it.
+        app.perform(Action::Focus, 10);
+        assert_eq!(app.focus, Focus::Panel);
         assert_eq!(app.label(Action::Move(-1)).as_deref(), Some("scroll"));
-        assert_eq!(app.label(Action::Focus).as_deref(), Some("focus"));
         app.move_by(-3);
         assert_eq!(app.scroll, 3);
         assert_eq!(app.selected.selected(), Some(0));
-        app.perform(Action::Focus, 10);
-        assert_eq!(app.focus, Focus::Panel);
     }
 
     #[test]
@@ -1416,10 +1664,10 @@ mod tests {
             ..App::default()
         };
         app.selected.select(Some(0));
-        assert_eq!(app.label(Action::Focus).as_deref(), Some("focus"));
+        assert_eq!(app.label(Action::Focus).as_deref(), Some("back"));
         app.focus = Focus::Watchers;
-        assert_eq!(app.label(Action::Focus), None);
-        assert_eq!(app.label(Action::Move(1)).as_deref(), Some("move"));
+        assert_eq!(app.label(Action::Focus).as_deref(), Some("open panel"));
+        assert_eq!(app.label(Action::Move(1)).as_deref(), Some("watcher"));
     }
 
     #[test]
@@ -1485,6 +1733,140 @@ mod tests {
         app.clear_stale_notice();
         assert_eq!(app.notice, None);
         assert_eq!(app.armed, None, "its arming prompt goes with it");
+    }
+
+    fn streamed(lines: &[&str]) -> Stream {
+        Stream {
+            child: None,
+            lines: Arc::new(Mutex::new(lines.iter().map(|line| line.to_string()).collect())),
+        }
+    }
+
+    fn screen(app: &mut App, width: u16, height: u16) -> String {
+        let mut terminal = ratatui::Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn log_line(level: &str, pipe: &str, message: &str) -> String {
+        format!(
+            "[09:26:33] {:<12} [2026-11-24 10:00:00.000 GMT] {level} PipelineCallServlet|1|Sites-guess-Site|{pipe} custom.x {message}",
+            "custominfo",
+        )
+    }
+
+    #[test]
+    fn the_sandbox_log_hands_draw_the_raw_lines_and_the_title_shows_the_mode() {
+        let raw = log_line("DEBUG", "Account-Show|PipelineCall|-a1", "hi");
+        let mut app = App {
+            watchers: vec![watcher_on(Some("started"), None)],
+            sandbox_log: Some(streamed(&[&raw])),
+            view: View::SandboxLog,
+            ..App::default()
+        };
+        app.selected.select(Some(0));
+        let (title, lines) = app.panel();
+        assert!(title.contains("clean"), "{title}");
+        assert_eq!(lines, vec![raw.clone()]);
+        app.perform(Action::RawLog, 0);
+        assert!(app.panel().0.contains("raw"));
+    }
+
+    #[test]
+    fn clean_log_line_rebuilds_records_and_leaves_the_rest_whole() {
+        let cleaned = clean_log_line(&log_line("INFO", "Foo-Bar|PipelineCall|-abc123", "msg"), Fit::Column);
+        assert!(cleaned.starts_with("[09:26:33] [INFO]"), "{cleaned}");
+        assert!(cleaned.ends_with("msg"), "{cleaned}");
+        assert!(!cleaned.contains("custominfo") && !cleaned.contains("PipelineCallServlet"));
+        // The controller sits at a fixed column, past the stamp and the level cell.
+        assert_eq!(cleaned.find("[Foo-Bar]"), Some("[09:26:33] ".len() + LEVEL_WIDTH + 1));
+
+        assert_eq!(
+            clean_log_line("$ sfcc-upload logger --color never", Fit::Column),
+            "$ sfcc-upload logger --color never"
+        );
+        assert_eq!(clean_log_line("short", Fit::Column), "short");
+    }
+
+    #[test]
+    fn a_long_controller_is_cut_to_its_column_but_shown_in_full_on_request() {
+        let line = log_line("INFO", "HandlerInclude-CachedHook|PipelineCall|-a1", "hi");
+        let short = clean_log_line(&line, Fit::Column);
+        assert!(short.contains('…') && !short.contains("CachedHook"), "{short}");
+        assert!(clean_log_line(&line, Fit::Full).contains("[HandlerInclude-CachedHook]"));
+    }
+
+    #[test]
+    fn a_cleaned_line_is_painted_by_level_and_controller() {
+        let warn = clean_log_line(&log_line("WARN", "Account-Show|PipelineCall|-a1", "offline"), Fit::Column);
+        let line = clean_line(&warn);
+        let level = line.spans.iter().find(|s| s.content.contains("WARN")).unwrap();
+        assert_eq!(level.style.fg, Some(Color::Yellow));
+        let name = line.spans.iter().find(|s| s.content.contains("Account-Show")).unwrap();
+        assert_eq!(name.style.fg, Some(Color::White));
+
+        // A badge line (not a cleaned record) is left to the plain colourer.
+        assert!(styled_clean("[09:26:33] [ok      ] following 3 logs").is_none());
+    }
+
+    #[test]
+    fn the_cursor_reveals_the_full_controller_then_the_raw_record() {
+        let long = log_line("INFO", "HandlerInclude-CachedHook|PipelineCall|-a2", "long one");
+        let mut app = App {
+            watchers: vec![watcher_on(Some("started"), None)],
+            sandbox_log: Some(streamed(&[
+                &log_line("INFO", "Cart-Show|PipelineCall|-a1", "short one"),
+                &long,
+            ])),
+            view: View::SandboxLog,
+            focus: Focus::Panel,
+            ..App::default()
+        };
+        app.selected.select(Some(0));
+
+        // With no cursor the long controller is cut.
+        assert!(screen(&mut app, 160, 24).contains('…'));
+
+        // Hover the long line: its controller shows in full.
+        app.perform(Action::Move(1), 0);
+        let hovered = screen(&mut app, 160, 24);
+        assert!(hovered.contains("HandlerInclude-CachedHook"), "{hovered}");
+        assert!(!hovered.contains("Sites-guess-Site"), "still cleaned, not raw");
+
+        // Enter reveals its whole raw record.
+        app.perform(Action::Reveal, 0);
+        assert!(screen(&mut app, 160, 24).contains("Sites-guess-Site"));
+    }
+
+    #[test]
+    fn arrows_scroll_sideways_in_a_panel_and_clamp_to_the_content() {
+        let mut app = App {
+            watchers: vec![watcher_on(Some("started"), None)],
+            focus: Focus::Panel,
+            wide: true,
+            ..App::default()
+        };
+        app.selected.select(Some(0));
+        // In a panel the arrows scroll sideways rather than switch view.
+        app.perform(Action::View(1), 0);
+        assert_eq!(app.hscroll, HSTEP as usize);
+        assert_eq!(app.view, View::Uploads);
+        app.perform(Action::View(-1), 0);
+        assert_eq!(app.hscroll, 0);
+
+        // A panel with nothing wider than itself clamps any overscroll back to the start.
+        app.hscroll = 50;
+        let mut terminal = ratatui::Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        assert_eq!(app.hscroll, 0);
     }
 
     #[test]
@@ -1702,27 +2084,16 @@ mod tests {
             ..App::default()
         };
         app.selected.select(Some(0));
-        let screen = |app: &mut App| {
-            let mut terminal = ratatui::Terminal::new(TestBackend::new(140, 24)).unwrap();
-            terminal.draw(|frame| draw(frame, app)).unwrap();
-            let buffer = terminal.backend().buffer().clone();
-            (0..buffer.area.height)
-                .map(|y| {
-                    (0..buffer.area.width)
-                        .map(|x| buffer[(x, y)].symbol())
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        let watchers = screen(&mut app);
+        let watchers = screen(&mut app, 140, 24);
         assert!(watchers.contains("▶ Watchers"));
         assert!(watchers.contains(" Uploads · develop "));
         assert!(!watchers.contains("▶ Uploads"));
         assert!(watchers.contains(" u uploads "));
 
+        // Switching view keeps the menu focus; Tab is what steps into the panel.
         app.show(View::LogDiff);
-        let panel = screen(&mut app);
+        app.focus = Focus::Panel;
+        let panel = screen(&mut app, 140, 24);
         assert!(panel.contains("▶ log-diff · develop"));
         assert!(!panel.contains("▶ Watchers"));
         assert!(panel.contains(" d log-diff "));

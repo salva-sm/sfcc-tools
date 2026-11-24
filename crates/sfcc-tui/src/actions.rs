@@ -30,6 +30,10 @@ pub enum Action {
     StartWatcher,
     StopWatcher,
     Errors,
+    /// Switch the sandbox log between the raw record and the cleaned one.
+    RawLog,
+    /// Show the hovered sandbox-log line as its whole raw record.
+    Reveal,
     /// Start a stopped sandbox, or stop a started one.
     PowerSandbox,
     RestartSandbox,
@@ -39,7 +43,7 @@ pub enum Action {
 /// Grouped as the help line shows them: the panels first, then what acts on the
 /// selected watcher. Paging and the second arrow of each pair have no place of
 /// their own.
-pub const SHOWN: [Action; 19] = [
+pub const SHOWN: [Action; 21] = [
     Action::Uploads,
     Action::SandboxLog,
     Action::LogDiff,
@@ -56,6 +60,8 @@ pub const SHOWN: [Action; 19] = [
     Action::StartWatcher,
     Action::StopWatcher,
     Action::Errors,
+    Action::RawLog,
+    Action::Reveal,
     Action::PowerSandbox,
     Action::RestartSandbox,
     Action::Quit,
@@ -86,6 +92,8 @@ impl Action {
             KeyCode::Char('s') => Action::StartWatcher,
             KeyCode::Char('x') => Action::StopWatcher,
             KeyCode::Char('e') => Action::Errors,
+            KeyCode::Char('r') => Action::RawLog,
+            KeyCode::Enter => Action::Reveal,
             // Upper case: it spends realm credits, or takes the sandbox down for everyone on it.
             KeyCode::Char('S') => Action::PowerSandbox,
             KeyCode::Char('R') => Action::RestartSandbox,
@@ -113,6 +121,8 @@ impl Action {
             Action::StartWatcher => "s",
             Action::StopWatcher => "x",
             Action::Errors => "e",
+            Action::RawLog => "r",
+            Action::Reveal => "⏎",
             Action::PowerSandbox => "S",
             Action::RestartSandbox => "R",
             Action::Quit => "q",
@@ -143,6 +153,8 @@ mod tests {
             KeyCode::Char('s'),
             KeyCode::Char('x'),
             KeyCode::Char('e'),
+            KeyCode::Char('r'),
+            KeyCode::Enter,
             KeyCode::Char('S'),
             KeyCode::Char('R'),
             KeyCode::Char('q'),
@@ -164,7 +176,15 @@ mod tests {
             Action::of(KeyCode::Char('s'), KeyModifiers::NONE),
             Some(Action::StartWatcher)
         );
-        assert_eq!(Action::of(KeyCode::Char('r'), KeyModifiers::NONE), None);
+        // Lower-case r is the log toggle, not the restart; restart stays upper-case.
+        assert_eq!(
+            Action::of(KeyCode::Char('r'), KeyModifiers::NONE),
+            Some(Action::RawLog)
+        );
+        assert_eq!(
+            Action::of(KeyCode::Char('R'), KeyModifiers::SHIFT),
+            Some(Action::RestartSandbox)
+        );
     }
 
     #[test]
