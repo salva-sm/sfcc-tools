@@ -3,6 +3,7 @@
 pub mod activity;
 #[cfg(feature = "completions")]
 pub mod completions;
+pub mod pipeline;
 pub mod config;
 #[cfg(feature = "daemon")]
 pub mod daemon;
