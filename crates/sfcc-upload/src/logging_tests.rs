@@ -77,7 +77,7 @@ fn deleting_a_whole_cartridge_prints_its_name() {
     );
 
     assert_eq!(lines.len(), 3);
-    assert!(lines[0].contains("[deleted]"));
+    assert!(lines[0].contains("[deleted ]"));
     assert!(lines[0].contains("2 path(s) in 2 cartridge(s)"));
     assert_eq!(lines[1].trim(), "app_brand");
     assert_eq!(lines[2].trim(), "int_rewards");

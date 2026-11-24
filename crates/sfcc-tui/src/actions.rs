@@ -11,6 +11,8 @@ pub enum Action {
     Move(isize),
     /// Half a screen of the panel.
     Page(isize),
+    /// The previous or next panel, so the arrows walk the views as ↑↓ walk rows.
+    View(isize),
     Follow,
     Uploads,
     SandboxLog,
@@ -34,16 +36,19 @@ pub enum Action {
     Quit,
 }
 
-/// In the help line's order. Paging and the second arrow act without a place of their own.
-pub const SHOWN: [Action; 18] = [
+/// Grouped as the help line shows them: the panels first, then what acts on the
+/// selected watcher. Paging and the second arrow of each pair have no place of
+/// their own.
+pub const SHOWN: [Action; 19] = [
+    Action::Uploads,
+    Action::SandboxLog,
+    Action::LogDiff,
+    Action::SandboxStatus,
+    Action::Conflicts,
+    Action::View(1),
     Action::Focus,
     Action::Move(1),
     Action::Follow,
-    Action::Uploads,
-    Action::SandboxLog,
-    Action::SandboxStatus,
-    Action::LogDiff,
-    Action::Conflicts,
     Action::Overwrite,
     Action::Keep,
     Action::WatchErrors,
@@ -66,10 +71,12 @@ impl Action {
             KeyCode::Up | KeyCode::Char('k') => Action::Move(-1),
             KeyCode::PageDown => Action::Page(1),
             KeyCode::PageUp => Action::Page(-1),
+            KeyCode::Right => Action::View(1),
+            KeyCode::Left => Action::View(-1),
             KeyCode::End => Action::Follow,
-            KeyCode::Char('a') => Action::Uploads,
+            KeyCode::Char('u') => Action::Uploads,
             KeyCode::Char('l') => Action::SandboxLog,
-            KeyCode::Char('o') => Action::SandboxStatus,
+            KeyCode::Char('t') => Action::SandboxStatus,
             KeyCode::Char('d') => Action::LogDiff,
             KeyCode::Char('c') => Action::Conflicts,
             KeyCode::Char('O') => Action::Overwrite,
@@ -92,10 +99,11 @@ impl Action {
             Action::Focus => "Tab",
             Action::Move(_) => "↑↓",
             Action::Page(_) => "PgUp PgDn",
+            Action::View(_) => "←→",
             Action::Follow => "End",
-            Action::Uploads => "a",
+            Action::Uploads => "u",
             Action::SandboxLog => "l",
-            Action::SandboxStatus => "o",
+            Action::SandboxStatus => "t",
             Action::LogDiff => "d",
             Action::Conflicts => "c",
             Action::Overwrite => "O",
@@ -119,14 +127,15 @@ mod tests {
     #[test]
     fn every_shown_action_has_a_key_that_reaches_it() {
         let keys = [
+            KeyCode::Char('u'),
+            KeyCode::Char('l'),
+            KeyCode::Char('d'),
+            KeyCode::Char('t'),
+            KeyCode::Char('c'),
+            KeyCode::Right,
             KeyCode::Tab,
             KeyCode::Down,
             KeyCode::End,
-            KeyCode::Char('a'),
-            KeyCode::Char('l'),
-            KeyCode::Char('o'),
-            KeyCode::Char('d'),
-            KeyCode::Char('c'),
             KeyCode::Char('O'),
             KeyCode::Char('K'),
             KeyCode::Char('w'),

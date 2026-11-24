@@ -28,6 +28,7 @@ const REFRESH: Duration = Duration::from_secs(1);
 const ACTIVITY_LINES: usize = 200;
 const PROBE: Duration = Duration::from_millis(50);
 const STREAM_LINES: usize = 2000;
+const NOTICE_SECONDS: i64 = 8;
 
 struct Watcher {
     identity: String,
@@ -171,7 +172,7 @@ fn push_line(lines: &Mutex<Vec<String>>, line: String) {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 enum View {
     #[default]
     Uploads,
@@ -205,8 +206,10 @@ struct App {
     watchers: Vec<Watcher>,
     /// With how its watcher runs: `start`ed, in a terminal or task, or not at all.
     errors: Vec<(errors::Status, Watching)>,
-    /// What the last action said, until the next one.
+    /// What the last action said, until the next one or until it times out.
     notice: Option<String>,
+    /// So a stale notice can clear itself.
+    notice_at: i64,
     /// With whether its adapter still answers: one killed outright leaves its file behind.
     sessions: Vec<(sessions::Session, bool)>,
     selected: TableState,
@@ -303,8 +306,9 @@ impl App {
         if self.live {
             self.ask_sandboxes();
         }
+        self.clear_stale_notice();
         if let Some(said) = self.reports.lock().ok().and_then(|mut it| it.pop()) {
-            self.notice = Some(said);
+            self.notify(said);
         }
         let held = self.current().map_or(0, |it| it.status.held.len());
         self.conflict_cursor = self.conflict_cursor.min(held.saturating_sub(1));
@@ -370,6 +374,21 @@ impl App {
         self.busy.lock().is_ok_and(|busy| busy.contains(label))
     }
 
+    /// Say something, stamped, so it clears once it is stale.
+    fn notify(&mut self, text: String) {
+        self.notice = Some(text);
+        self.notice_at = now_seconds();
+    }
+
+    /// Drop a notice once it has had its say, so "starting…" does not outlive the
+    /// sandbox it announced. An armed action goes with it: its prompt is gone.
+    fn clear_stale_notice(&mut self) {
+        if self.notice.is_some() && now_seconds() - self.notice_at > NOTICE_SECONDS {
+            self.notice = None;
+            self.armed = None;
+        }
+    }
+
     /// What the action does for the selected row, or `None` when it does nothing there.
     fn label(&self, action: Action) -> Option<String> {
         let watcher = self.current();
@@ -394,15 +413,10 @@ impl App {
                 false => text(self.scrollable, "scroll"),
             },
             Action::Page(_) => text(self.scrollable, "page"),
+            Action::View(_) => text(selected, "panel"),
             Action::Follow => text(self.scroll > 0, "follow"),
             Action::Uploads => text(selected && self.view != View::Uploads, "uploads"),
-            Action::SandboxLog => match self.sandbox_log.is_some() {
-                true => text(
-                    selected && self.view != View::SandboxLog,
-                    "sandbox log (live)",
-                ),
-                false => text(selected, "sandbox log"),
-            },
+            Action::SandboxLog => text(selected && self.view != View::SandboxLog, "sandbox log"),
             Action::SandboxStatus => text(
                 watcher.is_some_and(|it| it.label.is_some()) && self.view != View::SandboxStatus,
                 "sandbox status",
@@ -475,7 +489,7 @@ impl App {
         }
         self.armed = Some(action);
         let down = self.current().and_then(Watcher::sandbox_down);
-        self.notice = Some(match (action, down) {
+        self.notify(match (action, down) {
             (Action::Push, Some(why)) => format!(
                 "the sandbox is down ({why}) - {} again to push anyway, any other key cancels",
                 action.keys()
@@ -506,6 +520,7 @@ impl App {
                 self.focus = Focus::Panel;
                 self.move_by(direction * page);
             }
+            Action::View(step) => self.cycle_view(step),
             Action::Follow => self.scroll = 0,
             Action::Uploads => self.show(View::Uploads),
             Action::SandboxLog => self.show(View::SandboxLog),
@@ -554,7 +569,7 @@ impl App {
             return;
         };
         let dir = watcher.checkout();
-        self.notice = Some(format!("{operation} requested for {label}…"));
+        self.notify(format!("{operation} requested for {label}…"));
         self.in_background(&label, &["sandbox", operation.name()], dir, true);
     }
 
@@ -592,6 +607,22 @@ impl App {
                 self.scroll = self.scroll.saturating_add_signed(-step);
             }
         }
+    }
+
+    /// Walk the panels in a fixed ring, so ←/→ reach every view the letters do.
+    fn cycle_view(&mut self, step: isize) {
+        const RING: [View; 5] = [
+            View::Uploads,
+            View::SandboxLog,
+            View::LogDiff,
+            View::SandboxStatus,
+            View::Conflicts,
+        ];
+        if self.current().is_none() {
+            return;
+        }
+        let at = RING.iter().position(|view| *view == self.view).unwrap_or(0) as isize;
+        self.show(RING[(at + step).rem_euclid(RING.len() as isize) as usize]);
     }
 
     /// The held file the conflicts panel points at, when that panel is shown.
@@ -753,7 +784,8 @@ impl App {
                 watcher.status.code_version.clone(),
             ]);
         }
-        self.notice = Some(last_line(program, &arguments, &watcher.checkout()));
+        let said = last_line(program, &arguments, &watcher.checkout());
+        self.notify(said);
     }
 }
 
@@ -915,8 +947,8 @@ fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(app.errors.len().max(app.sessions.len()).max(1) as u16 + 3),
         Constraint::Min(5),
         Constraint::Length(1),
-        // The keys wrap rather than fall off a narrow terminal.
-        Constraint::Length(2),
+        // One row for the panels, one for what acts, each wrapping if it must.
+        Constraint::Length(3),
     ])
     .areas(frame.area());
     let [errors_area, sessions_area] =
@@ -957,16 +989,7 @@ fn draw(frame: &mut Frame, app: &mut App) {
         panel,
     );
 
-    let help: Vec<Span> = SHOWN
-        .iter()
-        .filter_map(|action| match shows(*action) {
-            Some(view) if view == app.view && app.current().is_some() => {
-                Some(open(action.keys(), view.name()))
-            }
-            _ => Some(key(action.keys(), app.label(*action)?)),
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(wrapped(help, keys.width)), keys);
+    frame.render_widget(Paragraph::new(help_lines(app, keys.width)), keys);
 
     // Why the sandbox's state is unknown, while no action has anything to say.
     let unknown = app
@@ -1145,8 +1168,50 @@ fn shows(action: Action) -> Option<View> {
         Action::SandboxLog => Some(View::SandboxLog),
         Action::SandboxStatus => Some(View::SandboxStatus),
         Action::LogDiff => Some(View::LogDiff),
+        Action::Conflicts => Some(View::Conflicts),
         _ => None,
     }
+}
+
+/// The keys that choose what the panel shows, grouped apart from what acts on a
+/// watcher, and reached by the arrows as well as by letter.
+fn is_view(action: Action) -> bool {
+    shows(action).is_some() || matches!(action, Action::View(_))
+}
+
+/// The help, in two labelled rows: the panels, then what acts on the selected
+/// watcher. The open panel shows lit by name; the rest, and every action, show
+/// only while their key does something.
+fn help_lines(app: &App, width: u16) -> Vec<Line<'static>> {
+    let chip = |action: Action| match shows(action) {
+        Some(view) if view == app.view && app.current().is_some() => {
+            Some(open(action.keys(), view.name()))
+        }
+        _ => Some(key(action.keys(), app.label(action)?)),
+    };
+    let groups = [("Panels", true), ("Actions", false)];
+    let pad = groups.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let mut lines: Vec<Line> = Vec::new();
+    for (name, keep) in groups {
+        let chips = SHOWN
+            .iter()
+            .copied()
+            .filter(|action| is_view(*action) == keep)
+            .filter_map(chip);
+        let row: Vec<Span> = std::iter::once(group(name, pad)).chain(chips).collect();
+        if row.len() > 1 {
+            lines.extend(wrapped(row, width));
+        }
+    }
+    if lines.is_empty() {
+        lines.push(Line::default());
+    }
+    lines
+}
+
+/// The dim word that names a group of keys, padded so every row's keys line up.
+fn group(name: &str, pad: usize) -> Span<'static> {
+    Span::from(format!(" {name:<pad$} ")).style(Style::new().fg(Color::DarkGray).bold())
 }
 
 /// The keys on as many lines as the width needs, never splitting one across two.
@@ -1384,6 +1449,45 @@ mod tests {
     }
 
     #[test]
+    fn the_arrows_walk_the_panels_in_a_ring() {
+        let mut app = App {
+            watchers: vec![watcher_on(Some("started"), None)],
+            ..App::default()
+        };
+        app.selected.select(Some(0));
+        assert_eq!(app.view, View::Uploads);
+        app.perform(Action::View(1), 0);
+        assert_eq!(app.view, View::SandboxLog);
+        app.perform(Action::View(-1), 0);
+        assert_eq!(app.view, View::Uploads);
+        // Left from the first panel wraps to the last.
+        app.perform(Action::View(-1), 0);
+        assert_eq!(app.view, View::Conflicts);
+    }
+
+    #[test]
+    fn with_no_watcher_the_arrows_have_nothing_to_show() {
+        let mut app = App::default();
+        assert_eq!(app.label(Action::View(1)), None);
+        app.perform(Action::View(1), 0);
+        assert_eq!(app.view, View::Uploads);
+    }
+
+    #[test]
+    fn a_notice_clears_once_it_is_stale() {
+        let mut app = App::default();
+        app.notify("start requested for zzzz-005…".to_string());
+        app.armed = Some(Action::PowerSandbox);
+        app.clear_stale_notice();
+        assert!(app.notice.is_some(), "a fresh notice stays");
+
+        app.notice_at = now_seconds() - NOTICE_SECONDS - 1;
+        app.clear_stale_notice();
+        assert_eq!(app.notice, None);
+        assert_eq!(app.armed, None, "its arming prompt goes with it");
+    }
+
+    #[test]
     fn the_conflicts_panel_lists_each_held_file_and_when_the_sandbox_changed_it() {
         let mut watcher = watcher_on(Some("started"), None);
         watcher.status.state = upload::State::Held;
@@ -1615,7 +1719,7 @@ mod tests {
         assert!(watchers.contains("▶ Watchers"));
         assert!(watchers.contains(" Uploads · develop "));
         assert!(!watchers.contains("▶ Uploads"));
-        assert!(watchers.contains(" a uploads "));
+        assert!(watchers.contains(" u uploads "));
 
         app.show(View::LogDiff);
         let panel = screen(&mut app);

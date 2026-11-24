@@ -166,13 +166,10 @@ fn tone(role: Role) -> &'static str {
     }
 }
 
-/// A `[word]` badge padded to the widest one, so every tag shares one column.
+/// A `[word]` badge whose brackets sit at the column's edges, the word padded
+/// inside them, so every tag shares one column and the paths line up.
 fn badge(word: &str, message: &str) -> String {
-    format!(
-        "{:<width$} {message}",
-        format!("[{word}]"),
-        width = activity::BADGE_WIDTH
-    )
+    format!("[{word:<inner$}] {message}", inner = activity::BADGE_WIDTH - 2)
 }
 
 /// A line with no tag, its text starting at the same column as the tagged ones'.
