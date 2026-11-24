@@ -18,8 +18,8 @@ fn every_line_rejoins_to_itself() {
         "[17:54:59] [deleted]  int_rewards/cartridge/scripts/vouchers.js",
         "[18:10:45] [error]    cannot read file.js: permission denied",
         "[18:02:10] [uploaded] 7 file(s) in 2 cartridge(s)",
-        "[18:34:49] [ok]       version1 already up to date",
-        "[18:34:48] [warn]     sandbox unavailable - waiting",
+        "[18:34:49] [ok      ] version1 already up to date",
+        "[18:34:48] [warn    ] sandbox unavailable - waiting",
         "[18:00:00]            push handed over",
         "             cartridge/scripts  vouchers.js",
     ] {
@@ -73,6 +73,13 @@ fn ok_and_warn_markers_keep_their_tone() {
         roles("[10:00:00] [warn]     careful")[2],
         (Role::Warn, "[warn]".to_string())
     );
+}
+
+#[test]
+fn a_badge_padded_inside_its_brackets_keeps_its_role() {
+    let line = "[10:00:00] [ok      ] done";
+    assert_eq!(roles(line)[2], (Role::Ok, "[ok      ]".to_string()));
+    assert_eq!(rejoined(line), line);
 }
 
 #[test]

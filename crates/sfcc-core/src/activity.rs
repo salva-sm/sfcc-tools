@@ -65,7 +65,8 @@ pub fn segments(line: &str) -> Vec<Segment> {
 /// printer can badge an `[ok]` the way it badges an upload.
 fn tag(body: &str) -> Option<(&str, Role, &str)> {
     let close = body.strip_prefix('[')?.find(']')? + 1;
-    Some((&body[..=close], role_of(&body[1..close]), &body[close + 1..]))
+    // The word may be padded inside the brackets to fill the column.
+    Some((&body[..=close], role_of(body[1..close].trim()), &body[close + 1..]))
 }
 
 fn role_of(word: &str) -> Role {
