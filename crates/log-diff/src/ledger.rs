@@ -56,6 +56,21 @@ const MONTHS_KEPT: usize = 24;
 pub(crate) const SANE_DAY_FLOOR: &str = "2000-01-01";
 const SPIKE_WINDOW: i64 = 7;
 
+/// A plain mean over the window deflates a bursty signature's usual (its silent days count as
+/// 0) and reads every day it fires as a spike; the median of its active days does not.
+fn median_active(counts: &mut [u64]) -> f64 {
+    if counts.is_empty() {
+        return 0.0;
+    }
+    counts.sort_unstable();
+    let mid = counts.len() / 2;
+    if counts.len() % 2 == 1 {
+        counts[mid] as f64
+    } else {
+        (counts[mid - 1] + counts[mid]) as f64 / 2.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Known {
     pub label: String,
@@ -561,11 +576,12 @@ impl Ledger {
             {
                 continue;
             }
-            let total: u64 = before
+            let mut active: Vec<u64> = before
                 .iter()
-                .filter_map(|day| self.daily.get(day)?.get(&id))
-                .sum();
-            let usual = total as f64 / SPIKE_WINDOW as f64;
+                .filter_map(|day| self.daily.get(day)?.get(&id).copied())
+                .filter(|&count| count > 0)
+                .collect();
+            let usual = median_active(&mut active);
             if today_count as f64 >= factor * usual.max(1.0) {
                 known.spiked_on = Some(today.to_string());
                 spikes.push(Spike {
