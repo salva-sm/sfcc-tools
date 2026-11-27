@@ -8,7 +8,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 /// Raise it with any change that gives a failure a different id, so old ledgers relearn quietly
 /// instead of reporting everything as new.
-pub const SIGNATURES: u32 = 7;
+pub const SIGNATURES: u32 = 8;
 /// Below this the stack is the framework's, the same for every failure.
 const FRAMES: usize = 8;
 const EXAMPLE_FRAMES: usize = 3;
@@ -88,8 +88,9 @@ regex!(IP, r"\b\d{1,3}(?:\.\d{1,3}){3}\b");
 // The port left on an address once it is masked: `<ip>:49201`.
 regex!(IP_PORT, r"(<ip>):\d+");
 // `Redirect loop for request path '/en-us/...' detected.`: the path is the request's, not the
-// failure's - un-masked, every path is its own signature.
-regex!(REDIRECT_PATH, r"(request path )'[^']*'");
+// failure's - un-masked, every path is its own signature. `.*` not `[^']*`: a path can hold an
+// apostrophe (a category name), and stopping there leaks the rest of the URL into the signature.
+regex!(REDIRECT_PATH, r"(request path )'.*'");
 // `Deleting ... file [/remote/.../2026_10_29-ac6Fu...map]`: the path is which file, not the
 // failure - un-masked, every file a cleanup job deletes is its own signature.
 regex!(FILE_PATH, r"\[/[^\]]*\]");

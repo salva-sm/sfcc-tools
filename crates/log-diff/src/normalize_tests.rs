@@ -402,6 +402,11 @@ fn a_redirect_loop_is_one_signature_whatever_the_path() {
         &REDIRECT.replace("/en-us/shoes/sneakers", "/fr-fr/sacs/pochettes-12345"),
     );
     assert_eq!(signature.id, other.id);
+    let apostrophe = one(
+        "error-blade1-20261001.log",
+        &REDIRECT.replace("/en-us/shoes/sneakers", "/tr/sutyen'lar-kahverengi/x.html?gclid=abc"),
+    );
+    assert_eq!(signature.id, apostrophe.id);
 }
 
 const GDPR_DELETE: &str = concat!(
