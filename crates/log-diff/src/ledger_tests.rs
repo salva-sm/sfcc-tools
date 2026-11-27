@@ -359,6 +359,44 @@ fn a_known_signature_far_above_its_usual_day_spikes_once_a_day() {
 }
 
 #[test]
+fn a_bursty_signature_at_its_usual_level_does_not_spike() {
+    // A weekly job's error: heavy one day of the window, silent the rest. Averaging over the
+    // whole window deflates its usual and reads a normal firing as a spike; the median of the
+    // days it is active does not.
+    let mut team = Ledger::default();
+    let job = at("2026-09-01 10:00:00.000");
+    team.observe(&job, None, false);
+    team.record_daily(&counted(&job, &[("2026-09-15", 40), ("2026-09-22", 40)]));
+    assert!(team.spikes("2026-09-22", 20, 5.0, &[]).is_empty());
+}
+
+#[test]
+fn a_spike_still_fires_after_a_recent_one_off_day() {
+    // One freak day in the window must not raise the baseline enough to hide the next real
+    // spike: the median ignores the outlier where a mean would swallow it.
+    let mut team = Ledger::default();
+    let sig = at("2026-09-01 10:00:00.000");
+    team.observe(&sig, None, false);
+    team.record_daily(&counted(
+        &sig,
+        &[
+            ("2026-09-15", 5),
+            ("2026-09-16", 5),
+            ("2026-09-17", 600),
+            ("2026-09-18", 5),
+            ("2026-09-19", 5),
+            ("2026-09-20", 5),
+            ("2026-09-21", 5),
+            ("2026-09-22", 60),
+        ],
+    ));
+    let spikes = team.spikes("2026-09-22", 20, 5.0, &[]);
+    assert_eq!(spikes.len(), 1);
+    assert_eq!(spikes[0].today, 60);
+    assert!((spikes[0].usual - 5.0).abs() < 0.01);
+}
+
+#[test]
 fn a_steady_or_small_or_muted_or_brand_new_signature_does_not_spike() {
     let week: Vec<(&str, u64)> = vec![
         ("2026-09-15", 60),

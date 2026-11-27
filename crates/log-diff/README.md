@@ -450,9 +450,10 @@ that into a link on the Teams card, and `--code-url` (`LOG_DIFF_CODE_URL`), with
 A known signature is news again when it is logged far more than usual - the way a regression
 of an old failure looks. The ledger counts every signature per day for the last 90 days;
 `run` reports one as a **spike** when today it has been logged at least `--spike-min` times
-(20) and `--spike-factor` times (5) its average day over the week before. Each is reported
-once a day, however many runs follow, and what first showed up today is new rather than a
-spike.
+(20) and `--spike-factor` times (5) its usual day over the week before - the median of the
+days it was actually logged, so a signature that fires in bursts is measured against the days
+it fires, not diluted by the days it is silent. Each is reported once a day, however many runs
+follow, and what first showed up today is new rather than a spike.
 
 ### The team file
 
